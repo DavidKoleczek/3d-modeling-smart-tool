@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "modeling-3d": { "command": "uv", "args": ["run", "modeling-3d", "mcp"] }
+  }
+}

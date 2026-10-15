@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>channel demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 40em; margin: 0 auto; padding: 1em 1em 5em; }
+  p { white-space: pre-wrap; margin: 0.5em 0; }
+  .you { color: #666; }
+  .status { color: #a00; }
+  form { position: fixed; bottom: 0; left: 0; right: 0; max-width: 40em; margin: 0 auto; padding: 1em; display: flex; gap: 0.5em; background: #fff; }
+  input { flex: 1; font: inherit; }
+</style>
+<div id="log"></div>
+<form id="form"><input id="text" autocomplete="off" autofocus><button>send</button></form>
+<script>
+  const log = document.getElementById('log')
+  const input = document.getElementById('text')
+
+  function add(className, line) {
+    const p = document.createElement('p')
+    p.className = className
+    p.textContent = line
+    log.appendChild(p)
+    scrollTo(0, document.body.scrollHeight)
+  }
+
+  const ws = new WebSocket('ws://' + location.host + '/ws')
+  ws.onmessage = e => {
+    const { from, text } = JSON.parse(e.data)
+    add(from, from + ': ' + text)
+  }
+  ws.onclose = () => add('status', 'disconnected, is the Claude Code session still running?')
+
+  document.getElementById('form').onsubmit = e => {
+    e.preventDefault()
+    if (input.value.trim()) ws.send(input.value)
+    input.value = ''
+  }
+</script>

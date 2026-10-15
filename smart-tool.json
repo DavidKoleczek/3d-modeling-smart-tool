@@ -1,0 +1,5 @@
+{
+  "manifest": "src/modeling_3d/SMART_TOOL.md",
+  "cli_argv": ["modeling-3d"],
+  "deterministic_smoke": ["manifest"]
+}
