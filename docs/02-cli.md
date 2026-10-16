@@ -32,7 +32,7 @@ modeling-3d manifest
 modeling-3d app [--port <n>]
 ```
 
-`lib.serve_app()`, with its URL printed. The command then keeps serving until Ctrl+C, which exits 0. Exits 1 when `--port` names a held port; without `--port` a free one is chosen.
+`lib.app_server().open()`, with its URL printed. With no agent connected, each message sent from the page is printed instead. The command then keeps serving until Ctrl+C, which exits 0. Exits 1 when `--port` names a held port; without `--port` a free one is chosen.
 
 ## modeling-3d mcp
 
@@ -40,7 +40,7 @@ modeling-3d app [--port <n>]
 modeling-3d mcp
 ```
 
-`modeling_3d.adapters.mcp.run_stdio()`, for MCP clients that launch the server themselves. stdin and stdout carry only MCP messages until the client disconnects.
+`modeling_3d.adapters.mcp.run_stdio()`, the app as an MCP App, for MCP clients that launch the server themselves. stdin and stdout carry only MCP messages until the client disconnects.
 
 ## Adding a command
 

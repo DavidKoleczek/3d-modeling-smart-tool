@@ -13,24 +13,15 @@ from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, ResultMessa
 
 from modeling_3d.intelligence import claude as adapter
 from modeling_3d.intelligence import interface
-from modeling_3d.intelligence.claude import (
-    READ_ONLY_TOOLS,
-    WRITE_TOOLS,
-    ClaudeIntelligence,
-    parse_answer,
-    scratch_directory,
-)
+from modeling_3d.intelligence.claude import READ_ONLY_TOOLS, WRITE_TOOLS, ClaudeIntelligence, scratch_directory
 from modeling_3d.intelligence.schemas import AgentRequest, HostWorkspace
-from modeling_3d.intelligence.submission import MAX_INVALID_SUBMISSIONS, reanswer_prompt
 from modeling_3d.schemas import Modeling3dError
 
 SESSION = "fake-session"
-SCHEMA: dict[str, Any] = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
 
 
 def finished(
     text: str | None = None,
-    structured_output: Any = None,
     subtype: str = "success",
     is_error: bool = False,
     errors: list[str] | None = None,
@@ -45,7 +36,6 @@ def finished(
         num_turns=1,
         session_id=session_id,
         result=text,
-        structured_output=structured_output,
         errors=errors,
         api_error_status=api_error_status,
     )
@@ -150,7 +140,6 @@ def test_a_workspace_run_gets_the_tools_its_access_allows_without_permission_pro
     assert options.permission_mode == "bypassPermissions"
     assert options.effort == "max"
     assert options.resume is None
-    assert options.output_format is None
     assert options.setting_sources is None
 
 
@@ -197,8 +186,8 @@ def test_a_turn_past_the_deadline_is_interrupted_and_drained(world: Callable[...
     ("result", "error"),
     [
         (
-            finished(subtype="error_max_structured_output_retries", is_error=True, errors=["Too many retries."]),
-            "Too many retries.",
+            finished(subtype="error_during_execution", is_error=True, errors=["The tool failed."]),
+            "The tool failed.",
         ),
         (
             finished("API Error: 401 API key is invalid.", is_error=True, api_error_status=401),
@@ -213,10 +202,9 @@ def test_a_run_that_ended_in_error_carries_why_and_the_session(
 ) -> None:
     world(result)
 
-    outcome = ClaudeIntelligence().run(request(output_schema=SCHEMA))
+    outcome = ClaudeIntelligence().run(request())
 
     assert outcome.error == error
-    assert outcome.output is None
     assert outcome.session_id == SESSION
 
 
@@ -229,44 +217,6 @@ def test_a_runtime_failure_is_the_result_not_a_crash(world: Callable[..., FakeWo
     assert result.session_id == "earlier-session"
     assert fake.disconnected == 1
     assert fake.prompts == ["Do the work."]
-
-
-def test_structured_output_is_asked_for_with_the_original_schema(world: Callable[..., FakeWorld]) -> None:
-    fake = world(finished("Answered.", {"answer": "42"}))
-
-    result = ClaudeIntelligence().run(request(output_schema=SCHEMA))
-
-    assert result.error is None
-    assert result.output == {"answer": "42"}
-    assert result.text == "Answered."
-    assert fake.options[0].output_format == {"type": "json_schema", "schema": SCHEMA}
-    assert len(fake.prompts) == 1
-
-
-def test_an_unacceptable_answer_is_asked_for_again_until_the_cap(world: Callable[..., FakeWorld]) -> None:
-    fake = world(finished("I could not."), *[finished(structured_output={"answer": 42})] * MAX_INVALID_SUBMISSIONS)
-
-    result = ClaudeIntelligence().run(request(output_schema=SCHEMA))
-
-    _, missing = parse_answer(None, SCHEMA)
-    _, mismatched = parse_answer({"answer": 42}, SCHEMA)
-    assert missing is not None
-    assert mismatched is not None
-    assert result.output is None
-    assert result.error == f"No valid submission after {MAX_INVALID_SUBMISSIONS} retries: {mismatched}"
-    assert result.session_id == SESSION
-    assert fake.prompts[1:] == [reanswer_prompt(missing)] + [reanswer_prompt(mismatched)] * (
-        MAX_INVALID_SUBMISSIONS - 1
-    )
-
-
-def test_an_answer_accepted_after_a_retry_is_the_output(world: Callable[..., FakeWorld]) -> None:
-    world(finished(structured_output=["answer"]), finished(structured_output={"answer": "42"}))
-
-    result = ClaudeIntelligence().run(request(output_schema=SCHEMA))
-
-    assert result.error is None
-    assert result.output == {"answer": "42"}
 
 
 @pytest.mark.parametrize(

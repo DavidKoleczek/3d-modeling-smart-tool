@@ -2,7 +2,6 @@
 
 import asyncio
 from importlib.metadata import version
-import json
 from pathlib import Path
 import tempfile
 import time
@@ -12,15 +11,9 @@ from openai_codex import ApprovalMode, AsyncCodex, AsyncThread, Sandbox, TurnRes
 from openai_codex.types import GetAccountResponse, ReasoningEffort, TurnStatus
 
 from modeling_3d.intelligence.schemas import AgentRequest, AgentResult
-from modeling_3d.intelligence.submission import MAX_INVALID_SUBMISSIONS, reanswer_prompt, submission_problem
 from modeling_3d.schemas import Modeling3dError
 
 SIGN_IN_DOCUMENTATION = "https://developers.openai.com/codex/auth"
-# Keywords whose values are schemas, by how they hold them; walking only these leaves instance data such as
-# `default` and `enum` untouched.
-SUBSCHEMA_KEYWORDS = {"items", "additionalProperties", "not", "if", "then", "else", "contains"}
-SUBSCHEMA_LIST_KEYWORDS = {"anyOf", "oneOf", "allOf", "prefixItems"}
-SUBSCHEMA_MAP_KEYWORDS = {"properties", "patternProperties", "$defs", "definitions"}
 
 
 class CodexIntelligence:
@@ -65,8 +58,6 @@ class CodexIntelligence:
             # precedence over one for the repository root.
             "config": {"projects": {cwd: {"trust_level": "trusted"}}},
         }
-        schema = request.output_schema
-        strict = to_strict(schema) if schema is not None else None
         deadline = time.monotonic() + request.timeout_seconds
         timed_out = f"The agent did not finish within {request.timeout_seconds} seconds."
         # Carried out of the try so the failure paths can name the session the caller could resume.
@@ -78,47 +69,24 @@ class CodexIntelligence:
                 else:
                     thread = await codex.thread_start(**thread_options)
                 session_id = thread.id
-                prompt = request.prompt
-                invalid = 0
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        return AgentResult(error=timed_out, session_id=session_id)
-                    result = await run_turn(
-                        thread, prompt, ReasoningEffort(request.reasoning_effort), strict, remaining
-                    )
-                    if result is None:
-                        return AgentResult(error=timed_out, session_id=session_id)
-                    text = result.final_response or ""
-                    if result.status != TurnStatus.completed:
-                        error = result.error.message if result.error else f"The turn ended {result.status.value}."
-                        return AgentResult(text=text, error=error, session_id=session_id)
-                    if schema is None:
-                        return AgentResult(text=text, session_id=session_id)
-                    output, problem = parse_answer(result.final_response, schema)
-                    if problem is None:
-                        return AgentResult(output=output, text=text, session_id=session_id)
-                    if invalid >= MAX_INVALID_SUBMISSIONS:
-                        return AgentResult(
-                            text=text,
-                            error=f"No valid submission after {invalid} retries: {problem}",
-                            session_id=session_id,
-                        )
-                    invalid += 1
-                    prompt = reanswer_prompt(problem)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return AgentResult(error=timed_out, session_id=session_id)
+                result = await run_turn(thread, request.prompt, ReasoningEffort(request.reasoning_effort), remaining)
+                if result is None:
+                    return AgentResult(error=timed_out, session_id=session_id)
+                text = result.final_response or ""
+                if result.status != TurnStatus.completed:
+                    error = result.error.message if result.error else f"The turn ended {result.status.value}."
+                    return AgentResult(text=text, error=error, session_id=session_id)
+                return AgentResult(text=text, session_id=session_id)
         except Exception as error:  # an SDK or runtime failure is the caller's data, not a crash
             return AgentResult(error=f"{type(error).__name__}: {error}", session_id=session_id)
 
 
-async def run_turn(
-    thread: AsyncThread,
-    prompt: str,
-    effort: ReasoningEffort,
-    output_schema: dict[str, Any] | None,
-    timeout: float,
-) -> TurnResult | None:
+async def run_turn(thread: AsyncThread, prompt: str, effort: ReasoningEffort, timeout: float) -> TurnResult | None:
     """The turn's result, or None when it ran out of time and was interrupted."""
-    handle = await thread.turn(prompt, effort=effort, output_schema=output_schema)
+    handle = await thread.turn(prompt, effort=effort)
     completed = asyncio.create_task(handle.run())
     try:
         return await asyncio.wait_for(asyncio.shield(completed), timeout)
@@ -127,79 +95,6 @@ async def run_turn(
         # Draining to the completed event leaves the thread usable for a later resume.
         await completed
         return None
-
-
-def parse_answer(text: str | None, schema: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    """The final message as output conforming to `schema`, or why it is not acceptable."""
-    try:
-        answer = json.loads(text or "")
-    except json.JSONDecodeError as error:
-        return None, f"the final message is not JSON ({error.msg})"
-    if not isinstance(answer, dict):
-        return None, "the final message is not a JSON object"
-    answer = without_added_nulls(answer, schema, schema)
-    problem = submission_problem(answer, schema)
-    return (answer, None) if problem is None else (None, problem)
-
-
-def to_strict(schema: dict[str, Any]) -> dict[str, Any]:
-    """`schema` in the form the API enforces: every property required, no others allowed.
-
-    A property that was optional becomes nullable instead, so the model can still leave it out by answering null;
-    `without_added_nulls` maps those nulls back to absent keys.
-    """
-    strict: dict[str, Any] = {}
-    for keyword, value in schema.items():
-        if keyword in SUBSCHEMA_KEYWORDS and isinstance(value, dict):
-            strict[keyword] = to_strict(value)
-        elif keyword in SUBSCHEMA_LIST_KEYWORDS and isinstance(value, list):
-            strict[keyword] = [to_strict(item) if isinstance(item, dict) else item for item in value]
-        elif keyword in SUBSCHEMA_MAP_KEYWORDS and isinstance(value, dict):
-            strict[keyword] = {
-                name: to_strict(item) if isinstance(item, dict) else item for name, item in value.items()
-            }
-        else:
-            strict[keyword] = value
-    if strict.get("type") == "object" or "properties" in strict:
-        properties: dict[str, Any] = strict.get("properties", {})
-        required = set(strict.get("required", []))
-        strict["properties"] = {
-            name: item if name in required else _nullable(item) for name, item in properties.items()
-        }
-        strict["required"] = list(properties)
-        strict["additionalProperties"] = False
-    return strict
-
-
-def without_added_nulls(value: Any, schema: dict[str, Any], root: dict[str, Any]) -> Any:
-    """`value` without the nulls `to_strict` let the model give for properties `schema` leaves optional."""
-    if "$ref" in schema:
-        schema = _resolve(root, schema["$ref"])
-    if isinstance(value, dict):
-        properties: dict[str, Any] = schema.get("properties", {})
-        required = set(schema.get("required", []))
-        return {
-            name: without_added_nulls(item, properties.get(name, {}), root)
-            for name, item in value.items()
-            if item is not None or name not in properties or name in required
-        }
-    if isinstance(value, list):
-        items = schema.get("items", {})
-        return [without_added_nulls(item, items if isinstance(items, dict) else {}, root) for item in value]
-    return value
-
-
-def _nullable(schema: Any) -> dict[str, Any]:
-    if isinstance(schema, dict) and {"type": "null"} in schema.get("anyOf", []):
-        return schema
-    return {"anyOf": [schema, {"type": "null"}]}
-
-
-def _resolve(root: dict[str, Any], reference: str) -> dict[str, Any]:
-    node: Any = root
-    for part in reference.removeprefix("#/").split("/"):
-        node = node[part]
-    return node
 
 
 async def _account() -> GetAccountResponse:

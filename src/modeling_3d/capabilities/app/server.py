@@ -1,111 +1,130 @@
-"""App: a chat page on this machine where a person and an agent talk, served from a background thread."""
+"""App: a browser page that hosts the MCP App view, its sandbox proxy, and the MCP server it renders the view from."""
 
-import asyncio
-from collections.abc import Callable
-import contextlib
-import json
 from pathlib import Path
 import socket
 import threading
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import FileResponse
+from fastapi import FastAPI
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
+from mcp.server import Server
 import uvicorn
 
 from modeling_3d.schemas import Modeling3dError
 
-PAGE = Path(__file__).parent / "static" / "index.html"
+STATIC = Path(__file__).parent / "static"
+VIEW = STATIC / "view" / "mcp_app.html"
+HOST_STATIC = STATIC / "host"
+BUILD_COMMAND = "uv run build-app.py"
 HOST = "127.0.0.1"
 STOP_TIMEOUT_SECONDS = 5
+# The spec's restrictive default for a view that declares no `ui.csp`, plus `data:` fonts so the view's inlined font
+# renders. The view is written into a frame of the sandbox page, so it inherits this policy.
+VIEW_CSP = (
+    "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "font-src 'self' data:; media-src 'self' data:; connect-src 'none'; frame-src 'none'; object-src 'none'; "
+    "base-uri 'self'"
+)
 
 
 class App:
-    """The app being served: where to open it, and how to show the agent's messages on it."""
+    """The app being served: where to open it in a browser."""
 
-    def __init__(
-        self,
-        url: str,
-        server: uvicorn.Server,
-        loop: asyncio.AbstractEventLoop,
-        thread: threading.Thread,
-        pages: set[WebSocket],
-    ) -> None:
+    def __init__(self, url: str, servers: list[uvicorn.Server], threads: list[threading.Thread]) -> None:
         self.url = url
-        self._server = server
-        self._loop = loop
-        self._thread = thread
-        self._pages = pages
-
-    def send(self, text: str) -> int:
-        """Show `text` as the agent's on every open page and return how many are open. Safe to call from any thread."""
-        asyncio.run_coroutine_threadsafe(_broadcast(self._pages, "agent", text), self._loop)
-        return len(self._pages)
+        self._servers = servers
+        self._threads = threads
 
     def stop(self) -> None:
         """Disconnect every page and stop serving."""
-        self._server.should_exit = True
-        self._thread.join(STOP_TIMEOUT_SECONDS)
+        for server in self._servers:
+            server.should_exit = True
+        for thread in self._threads:
+            thread.join(STOP_TIMEOUT_SECONDS)
 
 
-def serve_app(on_message: Callable[[str], None] | None = None, port: int | None = None) -> App:
-    """Serve the app from a daemon thread and return it once the port is listening."""
+def view() -> str:
+    """The view's HTML: the MCP App resource every host renders."""
+    if not VIEW.is_file():
+        raise Modeling3dError(
+            f"The app's view is not compiled: {VIEW} does not exist. Run `{BUILD_COMMAND}` from the repository root."
+        )
+    return VIEW.read_text(encoding="utf-8")
+
+
+def serve_app(server: Server, port: int | None = None) -> App:
+    """Serve the browser host page for `server`'s view from daemon threads, and return once both ports listen."""
     # Bound and listening before this returns, so the URL answers at once and a held port is a named failure.
-    sock = _bind(port)
-    bound_port = int(sock.getsockname()[1])
-    url = f"http://{HOST}:{bound_port}"
-    pages: set[WebSocket] = set()
-    api = _create_api({url, f"http://localhost:{bound_port}"}, pages, on_message)
-    # Without a log config uvicorn leaves logging alone. Its default one writes access lines to stdout, which the MCP
-    # adapter needs for MCP messages alone.
-    server = uvicorn.Server(uvicorn.Config(api, log_config=None, log_level="warning", lifespan="off"))
-    loop = asyncio.new_event_loop()
+    host_sock = _bind(port)
+    try:
+        sandbox_sock = _bind(None)
+    except Modeling3dError:
+        host_sock.close()
+        raise
+    host_port = int(host_sock.getsockname()[1])
+    sandbox_port = int(sandbox_sock.getsockname()[1])
+    apis = (_create_host_api(server, sandbox_port), _create_sandbox_api(host_port))
+    servers: list[uvicorn.Server] = []
+    threads: list[threading.Thread] = []
+    for api, sock in zip(apis, (host_sock, sandbox_sock), strict=True):
+        # Without a log config uvicorn leaves logging alone. Its default one writes access lines to stdout, which the
+        # MCP adapter needs for MCP messages alone.
+        uvicorn_server = uvicorn.Server(uvicorn.Config(api, log_config=None, log_level="warning"))
+        thread = threading.Thread(target=uvicorn_server.run, kwargs={"sockets": [sock]}, daemon=True)
+        thread.start()
+        servers.append(uvicorn_server)
+        threads.append(thread)
+    return App(f"http://{HOST}:{host_port}", servers, threads)
 
-    def run() -> None:
-        try:
-            loop.run_until_complete(server.serve(sockets=[sock]))
-        finally:
-            loop.close()
 
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-    return App(url, server, loop, thread, pages)
+def _create_host_api(server: Server, sandbox_port: int) -> FastAPI:
+    # The SDK guards `/mcp` against DNS rebinding for a loopback host by default, so only this machine's pages reach it.
+    mcp_api = server.streamable_http_app(host=HOST)
+    # FastAPI runs only its own lifespan, never a mounted app's, and the session manager must be running to serve.
+    api = FastAPI(lifespan=lambda _: server.session_manager.run(), docs_url=None, redoc_url=None, openapi_url=None)
+    api.router.routes.extend(mcp_api.routes)
 
-
-def _create_api(origins: set[str], pages: set[WebSocket], on_message: Callable[[str], None] | None) -> FastAPI:
-    api = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-
-    @api.get("/", include_in_schema=False)
-    def page() -> FileResponse:
-        return FileResponse(PAGE)
-
-    @api.websocket("/ws")
-    async def connect(websocket: WebSocket) -> None:
-        # Browsers let any website open a WebSocket to this machine, so only the app's own page may type into it.
-        if websocket.headers.get("origin") not in origins:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        await websocket.accept()
-        pages.add(websocket)
-        try:
-            async for raw in websocket.iter_text():
-                text = raw.strip()
-                if not text:
-                    continue
-                await _broadcast(pages, "you", text)
-                if on_message is not None:
-                    on_message(text)
-        finally:
-            pages.discard(websocket)
+    @api.get("/{page_path:path}", include_in_schema=False)
+    def page(page_path: str) -> Response:
+        index = HOST_STATIC / "index.html"
+        if not index.is_file():
+            return _not_compiled()
+        candidate = (HOST_STATIC / page_path).resolve()
+        if candidate.is_relative_to(HOST_STATIC.resolve()) and candidate.is_file() and candidate.suffix != ".html":
+            return FileResponse(candidate)
+        return HTMLResponse(index.read_text(encoding="utf-8").replace("{{sandbox_port}}", str(sandbox_port)))
 
     return api
 
 
-async def _broadcast(pages: set[WebSocket], sender: str, text: str) -> None:
-    message = json.dumps({"from": sender, "text": text})
-    for page in list(pages):
-        # A page that closed while this was sending is dropped by its own handler.
-        with contextlib.suppress(WebSocketDisconnect, RuntimeError):
-            await page.send_text(message)
+def _create_sandbox_api(host_port: int) -> FastAPI:
+    """The sandbox proxy page, on its own origin as the MCP Apps spec requires of a web host, with the view's CSP."""
+    api = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @api.get("/sandbox.html", include_in_schema=False)
+    def sandbox() -> Response:
+        page = HOST_STATIC / "sandbox.html"
+        if not page.is_file():
+            return _not_compiled()
+        return HTMLResponse(
+            page.read_text(encoding="utf-8").replace("{{host_port}}", str(host_port)),
+            headers={"Content-Security-Policy": VIEW_CSP, "Cache-Control": "no-store"},
+        )
+
+    @api.get("/assets/{asset}", include_in_schema=False)
+    def asset(asset: str) -> Response:
+        assets = (HOST_STATIC / "assets").resolve()
+        candidate = (assets / asset).resolve()
+        if candidate.is_relative_to(assets) and candidate.is_file():
+            return FileResponse(candidate)
+        return PlainTextResponse("Not found.", status_code=404)
+
+    return api
+
+
+def _not_compiled() -> Response:
+    return PlainTextResponse(
+        f"The app is not compiled. Run `{BUILD_COMMAND}` from the repository root.", status_code=503
+    )
 
 
 def _bind(port: int | None) -> socket.socket:

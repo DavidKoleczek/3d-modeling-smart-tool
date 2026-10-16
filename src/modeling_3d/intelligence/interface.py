@@ -27,11 +27,7 @@ class Intelligence(Protocol):
         ...
 
     def run(self, request: AgentRequest) -> AgentResult:
-        """Run one agent to completion.
-
-        When the request carries an output schema, the result either holds a conforming
-        `output` or an `error`; retry mechanics are the implementation's own business.
-        """
+        """Run one agent to completion."""
         ...
 
 

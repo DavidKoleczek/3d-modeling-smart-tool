@@ -10,7 +10,6 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
 
 from modeling_3d.intelligence.interface import state_directory
 from modeling_3d.intelligence.schemas import AgentRequest, AgentResult
-from modeling_3d.intelligence.submission import MAX_INVALID_SUBMISSIONS, reanswer_prompt, submission_problem
 from modeling_3d.schemas import Modeling3dError
 
 AUTHENTICATION_DOCUMENTATION = "https://code.claude.com/docs/en/agent-sdk/quickstart"
@@ -55,7 +54,6 @@ class ClaudeIntelligence:
             cwd = scratch_directory()
             cwd.mkdir(parents=True, exist_ok=True)
             tools = []
-        schema = request.output_schema
         # The shell is not sandboxed to the workspace; the caller's prompt bounds the agent and the caller
         # validates before anything the agent wrote is kept.
         options = ClaudeAgentOptions(
@@ -65,7 +63,6 @@ class ClaudeIntelligence:
             permission_mode="bypassPermissions",
             effort=request.reasoning_effort,
             resume=request.resume,
-            output_format={"type": "json_schema", "schema": schema} if schema is not None else None,
         )
         deadline = time.monotonic() + request.timeout_seconds
         timed_out = f"The agent did not finish within {request.timeout_seconds} seconds."
@@ -77,32 +74,17 @@ class ClaudeIntelligence:
             # Not `async with`: the client's __aexit__ is typed as able to suppress errors, so ty would see a path
             # that returns nothing.
             try:
-                prompt = request.prompt
-                invalid = 0
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        return AgentResult(error=timed_out, session_id=session_id)
-                    result, finished = await run_turn(client, prompt, remaining)
-                    session_id = result.session_id
-                    if not finished:
-                        return AgentResult(error=timed_out, session_id=session_id)
-                    text = result.result or ""
-                    if result.is_error:
-                        return AgentResult(text=text, error=describe(result), session_id=session_id)
-                    if schema is None:
-                        return AgentResult(text=text, session_id=session_id)
-                    output, problem = parse_answer(result.structured_output, schema)
-                    if problem is None:
-                        return AgentResult(output=output, text=text, session_id=session_id)
-                    if invalid >= MAX_INVALID_SUBMISSIONS:
-                        return AgentResult(
-                            text=text,
-                            error=f"No valid submission after {invalid} retries: {problem}",
-                            session_id=session_id,
-                        )
-                    invalid += 1
-                    prompt = reanswer_prompt(problem)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return AgentResult(error=timed_out, session_id=session_id)
+                result, finished = await run_turn(client, request.prompt, remaining)
+                session_id = result.session_id
+                if not finished:
+                    return AgentResult(error=timed_out, session_id=session_id)
+                text = result.result or ""
+                if result.is_error:
+                    return AgentResult(text=text, error=describe(result), session_id=session_id)
+                return AgentResult(text=text, session_id=session_id)
             finally:
                 await client.disconnect()
         except Exception as error:  # an SDK or runtime failure is the caller's data, not a crash
@@ -119,16 +101,6 @@ async def run_turn(client: ClaudeSDKClient, prompt: str, timeout: float) -> tupl
         await client.interrupt()
         # Draining to the result leaves the session usable for a later resume, and names it.
         return await completed, False
-
-
-def parse_answer(output: Any, schema: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
-    """The structured output when it conforms to `schema`, or why it is not acceptable."""
-    if output is None:
-        return None, "the answer was not given as structured output"
-    if not isinstance(output, dict):
-        return None, "the structured output is not a JSON object"
-    problem = submission_problem(output, schema)
-    return (output, None) if problem is None else (None, problem)
 
 
 def describe(result: ResultMessage) -> str:

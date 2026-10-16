@@ -2,11 +2,9 @@
 
 import asyncio
 from collections.abc import Callable
-import json
 from pathlib import Path
 from typing import Any
 
-import jsonschema
 import pytest
 
 pytest.importorskip("openai_codex")
@@ -15,25 +13,11 @@ from openai_codex import ApprovalMode, Sandbox, TurnResult
 from openai_codex.types import GetAccountResponse, TurnError, TurnStatus
 
 from modeling_3d.intelligence import codex as adapter
-from modeling_3d.intelligence.codex import CodexIntelligence, parse_answer, to_strict, without_added_nulls
+from modeling_3d.intelligence.codex import CodexIntelligence
 from modeling_3d.intelligence.schemas import AgentRequest, HostWorkspace
-from modeling_3d.intelligence.submission import MAX_INVALID_SUBMISSIONS, reanswer_prompt
 from modeling_3d.schemas import Modeling3dError
 
 SESSION = "fake-thread"
-SCHEMA: dict[str, Any] = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
-OPTIONAL: dict[str, Any] = {
-    "type": "object",
-    "properties": {"name": {"type": "string"}, "steps": {"type": "array", "items": {"$ref": "#/$defs/Step"}}},
-    "required": ["steps"],
-    "$defs": {
-        "Step": {
-            "type": "object",
-            "properties": {"command": {"type": "string"}, "reason": {"type": "string"}},
-            "required": ["command"],
-        }
-    },
-}
 
 
 def completed(text: str | None, status: TurnStatus = TurnStatus.completed, error: str | None = None) -> TurnResult:
@@ -70,9 +54,9 @@ class FakeThread:
         self.id = thread_id
         self._world = world
 
-    async def turn(self, prompt: str, effort: Any, output_schema: dict[str, Any] | None) -> FakeHandle:
+    async def turn(self, prompt: str, effort: Any) -> FakeHandle:
         self._world.prompts.append(prompt)
-        self._world.turns.append({"effort": effort, "output_schema": output_schema})
+        self._world.turns.append({"effort": effort})
         handle = FakeHandle(self._world.results.pop(0))
         self._world.handles.append(handle)
         return handle
@@ -155,7 +139,6 @@ def test_a_workspace_run_has_full_access_without_approvals_and_keeps_the_trust_e
     assert options["approval_mode"] == ApprovalMode.deny_all
     assert options["config"] == {"projects": {cwd: {"trust_level": "trusted"}}}
     assert fake.turns[0]["effort"] == "max"
-    assert fake.turns[0]["output_schema"] is None
 
 
 def test_a_plain_completion_runs_in_a_scratch_directory_never_the_callers(world: Callable[..., FakeWorld]) -> None:
@@ -235,85 +218,6 @@ def test_a_runtime_failure_is_the_result_not_a_crash(
     assert result.error == "RuntimeError: turn failed with status failed"
     assert result.session_id == SESSION
     assert fake.started
-
-
-def test_structured_output_is_asked_for_strictly_and_answered_against_the_original_schema(
-    world: Callable[..., FakeWorld],
-) -> None:
-    fake = world(completed(json.dumps({"name": None, "steps": [{"command": "true", "reason": None}]})))
-
-    result = CodexIntelligence().run(request(output_schema=OPTIONAL))
-
-    assert result.error is None
-    assert result.output == {"steps": [{"command": "true"}]}
-    assert fake.turns[0]["output_schema"] == to_strict(OPTIONAL)
-    assert len(fake.prompts) == 1
-
-
-def test_an_unacceptable_answer_is_asked_for_again_until_the_cap(world: Callable[..., FakeWorld]) -> None:
-    fake = world(completed("not json"), *[completed(json.dumps({"answer": 42}))] * MAX_INVALID_SUBMISSIONS)
-
-    result = CodexIntelligence().run(request(output_schema=SCHEMA))
-
-    _, unparseable = parse_answer("not json", SCHEMA)
-    _, mismatched = parse_answer(json.dumps({"answer": 42}), SCHEMA)
-    assert unparseable is not None
-    assert "not JSON" in unparseable
-    assert mismatched is not None
-    assert result.output is None
-    assert result.error == f"No valid submission after {MAX_INVALID_SUBMISSIONS} retries: {mismatched}"
-    assert result.session_id == SESSION
-    assert fake.prompts[1:] == [reanswer_prompt(unparseable)] + [reanswer_prompt(mismatched)] * (
-        MAX_INVALID_SUBMISSIONS - 1
-    )
-
-
-def test_an_answer_accepted_after_a_retry_is_the_output(world: Callable[..., FakeWorld]) -> None:
-    world(completed(json.dumps(["answer"])), completed(json.dumps({"answer": "42"})))
-
-    result = CodexIntelligence().run(request(output_schema=SCHEMA))
-
-    assert result.error is None
-    assert result.output == {"answer": "42"}
-
-
-def test_an_optional_property_becomes_required_and_nullable_everywhere_and_nothing_extra_is_allowed() -> None:
-    strict = to_strict(OPTIONAL)
-
-    assert strict["required"] == ["name", "steps"]
-    assert strict["additionalProperties"] is False
-    assert strict["properties"]["name"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
-    assert strict["properties"]["steps"] == OPTIONAL["properties"]["steps"]
-    step = strict["$defs"]["Step"]
-    assert step["required"] == ["command", "reason"]
-    assert step["additionalProperties"] is False
-    assert step["properties"]["reason"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
-    assert "additionalProperties" not in OPTIONAL
-
-
-def test_an_already_strict_schema_is_unchanged_and_instance_data_is_never_walked() -> None:
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": {
-            "method": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": {"properties": {}}},
-            "notes": {"type": "array", "items": {"type": "string"}},
-        },
-        "required": ["method", "notes"],
-        "additionalProperties": False,
-    }
-
-    assert to_strict(schema) == schema
-
-
-def test_an_answer_with_nulls_for_optional_properties_validates_against_the_original_schema() -> None:
-    answer = {"name": None, "steps": [{"command": "true", "reason": None}, {"command": "ls", "reason": "look"}]}
-    jsonschema.validate(answer, to_strict(OPTIONAL))
-
-    restored = without_added_nulls(answer, OPTIONAL, OPTIONAL)
-
-    assert restored == {"steps": [{"command": "true"}, {"command": "ls", "reason": "look"}]}
-    jsonschema.validate(restored, OPTIONAL)
-    assert without_added_nulls({"steps": None}, OPTIONAL, OPTIONAL) == {"steps": None}
 
 
 @pytest.mark.parametrize(

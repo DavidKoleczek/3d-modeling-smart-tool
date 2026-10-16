@@ -70,22 +70,22 @@ def test_version_line_names_the_manifest_version_in_every_skill(monkeypatch: pyt
 
 
 def test_skill_resources_resolve_under_the_skill_directory() -> None:
-    root = lib.skill_directory()
+    root = skill_module.skill_directory()
     resources = [line.removeprefix("<file>").removesuffix("</file>") for line in _resource_lines(lib.skill())]
 
     assert resources
-    assert resources == lib.skill_resources()
+    assert resources == skill_module.skill_resources()
     assert (root / "SMART_TOOL.md").is_file()
     for resource in resources:
         assert (root / resource).is_file()
 
 
 def test_every_capability_ships_the_files_its_skill_names() -> None:
-    root = lib.skill_directory()
+    root = skill_module.skill_directory()
 
     for capability in CAPABILITIES:
         assert (root / capability.skill).is_file()
-        assert lib.capability_skill_resources(capability.name) == list(capability.resources)
+        assert skill_module.capability_skill_resources(capability.name) == list(capability.resources)
         for resource in capability.resources:
             assert (root / resource).is_file()
 
@@ -93,7 +93,7 @@ def test_every_capability_ships_the_files_its_skill_names() -> None:
 def test_every_capability_skill_is_its_markdown_in_the_tool_s_shape() -> None:
     for capability in CAPABILITIES:
         document = lib.skill(capability.name)
-        body = (lib.skill_directory() / capability.skill).read_text(encoding="utf-8").strip()
+        body = (skill_module.skill_directory() / capability.skill).read_text(encoding="utf-8").strip()
         kind = "Model-backed." if capability.model_backed else "Deterministic."
 
         assert document.startswith(f'<skill_content name="modeling-3d {capability.name}">')

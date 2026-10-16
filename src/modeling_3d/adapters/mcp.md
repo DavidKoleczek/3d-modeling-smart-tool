@@ -1,43 +1,37 @@
-`mcp` runs the tool's MCP server over stdio, as a Claude Code
-[channel](https://code.claude.com/docs/en/channels-reference): two tools that open the app and
-reply in it, and the messages a person types in the app pushed into the session. It reads and
-writes MCP messages on stdin and stdout until the client disconnects, then stops the app.
+`mcp` runs the tool's MCP server over stdio, with the app as an [MCP App](https://github.com/modelcontextprotocol/ext-apps).
 
-Configure the client to launch the command `modeling-3d` with the single argument `mcp`; the
-client owns the process. Do not run it yourself in a terminal: it waits for an MCP client on
-stdin. Nothing is served until `open_app` is called, so each session gets its own app on its
-own free port, and a session that never opens it binds nothing.
+Configure the client to launch the command `modeling-3d` with the single argument `mcp`. 
+The client owns the process. Do not run it yourself in a terminal: it waits for an MCP client on stdin. 
+Nothing is served until `open_app` is called, so each session gets its own app on its own free port, and a session that never opens it binds nothing.
 
 ```json
 { "mcpServers": { "modeling-3d": { "command": "modeling-3d", "args": ["mcp"] } } }
 ```
 
-```bash
-# custom channels are not on the research preview allowlist, so they load through the development flag
-claude --dangerously-load-development-channels server:modeling-3d
-```
-
-The library has no `mcp` function. The command calls `run_stdio()` in
-`modeling_3d.adapters.mcp`, which wraps `serve_app` from the library.
+The library has no `mcp` function. The command calls `run_stdio()` in `modeling_3d.adapters.mcp`, which serves `app_server().server` from the library over stdio.
 
 ## Tools
 
-- `open_app`: serves the app, the same page `modeling-3d app` serves, and returns its URL.
-  Calling it again returns the same URL.
-- `reply` with `text`: shows `text` on every open page of the app. Answers `sent`, or says no
-  page is open.
+- `open_app`: serves the app and returns its browser URL. Its `_meta.ui.resourceUri` names the
+  view, so a host that renders MCP Apps shows it inline. A client that takes URL elicitation,
+  such as Claude Code, is asked to open the URL in the browser. Calling it again returns the
+  same URL.
+- `reply` with `text`: shows `text` in every open view, on the view's next poll.
+- `app_updates` with `after`: the agent's messages past the first `after`, which the view polls.
+- `app_message` with `text`: hands the agent a message from the browser host page.
 
-The server declares the `claude/channel` capability. Each message typed in the app is sent as a
-`notifications/claude/channel` notification with the message as `content`, which Claude Code
-shows the model as a `<channel>` event.
+The last two are listed only to hosts that render MCP Apps, with `visibility: ["app"]`, so no
+model sees them.
 
-## Failures
+## Where the user's messages go
 
-`reply` before `open_app` fails as a tool error naming the fix. A session started without the
-server in `--channels` or `--dangerously-load-development-channels` still gets both tools, but
-Claude Code drops the messages from the app without an error. Channels also need Claude Code's
-feature flags, so a session with `DISABLE_TELEMETRY` or
-`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` set reports that channels are not available.
-
-The server stays on MCP SDK 1.x: Claude Code does not register a channel that negotiates
-protocol revision 2026-07-28, which SDK 2.x speaks.
+1. In a host that renders MCP Apps, such as VS Code, the view sends them as `ui/message`, and
+   the host adds them to the conversation.
+1. In Claude Code, which does not render MCP Apps, the user opens the URL. The page there is an
+   MCP Apps host for the same view, connected to this server at the page's `/mcp`. It hands each
+   message to `app_message`, and the server posts it into the inbox of the session that launched
+   it, from `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`. An idle session
+   starts a turn with it; a busy one reads it between tool calls. It arrives as a
+   [message from another session](https://code.claude.com/docs/en/cross-session-messaging),
+   so it cannot approve anything.
+1. Anywhere else, they come back with the result of the agent's next `reply` or `open_app`.

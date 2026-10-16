@@ -1,10 +1,10 @@
-"""Top level entry point for the Modeling 3d library."""
+"""Top level entry point for the Modeling 3D library."""
 
 from collections.abc import Callable
-from pathlib import Path
 
+from modeling_3d.capabilities.app import mcp_server as app_server_module
 from modeling_3d.capabilities.app import server as app_module
-from modeling_3d.capabilities.app.server import App
+from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.core import manifest
 from modeling_3d.core import skill as skill_module
 from modeling_3d.schemas import Manifest
@@ -16,23 +16,13 @@ def load_manifest() -> Manifest:
 
 
 def skill(capability: str | None = None) -> str:
-    """The tool's skill, or the named capability's own skill, wrapped so a reader knows where the tool's files are."""
+    """The tool's skill, or the named capability's own skill, wrapped so a reader knows where the tool's files are.
+
+    Args:
+        capability: One of the names the tool's skill lists under its capabilities; an unknown name raises
+            `Modeling3dError` listing the valid ones. Omit it for the tool's skill.
+    """
     return skill_module.skill(capability)
-
-
-def skill_directory() -> Path:
-    """The installed package root, where the files the skill names can be read."""
-    return skill_module.skill_directory()
-
-
-def skill_resources() -> list[str]:
-    """The files the skill lists, as paths relative to the skill directory. Every one ships inside the package."""
-    return skill_module.skill_resources()
-
-
-def capability_skill_resources(capability: str) -> list[str]:
-    """The files that capability's skill lists, as paths relative to the skill directory."""
-    return skill_module.capability_skill_resources(capability)
 
 
 def version() -> str:
@@ -40,18 +30,20 @@ def version() -> str:
     return skill_module.version()
 
 
-def repository_url() -> str | None:
-    """The tool's canonical source, from the package metadata, or None when the package declares none."""
-    return skill_module.repository_url()
+def app_server(deliver: Callable[[str], None] | None = None) -> AppServer:
+    """The app's MCP server: tools that open the app and talk through it, and its view as an MCP App resource.
 
-
-def serve_app(on_message: Callable[[str], None] | None = None, port: int | None = None) -> App:
-    """Serve the app, a chat page on this machine, from a daemon thread and return it once the port is listening.
-
-    It lives until `App.stop` or the process exits, and only this machine can reach it.
+    Serve `AppServer.server` over any MCP transport. `AppServer.open` serves the browser host page, which renders
+    the view for agents that cannot embed it and reaches the same server at its own `/mcp`.
 
     Args:
-        on_message: Called with each message typed on the page, on the app's own thread.
-        port: The port to bind; a free one is chosen when omitted.
+        deliver: Called with each message the user sends from the browser host page, on a worker thread; raises
+            `OSError` when it cannot deliver. Without it, or when it raises, the message is handed to the agent with
+            its next tool result instead.
     """
-    return app_module.serve_app(on_message, port)
+    return app_server_module.AppServer(skill_module.DISTRIBUTION, version(), deliver)
+
+
+def app_view() -> str:
+    """The app's view, an MCP App: the HTML a host renders inline, and the one the browser host page renders."""
+    return app_module.view()

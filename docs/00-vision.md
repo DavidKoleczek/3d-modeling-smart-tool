@@ -4,6 +4,11 @@ An expert in creating and editing 3D models.
 It creates 3D models from a description and optional reference images or models.
 There is a UX that lets you view what is being built, provide inputs, and steer the agent.
 
+The primary of way of driving the tool is through an agent app like Claude Code or Codex.
+You ask it to create a 3D model, and it calls the smart capability. 
+It automatically opens up the app or embeds its work through an MCP app.
+In the app, you can provide feedback at any time, even pointing to specific things on the model.
+
 ## Goals
 
 - Has a dashboard where users can easily see and steer the 3D model being made.

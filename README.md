@@ -1,4 +1,4 @@
-# Modeling 3d Smart Tool
+# Modeling 3D Smart Tool
 
 Creates and edits 3D models from a description of what to build.
 
@@ -51,18 +51,15 @@ uv tool uninstall modeling-3d
 # Print the tool's manifest as JSON
 modeling-3d manifest
 
-# Serve the app, a chat page on this machine, without an agent session
+# Serve the app in a browser page, without an agent session; messages sent from it are printed
 modeling-3d app
 
-# Serve the app to Claude Code as a channel; an MCP client launches this
+# Serve the app as an MCP App; an MCP client launches this
 modeling-3d mcp
 ```
 
-To chat with Claude Code through the app, start it from this directory with the server in `.mcp.json` loaded as a channel, then ask Claude to open the app:
-
-```bash
-claude --dangerously-load-development-channels server:modeling-3d
-```
+To steer Claude Code through the app, start `claude` from this directory, where `.mcp.json` loads the server, and ask it to open the app.
+Hosts that render MCP Apps, such as VS Code, show it inline instead.
 
 See the [CLI reference](docs/02-cli.md) for every flag and the [library reference](docs/01-library.md) for the Python surface.
 

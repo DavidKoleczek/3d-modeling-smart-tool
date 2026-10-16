@@ -16,13 +16,13 @@ CAPABILITIES = (
     Capability("manifest", "Print the tool's manifest as JSON.", model_backed=False, skill="core/manifest.md"),
     Capability(
         "app",
-        "Serve the app, a chat page on this machine, without an agent session; print its URL.",
+        "Serve the app in a browser page on this machine, without an agent session; print its URL.",
         model_backed=False,
         skill="capabilities/app/SKILL.md",
     ),
     Capability(
         "mcp",
-        "Serve the app to Claude Code over stdio as a channel, so the person and the session talk through it.",
+        "Serve the app over stdio as an MCP App, so the person watches and steers the agent through it.",
         model_backed=False,
         skill="adapters/mcp.md",
     ),

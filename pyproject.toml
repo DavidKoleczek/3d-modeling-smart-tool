@@ -6,11 +6,10 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.143.0,<0.144.0",
-    "jsonschema>=4.26.0,<5.0.0",
-    "mcp>=1.30.0,<2.0.0",
-    "pydantic>=2.13,<3.0",
+    "mcp>=2.3.0,<3.0.0",
+    "pydantic>=2.14,<3.0",
     "pyyaml>=6.0.3,<7.0.0",
-    "typer>=0.27.2,<0.28.0",
+    "typer>=0.27.3,<0.28.0",
     "uvicorn>=0.54.0,<0.55.0",
     "websockets>=17.2,<18.0",
 ]
@@ -20,17 +19,17 @@ modeling-3d = "modeling_3d.cli:main"
 
 [project.optional-dependencies]
 codex = [
-    "openai-codex>=0.159.2,<1.0.0",
+    "openai-codex>=0.162.1,<1.0.0",
 ]
 claude = [
-    "claude-agent-sdk>=0.2.163,<0.3.0",
+    "claude-agent-sdk>=0.2.165,<0.3.0",
 ]
 all = [
     "modeling-3d[codex,claude]",
 ]
 
 [build-system]
-requires = ["uv_build>=0.12.5,<0.13.0"]
+requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
@@ -47,13 +46,14 @@ dev = [
     "modeling-3d[all]",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
-    "ruff>=0.16",
-    "ty>=0.0.79",
+    "ruff>=0.17",
+    "ty>=0.0.86",
 ]
 
 [tool.ruff]
 line-length = 120
 target-version = "py313"
+extend-exclude = ["app"]
 
 [tool.ruff.lint]
 select = [

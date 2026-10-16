@@ -5,6 +5,7 @@ It assumes that you have installed all the prerequisites listed in CONTRIBUTING.
 
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 
 REFERENCE_ROOT = Path(__file__).parent / "reference"
@@ -38,12 +39,21 @@ def clone_missing_references() -> None:
         subprocess.run(["git", "clone", "--depth", "1", "--single-branch", repository, str(destination)], check=True)
 
 
+def install_app_dependencies() -> None:
+    """Only when pnpm is present; the compiled app is committed, so Node is needed only to change it."""
+    if shutil.which("pnpm") is None:
+        print("pnpm not found; skipping the app's dependencies. Install Node 22+ and pnpm to change the frontend.")
+        return
+    run("pnpm --dir app install --frozen-lockfile")
+
+
 def main() -> None:
     run("uv --version")
     run("prek --version")
     run("uv sync --frozen --all-extras --all-groups")
     run("prek install")
     clone_missing_references()
+    install_app_dependencies()
 
 
 if __name__ == "__main__":

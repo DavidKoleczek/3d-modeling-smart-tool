@@ -1,4 +1,4 @@
-"""Command line entry point for Modeling 3d."""
+"""Command line entry point for Modeling 3D"""
 
 from collections.abc import Callable
 import contextlib
@@ -115,20 +115,22 @@ def manifest() -> None:
 def app_(
     port: Annotated[int | None, typer.Option(help="The port to bind; a free one is chosen when omitted.")] = None,
 ) -> None:
-    """Serve the app, a chat page on this machine, and print its URL. Deterministic.
+    """Serve the app in a browser page on this machine and print its URL. Deterministic.
 
-    Not connected to an agent session: messages typed on the page show there and go nowhere else. Keeps serving
-    until Ctrl+C. Exits 1 with the cause and remedy when the port is held.
+    Not connected to an agent session: each message sent from the page is printed instead. Keeps serving until
+    Ctrl+C. Exits 1 with the cause and remedy when the port is held.
     """
-    typer.echo(lib.serve_app(port=port).url)
+    app_server = lib.app_server(deliver=typer.echo)
+    typer.echo(app_server.open(port).url)
     with contextlib.suppress(KeyboardInterrupt):
         while True:
             time.sleep(1)
+    app_server.close()
 
 
 @app.command()
 def mcp() -> None:
-    """Serve the app to Claude Code over MCP on stdio, as a channel. Deterministic.
+    """Serve the app's MCP server on stdio, with the app as an MCP App. Deterministic.
 
     For MCP clients that launch the server themselves. Reads and writes MCP messages on stdin and stdout until the
     client disconnects; prints nothing else to stdout.

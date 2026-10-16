@@ -1,7 +1,6 @@
 """What an intelligence implementation is asked to do, and what it answers with."""
 
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -15,7 +14,7 @@ class HostWorkspace(BaseModel):
 
 
 class AgentRequest(BaseModel):
-    """One agent run: a prompt, a model, and optionally a place to work and a shape to answer in."""
+    """One agent run: a prompt, a model, and optionally a place to work."""
 
     prompt: str
     model: str
@@ -23,9 +22,6 @@ class AgentRequest(BaseModel):
         default=None, description="Where the agent may read and run things; None means a plain completion, no tools"
     )
     writable: bool = Field(default=False, description="Whether the agent may create and modify files in the workspace")
-    output_schema: dict[str, Any] | None = Field(
-        default=None, description="JSON schema the structured output must satisfy"
-    )
     reasoning_effort: ReasoningEffort = "medium"
     timeout_seconds: int = Field(gt=0)
     resume: str | None = Field(
@@ -37,9 +33,6 @@ class AgentRequest(BaseModel):
 class AgentResult(BaseModel):
     """The run's outcome; in-flight agent failures set `error` instead of raising."""
 
-    output: dict[str, Any] | None = Field(
-        default=None, description="The structured output, conforming to the request's schema when one was given"
-    )
     text: str = Field(default="", description="The agent's final message")
     error: str | None = None
     session_id: str | None = Field(

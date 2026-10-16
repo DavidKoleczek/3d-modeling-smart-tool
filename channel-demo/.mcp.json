@@ -1,5 +1,0 @@
-{
-  "mcpServers": {
-    "channel-demo": { "command": "bun", "args": ["server.ts"] }
-  }
-}
