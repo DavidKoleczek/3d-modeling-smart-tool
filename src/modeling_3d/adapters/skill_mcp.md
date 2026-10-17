@@ -26,7 +26,10 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
 - `create_3d_model`, `steer_3d_model`, and `cancel_3d_model`: the library's, on the app's
   directory with origin `app`, which the view calls for the person. `create_3d_model` always
   detaches, so its runs outlive the server, and takes the files to work from as `{name, data}`
-  with `data` in base64.
+  with `data` in base64, and the agent provider, model, and reasoning effort the person picked.
+- `list_intelligence_models` and `choose_intelligence_model`: what the view's picker offers, from
+  the library's `list_intelligence_models`, and the person's last pick, which the app keeps in
+  `.app.json` in its directory.
 
 All but `open_app` are listed only to hosts that render MCP Apps, with `visibility: ["app"]`, so
 no model sees them.

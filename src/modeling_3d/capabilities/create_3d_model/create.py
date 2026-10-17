@@ -18,6 +18,7 @@ import uuid
 
 from pydantic import BaseModel
 
+from modeling_3d.capabilities.create_3d_model.intelligence_models import require_reasoning_effort
 from modeling_3d.capabilities.create_3d_model.record import (
     DEFAULT_DIRECTORY,
     EVENTS,
@@ -393,6 +394,7 @@ async def create_3d_model(
     intelligence: Intelligence | None = None,
 ) -> ModelRun:
     """Start creating the model named `name`, or changing it when it exists, and return its handle once the agent runs."""
+    require_reasoning_effort(reasoning_effort)
     if detach:
         if intelligence is not None:
             raise Modeling3dError(

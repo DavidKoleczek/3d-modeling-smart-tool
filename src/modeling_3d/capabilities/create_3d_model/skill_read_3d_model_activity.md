@@ -33,7 +33,7 @@ JSON on stdout: `model`, the summary, the same as one entry of `list-3d-models`'
 and `data`:
 
 ```json
-{"kind": "request", "text": "A low poly bear", "origin": "app", "data": {"references": ["references/bear.png"], "resumed": false, "agent_provider": "claude", "model": "claude-sonnet-5-5"}}
+{"kind": "request", "text": "A low poly bear", "origin": "app", "data": {"references": ["references/bear.png"], "resumed": false, "agent_provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium"}}
 {"kind": "said", "text": "I'll block out the body first.", "origin": null, "data": {}}
 {"kind": "tool", "text": "model.py", "origin": null, "data": {"id": "toolu_01", "name": "Write", "target": "model.py"}}
 {"kind": "tool-result", "text": "", "origin": null, "data": {"id": "toolu_01", "failed": false}}
@@ -41,7 +41,8 @@ and `data`:
 {"kind": "ended", "text": "A low poly bear, with...", "origin": null, "data": {"status": "done", "error": null, "files": ["model.py", "model.glb"]}}
 ```
 
-- `request`: what a run was asked, in `text`, with the references it was given.
+- `request`: what a run was asked, in `text`, with the references it was given and the model and
+  reasoning effort it ran with.
 - `said`: what the agent wrote for the person.
 - `tool`: a tool call, with `target`, what it works on: a command's first line, or a file's path
   relative to the model.

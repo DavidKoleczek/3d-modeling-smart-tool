@@ -40,7 +40,19 @@ from mcp.types import (
 )
 
 from modeling_3d.capabilities.app.server import App, serve_app, view
-from modeling_3d.schemas import Modeling3dError, ModelActivity, ModelListing, ModelSummary
+from modeling_3d.schemas import (
+    AGENT_PROVIDERS,
+    DEFAULT_REASONING_EFFORT,
+    REASONING_EFFORTS,
+    AppIntelligence,
+    AppState,
+    IntelligenceChoice,
+    IntelligenceModels,
+    Modeling3dError,
+    ModelActivity,
+    ModelListing,
+    ModelSummary,
+)
 
 VIEW_URI = "ui://modeling-3d/app"
 MODEL_FILE_PREFIX = "modeling-3d://models/"
@@ -59,6 +71,8 @@ REFERENCE_TYPES = (".py", ".glb")
 OPEN_REQUEST = "open"
 # Who the model's activity shows as asking, for everything done in the app.
 ORIGIN = "app"
+# What the person picked in the app, kept beside the models it shows. Starting with a dot, it is never a model.
+APP_STATE = ".app.json"
 SEES_THE_APP = (
     "Nothing they do there is sent to you: see the models and their state with `modeling-3d list-3d-models`, and what "
     "was asked of one and what its agent did with `modeling-3d read-3d-model-activity --name <name>`."
@@ -112,6 +126,9 @@ CREATE_MODEL = Tool(
             "prompt": {"type": "string"},
             "name": {"type": "string"},
             "resume_session": {"type": ["boolean", "string"]},
+            "agent_provider": {"type": "string", "enum": list(AGENT_PROVIDERS)},
+            "model": {"type": "string"},
+            "reasoning_effort": {"type": "string", "enum": list(REASONING_EFFORTS)},
             "reference_models": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -156,7 +173,37 @@ READ_ACTIVITY = Tool(
     },
     _meta=APP_ONLY,
 )
-VIEW_TOOLS = [LIST_MODELS, VIEW_MODEL, CREATE_MODEL, STEER_MODEL, CANCEL_MODEL, READ_ACTIVITY]
+LIST_INTELLIGENCE = Tool(
+    name="list_intelligence_models",
+    description="The AI models and reasoning efforts to pick from, and the ones the person picked last in the app's "
+    "directory. Called by the view.",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+CHOOSE_INTELLIGENCE = Tool(
+    name="choose_intelligence_model",
+    description="Remember an AI model and reasoning effort as the ones the person picked last in the app's "
+    "directory, and return what can be picked. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "model": {"type": "string"},
+            "reasoning_effort": {"type": "string", "enum": list(REASONING_EFFORTS)},
+        },
+        "required": ["model", "reasoning_effort"],
+    },
+    _meta=APP_ONLY,
+)
+VIEW_TOOLS = [
+    LIST_MODELS,
+    VIEW_MODEL,
+    CREATE_MODEL,
+    STEER_MODEL,
+    CANCEL_MODEL,
+    READ_ACTIVITY,
+    LIST_INTELLIGENCE,
+    CHOOSE_INTELLIGENCE,
+]
 VIEW = Resource(uri=VIEW_URI, name="Modeling 3D app", mime_type=APP_MIME_TYPE)
 MODEL_FILE = ResourceTemplate(
     name="Model file",
@@ -189,6 +236,7 @@ class AppServer:
         steer_model: Callable[[str, str, Path, str], None],
         cancel_model: Callable[[str, Path], None],
         read_activity: Callable[[str, Path, str | None], ModelActivity],
+        list_intelligence: Callable[[], IntelligenceModels],
     ) -> None:
         self.directory = directory
         self._list_models = list_models
@@ -197,6 +245,7 @@ class AppServer:
         self._steer_model = steer_model
         self._cancel_model = cancel_model
         self._read_activity = read_activity
+        self._list_intelligence = list_intelligence
         self._lock = threading.Lock()
         self._app: App | None = None
         self._offered = False
@@ -318,6 +367,12 @@ class AppServer:
                 self._read_activity, arguments["name"], self.directory, arguments.get("after")
             )
             return _structured(activity.model_dump(mode="json"))
+        if params.name == LIST_INTELLIGENCE.name:
+            options = await asyncio.to_thread(self._intelligence)
+            return _structured(options.model_dump(mode="json"))
+        if params.name == CHOOSE_INTELLIGENCE.name:
+            options = await asyncio.to_thread(self._choose, arguments["model"], arguments["reasoning_effort"])
+            return _structured(options.model_dump(mode="json"))
         known = ", ".join(tool.name for tool in [OPEN_APP, *VIEW_TOOLS])
         raise Modeling3dError(f"'{params.name}' is not a tool of this server. The tools are: {known}.")
 
@@ -332,6 +387,9 @@ class AppServer:
                 directory=self.directory,
                 references=references,
                 resume_session=arguments.get("resume_session", False),
+                agent_provider=arguments.get("agent_provider"),
+                model=arguments.get("model"),
+                reasoning_effort=arguments.get("reasoning_effort", DEFAULT_REASONING_EFFORT),
                 origin=ORIGIN,
                 detach=True,
             )
@@ -340,6 +398,44 @@ class AppServer:
             await asyncio.to_thread(shutil.rmtree, uploads, True)
         summary = await asyncio.to_thread(self._view_model, run.name, self.directory)
         return _structured(summary.model_dump(mode="json"))
+
+    def _intelligence(self) -> AppIntelligence:
+        options = self._list_intelligence()
+        chosen = self._app_state().intelligence
+        offered = chosen is not None and any(model.id == chosen.model for model in options.models)
+        return AppIntelligence(
+            models=options.models,
+            reasoning_efforts=options.reasoning_efforts,
+            default=options.default,
+            chosen=chosen if offered else None,
+        )
+
+    def _choose(self, model: str, reasoning_effort: str) -> AppIntelligence:
+        options = self._list_intelligence()
+        picked = next((candidate for candidate in options.models if candidate.id == model), None)
+        if picked is None:
+            known = ", ".join(candidate.id for candidate in options.models) or "none"
+            raise Modeling3dError(
+                f"{model!r} is not a model the app offers. It offers: {known}.", "no-such-intelligence-model"
+            )
+        effort = next((candidate for candidate in options.reasoning_efforts if candidate == reasoning_effort), None)
+        if effort is None:
+            raise Modeling3dError(
+                f"{reasoning_effort!r} is not a reasoning effort. Pass one of: {', '.join(options.reasoning_efforts)}.",
+                "bad-reasoning-effort",
+            )
+        choice = IntelligenceChoice(agent_provider=picked.agent_provider, model=picked.id, reasoning_effort=effort)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        state = self._app_state().model_copy(update={"intelligence": choice})
+        (self.directory / APP_STATE).write_text(state.model_dump_json(indent=2), encoding="utf-8")
+        return self._intelligence()
+
+    def _app_state(self) -> AppState:
+        """What the person picked in the app; nothing when it was never written or cannot be read."""
+        try:
+            return AppState.model_validate_json((self.directory / APP_STATE).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return AppState()
 
     def _model_references(self, names: list[str]) -> list[Path]:
         """The files that stand for each named model as a reference: its script, its GLB, and its first render."""

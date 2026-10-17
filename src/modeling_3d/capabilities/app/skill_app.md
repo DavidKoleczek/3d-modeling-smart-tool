@@ -10,6 +10,9 @@ and how each run ended.
 The person works there without an agent session. New model starts one from a prompt, files, and
 models in the directory. With a model in view, what they write asks for a change, continuing the
 model's session unless they switch that off, or steers the run working on it, which Stop ends.
+Both pick the AI model and reasoning effort the next run uses, from those
+`list-intelligence-models` offers. The app remembers the pick for the directory in `.app.json`
+beside the models; a pick made while a run works applies to the next one.
 Runs started there go on after the app stops. Nothing done in the app is sent to an agent
 session; a session sees it with `read-3d-model-activity`.
 

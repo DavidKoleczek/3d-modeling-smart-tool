@@ -6,7 +6,7 @@ from modeling_3d.capabilities.app import mcp_server as app_server_module
 from modeling_3d.capabilities.app import server as app_module
 from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.capabilities.blender import blender
-from modeling_3d.capabilities.create_3d_model import activity, create, models
+from modeling_3d.capabilities.create_3d_model import activity, create, intelligence_models, models
 from modeling_3d.capabilities.create_3d_model.create import ModelRun
 from modeling_3d.capabilities.create_3d_model.record import DEFAULT_DIRECTORY
 from modeling_3d.core import manifest
@@ -16,6 +16,7 @@ from modeling_3d.schemas import (
     DEFAULT_REASONING_EFFORT,
     AgentProvider,
     BlenderOnPath,
+    IntelligenceModels,
     Manifest,
     ModelActivity,
     ModelListing,
@@ -65,6 +66,7 @@ def app_server(directory: Path | None = None) -> AppServer:
         steer_model=create.steer_3d_model,
         cancel_model=create.cancel_3d_model,
         read_activity=activity.read_3d_model_activity,
+        list_intelligence=intelligence_models.list_intelligence_models,
     )
 
 
@@ -181,6 +183,14 @@ def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary:
         directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
     """
     return models.view_3d_model(name=name, directory=directory)
+
+
+def list_intelligence_models() -> IntelligenceModels:
+    """The AI models and reasoning efforts to pick from for `create_3d_model`, and what it runs with given neither.
+
+    The models are those of the installed agent providers; `create_3d_model` also takes any other model by name.
+    """
+    return intelligence_models.list_intelligence_models()
 
 
 def add_blender_to_path(blender_path: Path | None = None) -> BlenderOnPath:

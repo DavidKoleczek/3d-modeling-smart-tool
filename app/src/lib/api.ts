@@ -9,6 +9,8 @@ const CREATE_TOOL = "create_3d_model";
 const STEER_TOOL = "steer_3d_model";
 const CANCEL_TOOL = "cancel_3d_model";
 const ACTIVITY_TOOL = "read_3d_model_activity";
+const LIST_INTELLIGENCE_TOOL = "list_intelligence_models";
+const CHOOSE_INTELLIGENCE_TOOL = "choose_intelligence_model";
 const MODEL_FILE_PREFIX = "modeling-3d://models/";
 // Starting a run waits for its agent to start, which can take a while on a cold machine.
 const CREATE_TIMEOUT_MS = 120_000;
@@ -17,11 +19,16 @@ const CREATE_TIMEOUT_MS = 120_000;
 export type ModelStatus =
   "running" | "crashed" | "done" | "failed" | "cancelled" | "timed-out";
 
+/** `ReasoningEffort` in schemas.py. */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
 /** The fields of `ModelRunRecord` in schemas.py that the view reads. */
 export type ModelRun = {
   id: string;
   prompt: string;
   agent_provider: string;
+  model: string;
+  reasoning_effort: ReasoningEffort;
   session_id: string | null;
   origin: string | null;
 };
@@ -69,10 +76,31 @@ export type ModelActivity = {
   cursor: string;
 };
 
+/** `IntelligenceModel` in schemas.py. */
+export type IntelligenceModel = {
+  agent_provider: string;
+  id: string;
+  label: string;
+};
+
+/** `IntelligenceChoice` in schemas.py. */
+export type IntelligenceChoice = {
+  agent_provider: string;
+  model: string;
+  reasoning_effort: ReasoningEffort;
+};
+
+/** `AppIntelligence` in schemas.py. */
+export type AppIntelligence = {
+  models: IntelligenceModel[];
+  reasoning_efforts: ReasoningEffort[];
+  default: IntelligenceChoice;
+  chosen: IntelligenceChoice | null;
+};
+
 /** A file to work from, as the view sends it: its name, and its bytes in base64. */
 export type Upload = { name: string; data: string };
 
-/** What a new request on a model asks for. */
 /** What a request on a model asks for; a name a model has already changes that model. */
 export type ModelRequest = {
   prompt: string;
@@ -80,7 +108,7 @@ export type ModelRequest = {
   resume_session?: boolean | string;
   references?: Upload[];
   reference_models?: string[];
-};
+} & Partial<IntelligenceChoice>;
 
 /** One of a model's files as the server gives it: base64, with its media type. */
 export type ModelFile = { base64: string; mimeType: string };
@@ -201,4 +229,20 @@ export async function readActivity(
     );
   }
   return structured as ModelActivity;
+}
+
+/** The AI models and reasoning efforts to pick from, and the ones picked last in the app's directory. */
+export async function listIntelligenceModels(): Promise<AppIntelligence> {
+  return (await structuredFrom(LIST_INTELLIGENCE_TOOL, {})) as AppIntelligence;
+}
+
+/** Remember the model and effort as the ones picked last, so the app starts on them next time. */
+export async function chooseIntelligenceModel(
+  model: string,
+  reasoningEffort: ReasoningEffort,
+): Promise<AppIntelligence> {
+  return (await structuredFrom(CHOOSE_INTELLIGENCE_TOOL, {
+    model,
+    reasoning_effort: reasoningEffort,
+  })) as AppIntelligence;
 }

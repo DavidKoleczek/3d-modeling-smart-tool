@@ -260,6 +260,12 @@ def view_3d_model(
 
 
 @app.command()
+def list_intelligence_models() -> None:
+    """List the AI models and reasoning efforts to pick from, printed as JSON. Deterministic."""
+    typer.echo(lib.list_intelligence_models().model_dump_json(indent=2))
+
+
+@app.command()
 def add_blender_to_path(
     blender_path: Annotated[
         Path | None,

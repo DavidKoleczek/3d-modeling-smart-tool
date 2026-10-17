@@ -57,6 +57,12 @@ CAPABILITIES = (
         skill="capabilities/create_3d_model/skill_view_3d_model.md",
     ),
     Capability(
+        "list-intelligence-models",
+        "List the AI models and reasoning efforts to pick from for create-3d-model; prints JSON.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skill_list_intelligence_models.md",
+    ),
+    Capability(
         "add-blender-to-path",
         "Make `blender` run an installed Blender from new terminals; building models does not need it.",
         model_backed=False,

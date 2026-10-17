@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, get_args
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,7 @@ DEFAULT_INTELLIGENCE_MODELS: dict[AgentProvider, str] = {
     "codex": "gpt-6.1-sol",
 }
 DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium"
+REASONING_EFFORTS: tuple[ReasoningEffort, ...] = get_args(ReasoningEffort)
 
 SEMVER_PATTERN = r"^\d+\.\d+\.\d+$"
 SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
@@ -34,6 +35,8 @@ FailureReason = Literal[
     "start-failed",
     "bad-cursor",
     "bad-upload",
+    "no-such-intelligence-model",
+    "bad-reasoning-effort",
 ]
 
 
@@ -88,6 +91,42 @@ class Capability(NamedTuple):
     model_backed: bool
     skill: str  # the capability's skill body, a Markdown file relative to the skill directory
     resources: tuple[str, ...] = ()  # the files that skill refers to, relative to the skill directory
+
+
+# endregion
+
+# region: Intelligence models
+
+
+class IntelligenceModel(BaseModel):
+    """One AI model a person can pick to run a model's agent."""
+
+    agent_provider: AgentProvider
+    id: str
+    label: str
+
+
+# What a picker offers, in its order. Codex has none, since it cannot run agents yet.
+INTELLIGENCE_MODELS: tuple[IntelligenceModel, ...] = (
+    IntelligenceModel(agent_provider="claude", id="claude-sonnet-5-5", label="Sonnet 5.5"),
+    IntelligenceModel(agent_provider="claude", id="claude-opus-5-5", label="Opus 5.5"),
+)
+
+
+class IntelligenceChoice(BaseModel):
+    """What runs a model's agent: the agent provider, the AI model, and how hard it thinks."""
+
+    agent_provider: AgentProvider
+    model: str
+    reasoning_effort: ReasoningEffort
+
+
+class IntelligenceModels(BaseModel):
+    """The AI models and reasoning efforts to pick from."""
+
+    models: list[IntelligenceModel] = Field(description="Those of the agent providers that are installed")
+    reasoning_efforts: list[ReasoningEffort]
+    default: IntelligenceChoice = Field(description="What `create_3d_model` runs with when given neither")
 
 
 # endregion
@@ -217,6 +256,23 @@ class BlenderOnPath(BaseModel):
     executable: Path
     changed: bool
     message: str
+
+
+# endregion
+
+# region: App
+
+
+class AppState(BaseModel):
+    """.app.json in a models directory: what the person last picked in the app there."""
+
+    intelligence: IntelligenceChoice | None = None
+
+
+class AppIntelligence(IntelligenceModels):
+    """What the app's picker offers, and what the person picked last in its directory."""
+
+    chosen: IntelligenceChoice | None = Field(description="None when nothing was picked, or it is no longer offered")
 
 
 # endregion

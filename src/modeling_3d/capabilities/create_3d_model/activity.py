@@ -69,6 +69,7 @@ def _entry(event: ModelEvent, run: ModelRunRecord) -> ActivityEntry:
             "resumed": run.resumed,
             "agent_provider": run.agent_provider,
             "model": run.model,
+            "reasoning_effort": run.reasoning_effort,
             "session_id": run.session_id,
         }
         return ActivityEntry(

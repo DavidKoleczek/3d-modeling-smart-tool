@@ -82,7 +82,8 @@ A continued session runs on the agent provider that made it; a fresh one can use
 - `--resume-session S`: for a model that exists, `false` (the default) for a fresh session, `true`
   to continue its last one, or the id of one of its sessions. See Changing a model.
 - `--agent-provider claude`: only `claude` runs agents for now.
-- `--model M`: the agent provider's default when omitted.
+- `--model M`: the agent provider's default when omitted. `list-intelligence-models` lists the
+  ones to pick from.
 - `--reasoning-effort E`: `low`, `medium` (the default), `high`, `xhigh`, or `max`.
 - `--timeout-seconds N`: how long the run may take before it is stopped; 3600 by default. A
   stopped run's session can still be resumed.

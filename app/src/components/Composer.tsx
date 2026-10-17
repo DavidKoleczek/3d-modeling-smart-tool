@@ -2,6 +2,7 @@ import { LoaderCircle, SendHorizontal, Square } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { AttachButtons, AttachmentList } from "@/components/Attachments";
+import { ModelPicker } from "@/components/ModelPicker";
 import { Button } from "@/components/ui/button";
 import {
   cancelModel,
@@ -11,18 +12,22 @@ import {
 } from "@/lib/api";
 import { AppError, describe } from "@/lib/errors";
 import { takesFiles, useAttachments } from "@/lib/attachments";
+import type { Intelligence } from "@/lib/intelligence";
 import { submitsOnEnter } from "@/lib/utils";
 
 /**
  * Where the person talks to a model's agent. While a run works, what they write steers it and Stop ends it; otherwise
- * it starts a new run on the model, continuing its last session unless they switch that off.
+ * it starts a new run on the model, continuing its last session unless they switch that off. The AI model they pick
+ * runs that next run, so a pick made while one works waits for it.
  */
 export function Composer({
   model,
   models,
+  intelligence,
 }: {
   model: ModelSummary;
   models: ModelSummary[];
+  intelligence: Intelligence;
 }) {
   const [draft, setDraft] = useState("");
   const [resume, setResume] = useState(true);
@@ -49,6 +54,7 @@ export function Composer({
           resume_session: resume,
           references: attachments.files.map((file) => file.upload),
           reference_models: attachments.models,
+          ...intelligence.choice,
         });
         attachments.clear();
       }
@@ -72,7 +78,7 @@ export function Composer({
     }
   };
 
-  const problem = error ?? attachments.error;
+  const problem = error ?? attachments.error ?? intelligence.error;
   return (
     <form
       onSubmit={submit}
@@ -91,7 +97,7 @@ export function Composer({
         aria-label={running ? "Message to the agent" : "What to change"}
         className="field-sizing-content max-h-40 min-h-14 w-full resize-none rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
       />
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {!running && (
           <>
             <AttachButtons
@@ -117,6 +123,14 @@ export function Composer({
           </>
         )}
         <span className="ml-auto flex items-center gap-1.5">
+          <ModelPicker
+            intelligence={intelligence}
+            hint={
+              running
+                ? "Runs the next request; the run working now keeps its own"
+                : undefined
+            }
+          />
           {running && (
             <Button
               type="button"

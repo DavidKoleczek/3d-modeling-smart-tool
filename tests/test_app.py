@@ -16,8 +16,18 @@ import pytest
 
 from modeling_3d import lib
 from modeling_3d.capabilities.app import server as server_module
-from modeling_3d.capabilities.create_3d_model import create
-from modeling_3d.schemas import ModelActivity, Modeling3dError, ModelListing, ModelRecord, ModelRunRecord, ModelSummary
+from modeling_3d.capabilities.create_3d_model import create, intelligence_models
+from modeling_3d.schemas import (
+    AppIntelligence,
+    AppState,
+    IntelligenceChoice,
+    ModelActivity,
+    Modeling3dError,
+    ModelListing,
+    ModelRecord,
+    ModelRunRecord,
+    ModelSummary,
+)
 
 TIMEOUT_SECONDS = 5
 # A run started from the app runs in a Python process of its own, which takes a while to import the library.
@@ -136,7 +146,15 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
         monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command("waits_for_steering"))
         created = await client.call_tool(
             "create_3d_model",
-            {"prompt": "A cub", "name": "cub", "reference_models": ["bear"], "references": [sketch]},
+            {
+                "prompt": "A cub",
+                "name": "cub",
+                "reference_models": ["bear"],
+                "references": [sketch],
+                "agent_provider": "claude",
+                "model": "claude-opus-5-5",
+                "reasoning_effort": "high",
+            },
         )
         listing = ModelListing.model_validate((await client.call_tool("list_3d_models", {})).structured_content)
         await client.call_tool("steer_3d_model", {"name": "cub", "message": "Smaller."})
@@ -161,6 +179,9 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
         "references/front view.png",
     ]
     assert [entry.data["resumed"] for entry in second.entries if entry.kind == "request"] == [False, True]
+    assert [
+        (entry.data["model"], entry.data["reasoning_effort"]) for entry in second.entries if entry.kind == "request"
+    ] == [("claude-opus-5-5", "high"), ("claude-sonnet-5-5", "medium")]
     assert [entry.data["status"] for entry in second.entries if entry.kind == "ended"] == ["done", "cancelled"]
     assert ModelActivity.model_validate(since.structured_content).entries == []
     assert isinstance(sketched, BlobResourceContents)
@@ -287,3 +308,37 @@ async def test_viewing_a_model_that_does_not_exist_is_a_tool_error_naming_the_mo
 
     assert result.is_error
     assert "The models there: bear." in text_of(result)
+
+
+async def test_the_view_remembers_the_ai_model_picked_in_the_app_directory_until_it_is_no_longer_offered(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: agent_provider == "claude")
+    directory = tmp_path / "models"
+    app_server = open_app(directory=directory)
+    opus = IntelligenceChoice(agent_provider="claude", model="claude-opus-5-5", reasoning_effort="high")
+    options = lib.list_intelligence_models()
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        before = await client.call_tool("list_intelligence_models", {})
+        chosen = await client.call_tool(
+            "choose_intelligence_model", {"model": "claude-opus-5-5", "reasoning_effort": "high"}
+        )
+        after = await client.call_tool("list_intelligence_models", {})
+        unknown = await client.call_tool("choose_intelligence_model", {"model": "nope", "reasoning_effort": "high"})
+        extreme = await client.call_tool(
+            "choose_intelligence_model", {"model": "claude-opus-5-5", "reasoning_effort": "extreme"}
+        )
+        monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: False)
+        gone = await client.call_tool("list_intelligence_models", {})
+
+    assert AppIntelligence.model_validate(before.structured_content) == AppIntelligence(
+        **options.model_dump(), chosen=None
+    )
+    assert AppIntelligence.model_validate(chosen.structured_content).chosen == opus
+    assert AppIntelligence.model_validate(after.structured_content).chosen == opus
+    assert AppState.model_validate_json((directory / ".app.json").read_text(encoding="utf-8")).intelligence == opus
+    assert unknown.structured_content == {"reason": "no-such-intelligence-model", "model": None}
+    assert "It offers: claude-sonnet-5-5, claude-opus-5-5." in text_of(unknown)
+    assert extreme.structured_content == {"reason": "bad-reasoning-effort", "model": None}
+    assert AppIntelligence.model_validate(gone.structured_content).chosen is None

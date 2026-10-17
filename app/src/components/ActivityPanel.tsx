@@ -20,7 +20,13 @@ import {
   type ActivityEntry,
   type ModelStatus,
   type ModelSummary,
+  type ReasoningEffort,
 } from "@/lib/api";
+import {
+  effortLabel,
+  useIntelligence,
+  type Intelligence,
+} from "@/lib/intelligence";
 import { duration } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
@@ -98,7 +104,15 @@ function References({ model, paths }: { model: string; paths: string[] }) {
 }
 
 /** What someone asked of the model, or told its agent while it worked. */
-function Message({ entry, model }: { entry: ActivityEntry; model: string }) {
+function Message({
+  entry,
+  model,
+  intelligence,
+}: {
+  entry: ActivityEntry;
+  model: string;
+  intelligence: Intelligence;
+}) {
   const steering = entry.kind === "steered";
   const references = (entry.data.references as string[] | undefined) ?? [];
   const error = typeof entry.data.error === "string" ? entry.data.error : null;
@@ -107,6 +121,11 @@ function Message({ entry, model }: { entry: ActivityEntry; model: string }) {
     label += ", steering";
   } else if (entry.data.resumed) {
     label += ", continuing its session";
+  }
+  const ranOn = typeof entry.data.model === "string" ? entry.data.model : null;
+  const effort = entry.data.reasoning_effort as ReasoningEffort | undefined;
+  if (!steering && ranOn) {
+    label += ` (${intelligence.label(ranOn)}${effort ? `, ${effortLabel(effort).toLowerCase()}` : ""})`;
   }
   return (
     <li className="flex max-w-[85%] flex-col items-end gap-1 self-end">
@@ -201,15 +220,19 @@ function Entry({
   step,
   model,
   working,
+  intelligence,
 }: {
   step: Step;
   model: string;
   working: boolean;
+  intelligence: Intelligence;
 }) {
   switch (step.entry.kind) {
     case "request":
     case "steered":
-      return <Message entry={step.entry} model={model} />;
+      return (
+        <Message entry={step.entry} model={model} intelligence={intelligence} />
+      );
     case "said":
       return (
         <li className="max-w-[85%] self-start rounded-xl bg-muted px-3 py-2 text-sm wrap-break-word whitespace-pre-wrap">
@@ -239,6 +262,7 @@ export function ActivityPanel({
     working,
     error,
   } = useActivity(model?.name ?? null);
+  const intelligence = useIntelligence();
   const shown = read ?? model;
   const list = useRef<HTMLOListElement>(null);
   // Follows what comes in while the person is at the bottom, and stays put while they read further up.
@@ -296,10 +320,18 @@ export function ActivityPanel({
               step={step}
               model={shown.name}
               working={working.includes(step)}
+              intelligence={intelligence}
             />
           ))}
       </ol>
-      {shown && <Composer key={shown.name} model={shown} models={models} />}
+      {shown && (
+        <Composer
+          key={shown.name}
+          model={shown}
+          models={models}
+          intelligence={intelligence}
+        />
+      )}
     </section>
   );
 }

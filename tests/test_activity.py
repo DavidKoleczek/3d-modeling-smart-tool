@@ -155,6 +155,7 @@ def test_the_activity_reads_every_run_in_order_beside_the_model_s_summary(bear: 
         "resumed": False,
         "agent_provider": "claude",
         "model": "claude-sonnet-5-5",
+        "reasoning_effort": "medium",
         "session_id": "session",
     }
     assert new.data["resumed"]

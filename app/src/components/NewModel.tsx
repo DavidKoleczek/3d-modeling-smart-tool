@@ -2,11 +2,13 @@ import { LoaderCircle, X } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { AttachButtons, AttachmentList } from "@/components/Attachments";
+import { ModelPicker } from "@/components/ModelPicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createModel, type ModelSummary } from "@/lib/api";
 import { describe } from "@/lib/errors";
 import { takesFiles, useAttachments } from "@/lib/attachments";
+import { useIntelligence } from "@/lib/intelligence";
 import { submitsOnEnter } from "@/lib/utils";
 
 // `NAME_PATTERN` in create.py.
@@ -48,6 +50,7 @@ export function NewModel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const attachments = useAttachments();
+  const intelligence = useIntelligence();
   const name = typedName ?? (prompt.trim() ? suggestName(prompt, models) : "");
   const badName = name !== "" && !NAME.test(name);
   // Ignoring case, as the directory does on Windows and macOS.
@@ -69,6 +72,7 @@ export function NewModel({
         name,
         references: attachments.files.map((file) => file.upload),
         reference_models: attachments.models,
+        ...intelligence.choice,
       });
       onCreated(taken?.name ?? name);
     } catch (cause) {
@@ -77,7 +81,7 @@ export function NewModel({
     }
   };
 
-  const problem = error ?? attachments.error;
+  const problem = error ?? attachments.error ?? intelligence.error;
   return (
     <form
       onSubmit={submit}
@@ -142,7 +146,8 @@ export function NewModel({
         </div>
         {problem && <p className="text-xs text-destructive">{problem}</p>}
       </div>
-      <footer className="flex justify-end gap-2 border-t p-3">
+      <footer className="flex flex-wrap items-center justify-end gap-2 border-t p-3">
+        <ModelPicker intelligence={intelligence} className="mr-auto" />
         <Button type="button" variant="ghost" onClick={onCancel}>
           Cancel
         </Button>

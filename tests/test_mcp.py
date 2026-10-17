@@ -30,6 +30,8 @@ VIEW_TOOLS = (
     "steer_3d_model",
     "cancel_3d_model",
     "read_3d_model_activity",
+    "list_intelligence_models",
+    "choose_intelligence_model",
 )
 
 
