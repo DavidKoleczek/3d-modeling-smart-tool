@@ -1,20 +1,232 @@
 """Claude Agent SDK implementation of the intelligence interface."""
 
 import asyncio
+import base64
+from collections.abc import AsyncIterator
+import contextlib
+import dataclasses
 from importlib.metadata import version
+import json
 from pathlib import Path
-import time
+import shutil
 from typing import Any
+import uuid
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    Message,
+    ResultMessage,
+    SessionKey,
+    SessionListSubkeysKey,
+    SessionStore,
+    SessionStoreEntry,
+    SessionStoreListEntry,
+    SessionSummaryEntry,
+    SystemMessage,
+    UserMessage,
+    fold_session_summary,
+)
 
 from modeling_3d.intelligence.interface import state_directory
-from modeling_3d.intelligence.schemas import AgentRequest, AgentResult
+from modeling_3d.intelligence.schemas import IMAGE_MEDIA_TYPES, AgentEvent, AgentRequest, AgentResult, Steering
 from modeling_3d.schemas import Modeling3dError
 
 AUTHENTICATION_DOCUMENTATION = "https://code.claude.com/docs/en/agent-sdk/quickstart"
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"]
 WRITE_TOOLS = ["Edit", "Write"]
+# How long a stopping run waits for Claude Code to abort its tools before ending the process anyway.
+INTERRUPT_SECONDS = 5
+# Claude Code sends an image the agent reads back as one base64 JSON line, and a render runs to megabytes, well past
+# the SDK's 1 MB default for a line.
+MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+
+
+class ClaudeRun:
+    """One agent in its own Claude Code process: its messages as they come, steering, and a hard stop."""
+
+    def __init__(self, request: AgentRequest, client: ClaudeSDKClient) -> None:
+        self._request = request
+        self._client = client
+        self._session_id = request.resume
+        self._events: list[AgentEvent] = []
+        # Replaced on every append, so a reader waits on the one current when it ran out of events.
+        self._appended = asyncio.Event()
+        # User messages sent and not yet echoed back by Claude Code. A result ends the run only when there are
+        # none, since a steering message that arrives late in a turn starts another one.
+        self._unechoed: set[str] = set()
+        self._answered = False
+        self._began = asyncio.Event()
+        self._stopping = asyncio.Event()
+        self._task = asyncio.create_task(self._drive())
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    def events(self) -> AsyncIterator[AgentEvent]:
+        return self._replay()
+
+    async def running(self) -> None:
+        """Wait until the prompt is sent, or the run ended trying."""
+        await self._began.wait()
+
+    async def steer(self, message: str) -> None:
+        await self._began.wait()
+        if self._answered or self._task.done():
+            raise Modeling3dError(
+                "The agent run has ended, so the steering message was not delivered. Start a new run that resumes "
+                f"session {self._session_id} with the message as its prompt."
+            )
+        await self._send(message, [])
+
+    async def cancel(self) -> None:
+        self._stopping.set()
+        await asyncio.wait([self._task])
+
+    async def result(self) -> AgentResult:
+        return await asyncio.shield(self._task)
+
+    async def _drive(self) -> AgentResult:
+        # The client keeps a task group open from connect to disconnect, so both happen here, in one task.
+        stopping = asyncio.create_task(self._stopping.wait())
+        reading: asyncio.Task[AgentResult] | None = None
+        try:
+            async with asyncio.timeout(self._request.timeout_seconds):
+                await self._client.connect()
+                await self._send(self._request.prompt, self._request.images)
+                self._began.set()
+                reading = asyncio.create_task(self._read())
+                await asyncio.wait([reading, stopping], return_when=asyncio.FIRST_COMPLETED)
+            cancelled = AgentResult(cancelled=True, session_id=self._session_id)
+            result = reading.result() if reading.done() else cancelled
+        except TimeoutError:
+            result = AgentResult(
+                error=f"The agent did not finish within {self._request.timeout_seconds} seconds.",
+                session_id=self._session_id,
+            )
+        except Exception as error:  # an SDK or runtime failure is the caller's data, not a crash
+            result = AgentResult(error=f"{type(error).__name__}: {error}", session_id=self._session_id)
+        finally:
+            stopping.cancel()
+            if reading is not None:
+                reading.cancel()
+            self._began.set()
+            await self._close(interrupt=not self._answered)
+        self._emit("terminal", result.model_dump(mode="json"))
+        return result
+
+    async def _read(self) -> AgentResult:
+        async for message in self._client.receive_messages():
+            self._note(message)
+            if isinstance(message, UserMessage) and message.uuid is not None:
+                self._unechoed.discard(message.uuid)
+            if isinstance(message, ResultMessage) and not self._unechoed:
+                self._answered = True
+                return outcome(message)
+        raise RuntimeError("Claude Code ended the conversation without a result.")
+
+    async def _send(self, text: str, images: list[Path]) -> None:
+        # Claude Code echoes a user message under the uuid it was sent with, which is how the run sees it taken.
+        identifier = str(uuid.uuid4())
+        content: str | list[dict[str, Any]] = text
+        if images:
+            content = [{"type": "text", "text": text}, *(image_block(path) for path in images)]
+        self._unechoed.add(identifier)
+        message = {
+            "type": "user",
+            "uuid": identifier,
+            "message": {"role": "user", "content": content},
+            "parent_tool_use_id": None,
+        }
+        await self._client.query(_one(message))
+
+    async def _close(self, interrupt: bool) -> None:
+        """End the Claude Code process; an unfinished run first has it abort its tools, so none outlive it."""
+        if interrupt:
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._client.interrupt(), INTERRUPT_SECONDS)
+        with contextlib.suppress(Exception):
+            await self._client.disconnect()
+
+    def _note(self, message: Message) -> None:
+        session_id = (
+            message.data.get("session_id")
+            if isinstance(message, SystemMessage)
+            else getattr(message, "session_id", None)
+        )
+        if isinstance(session_id, str):
+            self._session_id = session_id
+        self._emit(type(message).__name__, as_data(message))
+
+    def _emit(self, kind: str, data: dict[str, Any]) -> None:
+        self._events.append(AgentEvent(type=kind, data=data))
+        self._appended.set()
+        self._appended = asyncio.Event()
+
+    async def _replay(self) -> AsyncIterator[AgentEvent]:
+        index = 0
+        while True:
+            appended = self._appended
+            while index < len(self._events):
+                event = self._events[index]
+                index += 1
+                yield event
+                if event.type == "terminal":
+                    return
+            if self._task.done():
+                return
+            await appended.wait()
+
+
+class FolderSessionStore(SessionStore):
+    """A copy of every transcript of a session in one directory, from which the session can also be resumed."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+
+    async def append(self, key: SessionKey, entries: list[SessionStoreEntry]) -> None:
+        path = self._path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as transcript:
+            transcript.writelines(json.dumps(entry) + "\n" for entry in entries)
+
+    async def load(self, key: SessionKey) -> list[SessionStoreEntry] | None:
+        path = self._path(key)
+        if not path.is_file():
+            return None
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+    async def list_sessions(self, project_key: str) -> list[SessionStoreListEntry]:
+        return [
+            {"session_id": path.stem, "mtime": path.stat().st_mtime_ns // 1_000_000}
+            for path in sorted(self.directory.glob("*.jsonl"))
+        ]
+
+    async def list_session_summaries(self, project_key: str) -> list[SessionSummaryEntry]:
+        summaries: list[SessionSummaryEntry] = []
+        for session in await self.list_sessions(project_key):
+            key: SessionKey = {"project_key": project_key, "session_id": session["session_id"]}
+            summary = fold_session_summary(None, key, await self.load(key) or [])
+            summary["mtime"] = session["mtime"]
+            summaries.append(summary)
+        return summaries
+
+    async def delete(self, key: SessionKey) -> None:
+        self._path(key).unlink(missing_ok=True)
+        if not key.get("subpath"):
+            shutil.rmtree(self.directory / key["session_id"], ignore_errors=True)
+
+    async def list_subkeys(self, key: SessionListSubkeysKey) -> list[str]:
+        folder = self.directory / key["session_id"]
+        return sorted(path.relative_to(folder).with_suffix("").as_posix() for path in folder.rglob("*.jsonl"))
+
+    def _path(self, key: SessionKey) -> Path:
+        # The directory belongs to one caller, so the project key Claude Code scopes sessions by is left out.
+        subpath = key.get("subpath")
+        if subpath:
+            return self.directory / key["session_id"] / f"{subpath}.jsonl"
+        return self.directory / f"{key['session_id']}.jsonl"
 
 
 class ClaudeIntelligence:
@@ -22,6 +234,7 @@ class ClaudeIntelligence:
 
     def __init__(self) -> None:
         self.implementation = f"claude-agent-sdk {version('claude-agent-sdk')}"
+        self.steering: Steering = "queued"
 
     def preflight(self) -> None:
         try:
@@ -40,67 +253,44 @@ class ClaudeIntelligence:
                 "describes."
             )
 
-    def run(self, request: AgentRequest) -> AgentResult:
-        return asyncio.run(self._run(request))
-
-    async def _run(self, request: AgentRequest) -> AgentResult:
-        tools: list[str]
-        if request.workspace is not None:
-            cwd = request.workspace.path.resolve()
-            tools = READ_ONLY_TOOLS + WRITE_TOOLS if request.writable else READ_ONLY_TOOLS
-        else:
-            # Never the caller's directory. One fixed directory keeps every plain session in a single
-            # ~/.claude/projects entry instead of one per run.
-            cwd = scratch_directory()
-            cwd.mkdir(parents=True, exist_ok=True)
-            tools = []
-        # The shell is not sandboxed to the workspace; the caller's prompt bounds the agent and the caller
-        # validates before anything the agent wrote is kept.
-        options = ClaudeAgentOptions(
-            cwd=cwd,
-            model=request.model,
-            tools=tools,
-            permission_mode="bypassPermissions",
-            effort=request.reasoning_effort,
-            resume=request.resume,
-        )
-        deadline = time.monotonic() + request.timeout_seconds
-        timed_out = f"The agent did not finish within {request.timeout_seconds} seconds."
-        # Carried out of the try so the failure paths can name the session the caller could resume.
-        session_id = request.resume
-        client = ClaudeSDKClient(options=options)
-        try:
-            await client.connect()
-            # Not `async with`: the client's __aexit__ is typed as able to suppress errors, so ty would see a path
-            # that returns nothing.
-            try:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return AgentResult(error=timed_out, session_id=session_id)
-                result, finished = await run_turn(client, request.prompt, remaining)
-                session_id = result.session_id
-                if not finished:
-                    return AgentResult(error=timed_out, session_id=session_id)
-                text = result.result or ""
-                if result.is_error:
-                    return AgentResult(text=text, error=describe(result), session_id=session_id)
-                return AgentResult(text=text, session_id=session_id)
-            finally:
-                await client.disconnect()
-        except Exception as error:  # an SDK or runtime failure is the caller's data, not a crash
-            return AgentResult(error=f"{type(error).__name__}: {error}", session_id=session_id)
+    async def start(self, request: AgentRequest) -> ClaudeRun:
+        run = ClaudeRun(request, ClaudeSDKClient(options=options(request)))
+        await run.running()
+        return run
 
 
-async def run_turn(client: ClaudeSDKClient, prompt: str, timeout: float) -> tuple[ResultMessage, bool]:
-    """The turn's result, and whether it finished before the deadline rather than being interrupted."""
-    await client.query(prompt)
-    completed = asyncio.create_task(_result(client))
-    try:
-        return await asyncio.wait_for(asyncio.shield(completed), timeout), True
-    except TimeoutError:
-        await client.interrupt()
-        # Draining to the result leaves the session usable for a later resume, and names it.
-        return await completed, False
+def options(request: AgentRequest) -> ClaudeAgentOptions:
+    tools: list[str]
+    if request.workspace is not None:
+        cwd = request.workspace.path.resolve()
+        tools = READ_ONLY_TOOLS + WRITE_TOOLS if request.writable else READ_ONLY_TOOLS
+    else:
+        # Never the caller's directory. One fixed directory keeps every plain session in a single
+        # ~/.claude/projects entry instead of one per run.
+        cwd = scratch_directory()
+        cwd.mkdir(parents=True, exist_ok=True)
+        tools = []
+    # The shell is not sandboxed to the workspace; the caller's prompt bounds the agent and the caller
+    # validates before anything the agent wrote is kept.
+    return ClaudeAgentOptions(
+        cwd=cwd,
+        model=request.model,
+        tools=tools,
+        permission_mode="bypassPermissions",
+        effort=request.reasoning_effort,
+        resume=request.resume,
+        extra_args={"replay-user-messages": None},
+        max_buffer_size=MAX_MESSAGE_BYTES,
+        session_store=None if request.session_directory is None else FolderSessionStore(request.session_directory),
+        session_store_flush="eager",
+    )
+
+
+def outcome(result: ResultMessage) -> AgentResult:
+    text = result.result or ""
+    if result.is_error:
+        return AgentResult(text=text, error=describe(result), session_id=result.session_id)
+    return AgentResult(text=text, session_id=result.session_id)
 
 
 def describe(result: ResultMessage) -> str:
@@ -108,10 +298,26 @@ def describe(result: ResultMessage) -> str:
     return "; ".join(result.errors or []) or result.result or f"The run ended {result.subtype}."
 
 
+def image_block(path: Path) -> dict[str, Any]:
+    data = base64.b64encode(path.read_bytes()).decode("ascii")
+    source = {"type": "base64", "media_type": IMAGE_MEDIA_TYPES[path.suffix.lower()], "data": data}
+    return {"type": "image", "source": source}
+
+
+def as_data(message: Message) -> dict[str, Any]:
+    """The message as Claude Code gave it, in JSON's types."""
+    if dataclasses.is_dataclass(message) and not isinstance(message, type):
+        return json.loads(json.dumps(dataclasses.asdict(message), default=str))
+    return {"value": str(message)}
+
+
 def signed_in(account: dict[str, Any]) -> bool:
     """Whether the account Claude Code resolved at startup can make requests."""
     # A cloud provider authenticates with that cloud's credentials and reports no Anthropic key or token.
     if account.get("apiProvider", "firstParty") != "firstParty":
+        return True
+    # A Claude subscription signed in through Claude Code reports its plan, with neither a key nor a token source.
+    if account.get("subscriptionType"):
         return True
     return bool(account.get("apiKeySource")) or account.get("tokenSource", "none") != "none"
 
@@ -121,11 +327,8 @@ def scratch_directory() -> Path:
     return state_directory("claude")
 
 
-async def _result(client: ClaudeSDKClient) -> ResultMessage:
-    async for message in client.receive_response():
-        if isinstance(message, ResultMessage):
-            return message
-    raise RuntimeError("Claude Code ended the turn without a result.")
+async def _one(message: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    yield message
 
 
 async def _account() -> dict[str, Any]:

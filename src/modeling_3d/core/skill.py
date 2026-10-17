@@ -11,20 +11,44 @@ DISTRIBUTION = "modeling-3d"
 
 # One table drives the skill's capability list, so it cannot drift from what the CLI exposes.
 # Every capability added to the library gets a row here, naming the capability's own skill:
-# the Markdown beside its code, at `capabilities/<name>/SKILL.md`.
+# the Markdown beside its code, at `capabilities/<name>/skill_<capability>.md`.
 CAPABILITIES = (
-    Capability("manifest", "Print the tool's manifest as JSON.", model_backed=False, skill="core/manifest.md"),
+    Capability("manifest", "Print the tool's manifest as JSON.", model_backed=False, skill="core/skill_manifest.md"),
     Capability(
         "app",
         "Serve the app in a browser page on this machine, without an agent session; print its URL.",
         model_backed=False,
-        skill="capabilities/app/SKILL.md",
+        skill="capabilities/app/skill_app.md",
+    ),
+    Capability(
+        "create-3d-model",
+        "Create a 3D model, or change one, as a Blender script, its GLB, and renders; streams events as JSON lines.",
+        model_backed=True,
+        skill="capabilities/create_3d_model/skill_create_3d_model.md",
+    ),
+    Capability(
+        "steer-3d-model",
+        "Send a message to the agent working on a model, from any process.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skill_steer_3d_model.md",
+    ),
+    Capability(
+        "cancel-3d-model",
+        "Stop the run working on a model at once, from any process; its session can still be resumed.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skill_cancel_3d_model.md",
+    ),
+    Capability(
+        "add-blender-to-path",
+        "Make `blender` run an installed Blender from new terminals; building models does not need it.",
+        model_backed=False,
+        skill="capabilities/blender/skill_add_blender_to_path.md",
     ),
     Capability(
         "mcp",
         "Serve the app over stdio as an MCP App, so the person watches and steers the agent through it.",
         model_backed=False,
-        skill="adapters/mcp.md",
+        skill="adapters/skill_mcp.md",
     ),
 )
 

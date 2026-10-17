@@ -34,6 +34,50 @@ modeling-3d app [--port <n>]
 
 `lib.app_server().open()`, with its URL printed. With no agent connected, each message sent from the page is printed instead. The command then keeps serving until Ctrl+C, which exits 0. Exits 1 when `--port` names a held port; without `--port` a free one is chosen.
 
+## modeling-3d create-3d-model
+
+```bash
+modeling-3d create-3d-model PROMPT --name <name> [--directory <dir>] [--reference <path>]... [--edit | --resume]
+    [--agent-provider claude] [--model <model>] [--reasoning-effort medium] [--timeout-seconds 3600]
+```
+
+`lib.create_3d_model()`, run to its end. Each event is printed to stdout as one JSON line; the last is `finished` or `failed`, carrying the result in `data`. Exits 0 when the result's `status` is `done`, otherwise 1. A failure before the agent starts exits 1 with its message on stderr.
+Ctrl+C, and every other signal that ends the process, stops the run at once, and its session can still be resumed.
+
+A run takes minutes, so start it in the background with its output in a file, rather than waiting on it. Read the file to follow it, and steer or stop the run from the foreground meanwhile:
+
+```bash
+modeling-3d create-3d-model "A low poly bear" --name bear > bear.jsonl 2> bear.err &
+tail -f bear.jsonl
+modeling-3d steer-3d-model --name bear --message "Rounder ears"
+```
+
+An agent harness with its own way to run a command in the background can use that instead of `&`; the output still goes to the file. The model's `runs/<run id>/events.jsonl` holds the same events, so the run can be followed from there too.
+
+## modeling-3d steer-3d-model
+
+```bash
+modeling-3d steer-3d-model --name <name> --message <text> [--directory <dir>]
+```
+
+`lib.steer_3d_model()`. Prints nothing; exits 1 when nothing is working on the model.
+
+## modeling-3d cancel-3d-model
+
+```bash
+modeling-3d cancel-3d-model --name <name> [--directory <dir>]
+```
+
+`lib.cancel_3d_model()`. Prints nothing; exits 1 when nothing is working on the model.
+
+## modeling-3d add-blender-to-path
+
+```bash
+modeling-3d add-blender-to-path [--blender-path <path>]
+```
+
+`lib.add_blender_to_path()`, its result printed as JSON. Exits 1 when no Blender is found.
+
 ## modeling-3d mcp
 
 ```bash

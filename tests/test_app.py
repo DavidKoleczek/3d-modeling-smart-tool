@@ -56,17 +56,14 @@ def text_of(result: Any) -> str:
     return "\n".join(block.text for block in result.content if isinstance(block, TextContent))
 
 
-def test_the_host_page_points_at_a_sandbox_on_another_origin(open_app: Callable[..., lib.AppServer]) -> None:
-    app = open_app().open()
-
-    assert sandbox_url(app) != app.url
-
-
-def test_the_sandbox_carries_the_view_csp_and_nothing_else(open_app: Callable[..., lib.AppServer]) -> None:
+def test_the_host_page_points_at_a_sandbox_on_another_origin_with_the_view_csp_and_nothing_else(
+    open_app: Callable[..., lib.AppServer],
+) -> None:
     app = open_app().open()
     sandbox = sandbox_url(app)
     status, headers, page = get(f"{sandbox}/sandbox.html")
 
+    assert sandbox != app.url
     assert status == 200
     assert "connect-src 'none'" in headers["content-security-policy"]
     assert f'content="{app.url.rsplit(":", 1)[1]}"' in page
@@ -124,18 +121,14 @@ def test_an_uncompiled_view_names_the_build_command(monkeypatch: pytest.MonkeyPa
         lib.app_view()
 
 
-def test_a_held_port_is_a_named_failure(open_app: Callable[..., lib.AppServer]) -> None:
-    port = int(open_app().open().url.rsplit(":", 1)[1])
+def test_a_held_port_is_a_named_failure_until_close_frees_it() -> None:
+    first = lib.app_server()
+    port = int(first.open().url.rsplit(":", 1)[1])
 
     with pytest.raises(Modeling3dError, match="could not bind"):
         lib.app_server().open(port)
 
-
-def test_close_frees_the_port() -> None:
-    first = lib.app_server()
-    port = int(first.open().url.rsplit(":", 1)[1])
     first.close()
-
     second = lib.app_server()
     second.open(port)
     second.close()

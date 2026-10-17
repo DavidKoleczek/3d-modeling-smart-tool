@@ -1,13 +1,14 @@
 """The contract every model-backed capability runs through, so the implementation is swappable."""
 
+from collections.abc import AsyncIterator
 from importlib.util import find_spec
 import os
 from pathlib import Path
 import sys
 from typing import Protocol
 
-from modeling_3d.core.skill import DISTRIBUTION
-from modeling_3d.intelligence.schemas import AgentRequest, AgentResult
+from modeling_3d.core.skill import DISTRIBUTION, repository_url
+from modeling_3d.intelligence.schemas import AgentEvent, AgentRequest, AgentResult, Steering
 from modeling_3d.schemas import AGENT_PROVIDERS, AgentProvider, Modeling3dError
 
 # The import each agent provider's SDK answers to; its extra is named after the agent provider.
@@ -17,17 +18,43 @@ SDK_MODULES: dict[AgentProvider, str] = {
 }
 
 
+class AgentRun(Protocol):
+    """One running agent: what it does as it happens, a way to talk to it, and how it ended."""
+
+    @property
+    def session_id(self) -> str | None:
+        """The session a later run resumes, once the agent provider has made it; None before."""
+        ...
+
+    def events(self) -> AsyncIterator[AgentEvent]:
+        """Every event from the start, then live ones until the run ends with `terminal`."""
+        ...
+
+    async def steer(self, message: str) -> None:
+        """Send a message to the agent while it works; the implementation's `steering` says how it lands."""
+        ...
+
+    async def cancel(self) -> None:
+        """Stop the run at once, and everything it started; its session can still be resumed."""
+        ...
+
+    async def result(self) -> AgentResult:
+        """Wait for the run to end."""
+        ...
+
+
 class Intelligence(Protocol):
     """Runs agents against models; the library depends on this contract, never on an SDK."""
 
     implementation: str
+    steering: Steering
 
     def preflight(self) -> None:
         """Raise Modeling3dError naming exactly what to configure when the implementation cannot run."""
         ...
 
-    def run(self, request: AgentRequest) -> AgentResult:
-        """Run one agent to completion."""
+    async def start(self, request: AgentRequest) -> AgentRun:
+        """Start one agent and return once it runs; failures after that end the run with `AgentResult.error`."""
         ...
 
 
@@ -41,9 +68,9 @@ def resolve_agent_provider(agent_provider: AgentProvider | None = None) -> Agent
     if agent_provider is not None:
         if not installed(agent_provider):
             raise Modeling3dError(
-                f"The {agent_provider} agent provider is not installed. Install modeling-3d with it, from the "
-                f"root of its repository: `uv tool install {_install_source(agent_provider)}`. A project that uses the "
-                "library runs `uv add` the same way, with its path to modeling-3d."
+                f"The {agent_provider} agent provider is not installed. Install modeling-3d with it: "
+                f"`uv tool install {_install_source(agent_provider)}`. A project that uses the library runs `uv add` "
+                "with the same requirement."
             )
         return agent_provider
     for candidate in AGENT_PROVIDERS:
@@ -51,10 +78,10 @@ def resolve_agent_provider(agent_provider: AgentProvider | None = None) -> Agent
             return candidate
     raise Modeling3dError(
         "Model-backed capabilities need an agent provider and none is installed. Install modeling-3d with every "
-        f"one, from the root of its repository: `uv tool install {_install_source('all')}`, or put "
+        f"one: `uv tool install {_install_source('all')}`, or put "
         + " or ".join(f"[{candidate}]" for candidate in AGENT_PROVIDERS)
         + " in place of [all] for just one. Use `uv add` instead of `uv tool install` in a project that uses the "
-        "library, with its path to modeling-3d."
+        "library."
     )
 
 
@@ -104,6 +131,9 @@ def state_directory(agent_provider: AgentProvider) -> Path:
     return base / DISTRIBUTION / agent_provider
 
 
-# The tool is not published to a package index, so it installs from a clone of its repository.
+# The tool is not published to a package index, so it installs from its repository, or from a clone without one.
 def _install_source(extra: str) -> str:
-    return f'--editable ".[{extra}]"'
+    repository = repository_url()
+    if repository is None:
+        return f'--editable ".[{extra}]"'
+    return f'"{DISTRIBUTION}[{extra}] @ git+{repository}"'

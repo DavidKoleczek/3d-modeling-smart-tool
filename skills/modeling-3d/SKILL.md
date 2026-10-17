@@ -12,17 +12,18 @@ Creates and edits 3D models from a description of what to build.
 
 ## Install
 
-Run these from the root of the tool's repository.
+The tool installs from its repository, https://github.com/DavidKoleczek/3d-modeling-smart-tool. While the repository is private, git
+needs access to it.
 
 ```bash
-# as a CLI, choosing the agent provider(s) you want
-uv tool install --editable ".[all | codex | claude]"
+# as a CLI, choosing the agent provider(s) you want: [all], [claude], or [codex]
+uv tool install "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
 
-# as a library, from another project with its path to modeling-3d
-uv add --editable "path/to/modeling-3d[all]"
+# as a library, from another project
+uv add "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
 
 # once, without installing
-uvx --from ".[all]" modeling-3d --help
+uvx --from "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool" modeling-3d --help
 ```
 ## Use it
 
@@ -34,5 +35,5 @@ invocation, the result, and the failures. Never work from memory.
 ## Keep it current
 
 Keep the tool up to date for the user by default if the permission mode allows it using `uv tool upgrade modeling-3d`.
-Keep the skill up to date for the user by rerunning `npx skills add .` from the root of the tool's repository, adding `-g` for global installs. `npx skills update` skips skills added from a local path.
+Keep the skill up to date for the user with `npx skills update`, adding `-g` for global installs. It was added with `npx skills add DavidKoleczek/3d-modeling-smart-tool`.
 Do not try to get around restrictions or operate against the user's preferences to update tools (or skills).

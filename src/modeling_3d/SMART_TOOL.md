@@ -34,7 +34,8 @@ wrapper over it, so anything you can do from the shell you can also do from Pyth
 
 ## When to reach for it
 
-- Creates and edits 3D models from a description of what to build.
+- Creates and edits 3D models from a description of what to build, and reference images or models. 
+  - Use `create-3d-model` for both use cases.
 
 ## Before writing code
 
@@ -45,17 +46,18 @@ repository's `docs/01-library.md` and `docs/02-cli.md` carry the rest.
 
 ## Install
 
-Run these from the root of the tool's repository.
+The tool installs from its repository, https://github.com/DavidKoleczek/3d-modeling-smart-tool. While the repository is private, git
+needs access to it.
 
 ```bash
 # as a CLI
-uv tool install --editable ".[all]"
+uv tool install "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
 
-# as a library, from another project with its path to modeling-3d
-uv add --editable "path/to/modeling-3d[all]"
+# as a library, from another project
+uv add "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
 
 # once, without installing
-uvx --from ".[all]" modeling-3d --help
+uvx --from "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool" modeling-3d --help
 ```
 
 `[all]` brings every agent provider the model-backed capabilities run through. Put
@@ -68,15 +70,18 @@ Verify with `modeling-3d manifest`, which needs no credentials. To upgrade, run
 ## Prerequisites
 
 Deterministic capabilities need only `uv`. Model-backed capabilities run through an agent
-provider, the first installed of `codex` and `claude`:
+provider, the first installed of `claude` and `codex`:
 
-- `codex`: [OpenAI Codex](https://github.com/openai/codex), with the user's Codex configuration.
-  The Codex CLI must be signed in with ChatGPT or an API key, see
-  [authentication](https://developers.openai.com/codex/auth).
 - `claude`: the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python), with the
   user's Claude Code settings. Needs `ANTHROPIC_API_KEY`, or Amazon Bedrock, Claude Platform on AWS,
   Google Cloud's Agent Platform, or Microsoft Foundry credentials, see
   [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart).
+- `codex`: [OpenAI Codex](https://github.com/openai/codex). It cannot run agents yet.
+
+Building a model needs no Blender install: its script gets Blender from PyPI through uv, about
+340 MB on the first build. Building runs on Windows, Linux x64, and macOS on Apple silicon. To
+open models in an installed Blender, `add-blender-to-path` makes it a `blender` command; ask the
+user first, since it changes their environment.
 
 Without one, a model-backed capability fails immediately and names what to configure; it
 never falls back to a deterministic answer.

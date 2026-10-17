@@ -8,7 +8,7 @@ This is a Smart Tool that must conform to Microsoft's [Amplifier Smart Tool Spec
 - The library is the tool. Every capability lives in the library and is reachable from `lib.py`. The CLI and any other surface are thin wrappers: argument parsing and I/O conventions, then a call into the library. Capability that exists only in a wrapper is a defect.
 - Each domain capability lives in `capabilities/<name>/`, with its prompts and templates beside its code. `lib.py` imports it and is the only place that does. `core/` holds only what every smart tool has: the manifest and the skill.
 - Deterministic capabilities run with no model provider configured. Model-backed capabilities go through the `Intelligence` interface, never an SDK directly, and their help text says they are model-backed. They take `agent_provider`, `model`, and `reasoning_effort` as parameters and resolve the implementation and model with `select_intelligence`, so the model defaults to the agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS` from `schemas.py`; never hardcode a model name.
-- A capability is its code, a row in `CAPABILITIES`, and a `SKILL.md` beside that code carrying its arguments, a worked invocation, and its expected result. `<command> --help` renders that skill, `<command> -h` stays the terse generated summary, and the tool's own skill stays a router pointing at both.
+- A capability is its code, a row in `CAPABILITIES`, and a `skill_<capability>.md` beside that code carrying its arguments, a worked invocation, and its expected result. `<command> --help` renders that skill, `<command> -h` stays the terse generated summary, and the tool's own skill stays a router pointing at both.
 - Failures name what went wrong and how to fix it. These should be surfaced when the library or other surface is used. Listing all possible failures in skills or docs is not appropriate. The caller is usually an agent.
 - The `Repository` URL under `[project.urls]` in `pyproject.toml` is the tool's canonical source: `--help` carries it, so an agent that can run the tool but not read its files still finds the docs, and every install instruction in `README.md`, `SMART_TOOL.md`, and the skill is built on it. If it is still the `<owner>` placeholder, replace it everywhere it appears once the remote exists.
 - Never modify this file unless explictly told.
@@ -72,3 +72,5 @@ The repositories are (add to the list as more are needed, the one exception to m
 - https://github.com/modelcontextprotocol/ext-apps - MCP extentions including MCP Apps
 - https://github.com/microsoft/amplifier-smart-tool-creator
 - https://github.com/microsoft/amplifier-smart-tool-digital-twin-universe
+- https://github.com/microsoft/amplifier-smart-tool-reality-check
+- https://github.com/astral-sh/uv

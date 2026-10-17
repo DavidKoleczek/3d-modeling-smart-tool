@@ -9,32 +9,33 @@ We support the [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/
 
 Prerequisites:
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- For the model-backed capabilities, one of:
-  - `codex` agent provider: the [Codex CLI](https://github.com/openai/codex) signed in with ChatGPT or an API key. See [authentication](https://developers.openai.com/codex/auth).
-  - `claude` agent provider: `ANTHROPIC_API_KEY`, or any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart).
+- For the model-backed capabilities:
+  - The `claude` agent provider: `ANTHROPIC_API_KEY`, or any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart). 
+  - The `codex` agent provider cannot run agents yet.
 - (Optional) Install the Smart Tools skill so your agent knows about Smart Tools: `npx skills add microsoft/amplifier-smart-tools`
 
-To get started, from the root of this repository:
+Install from [the repository](https://github.com/DavidKoleczek/3d-modeling-smart-tool).
+While it is private, git needs access to it, for example through `gh auth login`.
 
 ```bash
 # Install the Agent Skill so your agent knows about it.
-npx skills add .
-# Install the tool, choosing the provider(s) you want. Editable, so source changes apply without reinstalling.
-uv tool install --editable ".[all | codex | claude]"
+npx skills add DavidKoleczek/3d-modeling-smart-tool
+# Install the tool, choosing the provider(s) you want: [all], [claude], or [codex].
+uv tool install "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
 # Check the install; needs no credentials
 modeling-3d manifest
 ```
 
-To use it as a library, from another project with its path to this directory:
+To use it as a library, from another project:
 
 ```bash
-uv add --editable "path/to/modeling-3d[all]"
+uv add "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
 ```
 
-To update, from the root of this repository:
+To update:
 
 ```bash
-npx skills add .   # add -g for global installs
+npx skills update   # add -g for global installs
 uv tool upgrade modeling-3d
 ```
 
@@ -50,6 +51,22 @@ uv tool uninstall modeling-3d
 ```bash
 # Print the tool's manifest as JSON
 modeling-3d manifest
+
+# Create a 3D model in .modeling-3d/bear
+modeling-3d create-3d-model "A low poly brown bear like the image" --name bear --reference bear.png
+
+# A follow-up right after, continuing the session that built it
+modeling-3d create-3d-model "Make the snout longer" --name bear --resume
+
+# Coming back to it later, in a fresh session that reads its model.py
+modeling-3d create-3d-model "Make it a polar bear" --name bear --edit
+
+# Steer or stop it from another shell while it works
+modeling-3d steer-3d-model --name bear --message "Make the ears rounder"
+modeling-3d cancel-3d-model --name bear
+
+# Optionally, make `blender` run your installed Blender, for opening models in it
+modeling-3d add-blender-to-path
 
 # Serve the app in a browser page, without an agent session; messages sent from it are printed
 modeling-3d app

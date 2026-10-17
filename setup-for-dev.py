@@ -21,6 +21,8 @@ REFERENCES = [
     "https://github.com/modelcontextprotocol/ext-apps",
     "https://github.com/microsoft/amplifier-smart-tool-creator",
     "https://github.com/microsoft/amplifier-smart-tool-digital-twin-universe",
+    "https://github.com/microsoft/amplifier-smart-tool-reality-check",
+    "https://github.com/astral-sh/uv",
 ]
 
 

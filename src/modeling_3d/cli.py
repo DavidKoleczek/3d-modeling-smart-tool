@@ -1,8 +1,13 @@
 """Command line entry point for Modeling 3D"""
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Callable, Coroutine, Generator
 import contextlib
+import json
+from pathlib import Path
+import signal
 import time
+from types import FrameType
 from typing import Annotated, Any
 
 import typer
@@ -15,7 +20,11 @@ from typer.models import CommandFunctionType
 from modeling_3d import lib
 from modeling_3d.adapters import mcp as mcp_adapter
 from modeling_3d.core.skill import DISTRIBUTION
-from modeling_3d.schemas import Modeling3dError
+from modeling_3d.schemas import DEFAULT_REASONING_EFFORT, AgentProvider, ModelEvent, Modeling3dError, ReasoningEffort
+
+# Every signal that ends the process stops a run first, so its session stays resumable and nothing it started
+# outlives it. SIGHUP is the console closing on Linux and macOS, SIGBREAK on Windows.
+STOPPING_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
 
 
 class CapabilityCommand(TyperCommand):
@@ -129,6 +138,90 @@ def app_(
 
 
 @app.command()
+def create_3d_model(
+    prompt: Annotated[str, typer.Argument(help="What to build, or what to change.", show_default=False)],
+    name: Annotated[
+        str, typer.Option("--name", help="The new model's name, unique in the directory, or the model to edit.")
+    ],
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+    references: Annotated[
+        list[Path] | None, typer.Option("--reference", help="An image or model to work from; repeatable.")
+    ] = None,
+    edit: Annotated[bool, typer.Option("--edit", help="Change the existing model named by --name.")] = False,
+    resume: Annotated[
+        bool,
+        typer.Option(
+            "--resume",
+            help="Edit, continuing the session that last worked on the model; for a follow-up soon after it.",
+        ),
+    ] = False,
+    agent_provider: Annotated[
+        AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
+    ] = None,
+    model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
+    reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,
+    timeout_seconds: Annotated[int, typer.Option("--timeout-seconds", min=1)] = 3600,
+) -> None:
+    """Create a 3D model, or change one, printing each event as a JSON line. Model-backed.
+
+    The last line is the `finished` or `failed` event, carrying the result. Exits 0 when the model is done.
+    """
+    code = asyncio.run(
+        _run_model(
+            lib.create_3d_model(
+                prompt=prompt,
+                name=name,
+                directory=directory,
+                references=references,
+                edit=edit,
+                resume=resume,
+                agent_provider=agent_provider,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    )
+    raise typer.Exit(code)
+
+
+@app.command()
+def steer_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The model being worked on.")],
+    message: Annotated[str, typer.Option("--message", help="What to tell its agent.")],
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """Send a message to the agent working on a model. Deterministic."""
+    lib.steer_3d_model(name=name, message=message, directory=directory)
+
+
+@app.command()
+def cancel_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The model being worked on.")],
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """Stop the run working on a model at once; its session can still be resumed. Deterministic."""
+    lib.cancel_3d_model(name=name, directory=directory)
+
+
+@app.command()
+def add_blender_to_path(
+    blender_path: Annotated[
+        Path | None,
+        typer.Option("--blender-path", help="Blender's executable or folder; the newest installed when omitted."),
+    ] = None,
+) -> None:
+    """Make `blender` run an installed Blender from new terminals, printing what changed as JSON. Deterministic."""
+    typer.echo(lib.add_blender_to_path(blender_path=blender_path).model_dump_json(indent=2))
+
+
+@app.command()
 def mcp() -> None:
     """Serve the app's MCP server on stdio, with the app as an MCP App. Deterministic.
 
@@ -136,6 +229,47 @@ def mcp() -> None:
     client disconnects; prints nothing else to stdout.
     """
     mcp_adapter.run_stdio()
+
+
+async def _run_model(starting: Coroutine[Any, Any, lib.ModelRun]) -> int:
+    """Run a model's request to its end, one JSON line per event, and the exit code its end calls for."""
+    run = await starting
+    with _stopped_by_signals(run):
+        async for event in run.events():
+            _print_event(event)
+        result = await run.result()
+    return 0 if result.status == "done" else 1
+
+
+def _print_event(event: ModelEvent) -> None:
+    # ASCII-escaped JSON is UTF-8 on any console encoding, and echo writes the line in one call and flushes it.
+    typer.echo(json.dumps(event.model_dump(mode="json")))
+
+
+@contextlib.contextmanager
+def _stopped_by_signals(run: lib.ModelRun) -> Generator[None]:
+    """Stop the run on every signal that ends the process."""
+    loop = asyncio.get_running_loop()
+    stopping: set[asyncio.Task[None]] = set()
+
+    def stop() -> None:
+        task = asyncio.ensure_future(run.cancel())
+        stopping.add(task)
+        task.add_done_callback(stopping.discard)
+
+    def handler(signum: int, frame: FrameType | None) -> None:
+        loop.call_soon_threadsafe(stop)
+
+    previous: dict[signal.Signals, Any] = {}
+    for name in STOPPING_SIGNALS:
+        number = getattr(signal, name, None)
+        if isinstance(number, signal.Signals):
+            previous[number] = signal.signal(number, handler)
+    try:
+        yield
+    finally:
+        for number, original in previous.items():
+            signal.signal(number, original)
 
 
 def main() -> int:
