@@ -1,13 +1,17 @@
 import type { CallToolResult } from "@modelcontextprotocol/client";
 
+import { AppError, type FailureReason } from "@/lib/errors";
 import { app } from "@/lib/host";
 
-const UPDATES_TOOL = "app_updates";
 const LIST_TOOL = "list_3d_models";
 const VIEW_TOOL = "view_3d_model";
+const CREATE_TOOL = "create_3d_model";
+const STEER_TOOL = "steer_3d_model";
+const CANCEL_TOOL = "cancel_3d_model";
+const ACTIVITY_TOOL = "read_3d_model_activity";
 const MODEL_FILE_PREFIX = "modeling-3d://models/";
-
-export class AppError extends Error {}
+// Starting a run waits for its agent to start, which can take a while on a cold machine.
+const CREATE_TIMEOUT_MS = 120_000;
 
 /** `ModelStatus` in schemas.py. */
 export type ModelStatus =
@@ -19,6 +23,7 @@ export type ModelRun = {
   prompt: string;
   agent_provider: string;
   session_id: string | null;
+  origin: string | null;
 };
 
 /** `ModelSummary` in schemas.py. */
@@ -32,6 +37,7 @@ export type ModelSummary = {
   status: ModelStatus | null;
   last_run: ModelRun | null;
   files: string[];
+  references: string[];
 };
 
 /** `ModelListing` in schemas.py. */
@@ -40,6 +46,40 @@ export type ModelListing = {
   models: ModelSummary[];
   last_viewed: string | null;
   unreadable: string[];
+};
+
+/** `ActivityKind` in schemas.py. */
+export type ActivityKind =
+  "request" | "said" | "tool" | "tool-result" | "steered" | "ended";
+
+/** `ActivityEntry` in schemas.py. */
+export type ActivityEntry = {
+  time: string;
+  run_id: string;
+  kind: ActivityKind;
+  text: string;
+  origin: string | null;
+  data: Record<string, unknown>;
+};
+
+/** `ModelActivity` in schemas.py. */
+export type ModelActivity = {
+  model: ModelSummary;
+  entries: ActivityEntry[];
+  cursor: string;
+};
+
+/** A file to work from, as the view sends it: its name, and its bytes in base64. */
+export type Upload = { name: string; data: string };
+
+/** What a new request on a model asks for. */
+/** What a request on a model asks for; a name a model has already changes that model. */
+export type ModelRequest = {
+  prompt: string;
+  name: string;
+  resume_session?: boolean | string;
+  references?: Upload[];
+  reference_models?: string[];
 };
 
 /** One of a model's files as the server gives it: base64, with its media type. */
@@ -59,14 +99,33 @@ function textOf(result: CallToolResult): string {
     .join(" ");
 }
 
+async function call(
+  name: string,
+  args: Record<string, unknown>,
+  timeout?: number,
+): Promise<CallToolResult> {
+  const result = await app.callServerTool(
+    { name, arguments: args },
+    timeout ? { timeout } : undefined,
+  );
+  if (result.isError) {
+    const failure = result.structuredContent as
+      { reason?: FailureReason | null; model?: string | null } | undefined;
+    throw new AppError(
+      textOf(result) || `\`${name}\` failed.`,
+      failure?.reason ?? null,
+      failure?.model ?? null,
+    );
+  }
+  return result;
+}
+
 async function structuredFrom(
   name: string,
   args: Record<string, unknown>,
+  timeout?: number,
 ): Promise<Record<string, unknown>> {
-  const result = await app.callServerTool({ name, arguments: args });
-  if (result.isError) {
-    throw new AppError(textOf(result) || `\`${name}\` failed.`);
-  }
+  const result = await call(name, args, timeout);
   if (!result.structuredContent) {
     throw new AppError(
       `\`${name}\` returned nothing. Check that the server is Modeling 3D.`,
@@ -106,38 +165,40 @@ export async function readModelFile(
   return { base64: content.blob, mimeType: content.mimeType ?? "" };
 }
 
-/** What the agent has said in the app past the first `after` messages. */
-export async function agentMessages(after: number): Promise<string[]> {
-  const result = await app.callServerTool({
-    name: UPDATES_TOOL,
-    arguments: { after },
-  });
-  if (result.isError) {
-    throw new AppError(textOf(result) || `\`${UPDATES_TOOL}\` failed.`);
-  }
-  const structured = result.structuredContent as
-    { messages?: unknown } | undefined;
-  if (!Array.isArray(structured?.messages)) {
+/** Start a run that creates the model, or changes it when it exists; resolves with its summary once its agent runs. */
+export async function createModel(
+  request: ModelRequest,
+): Promise<ModelSummary> {
+  return (await structuredFrom(
+    CREATE_TOOL,
+    request,
+    CREATE_TIMEOUT_MS,
+  )) as ModelSummary;
+}
+
+/** Tell the agent working on `name` something, as the person in the app. */
+export async function steerModel(name: string, message: string): Promise<void> {
+  await call(STEER_TOOL, { name, message });
+}
+
+/** Stop the run working on `name`; its session can still be resumed. */
+export async function cancelModel(name: string): Promise<void> {
+  await call(CANCEL_TOOL, { name });
+}
+
+/** The model's summary and its activity, or only what came after `after`. */
+export async function readActivity(
+  name: string,
+  after?: string,
+): Promise<ModelActivity> {
+  const structured = await structuredFrom(
+    ACTIVITY_TOOL,
+    after ? { name, after } : { name },
+  );
+  if (!Array.isArray(structured.entries)) {
     throw new AppError(
-      `\`${UPDATES_TOOL}\` returned no messages. Check that the server is Modeling 3D.`,
+      `\`${ACTIVITY_TOOL}\` returned no entries. Check that the server is this version of Modeling 3D.`,
     );
   }
-  return structured.messages.filter(
-    (message): message is string => typeof message === "string",
-  );
-}
-
-/** Hand `text` to the host, which delivers it to the agent as the user's message. */
-export async function steer(text: string): Promise<void> {
-  const result = await app.sendMessage({
-    role: "user",
-    content: [{ type: "text", text }],
-  });
-  if (result.isError) {
-    throw new AppError("The host did not deliver the message.");
-  }
-}
-
-export function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
+  return structured as ModelActivity;
 }

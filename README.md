@@ -14,9 +14,6 @@ Prerequisites:
   - The `codex` agent provider cannot run agents yet.
 - (Optional) Install the Smart Tools skill so your agent knows about Smart Tools: `npx skills add microsoft/amplifier-smart-tools`
 
-Install from [the repository](https://github.com/DavidKoleczek/3d-modeling-smart-tool).
-While it is private, git needs access to it, for example through `gh auth login`.
-
 ```bash
 # Install the Agent Skill so your agent knows about it.
 npx skills add DavidKoleczek/3d-modeling-smart-tool
@@ -55,15 +52,22 @@ modeling-3d manifest
 # Create a 3D model in .modeling-3d/bear
 modeling-3d create-3d-model "A low poly brown bear like the image" --name bear --reference bear.png
 
-# A follow-up right after, continuing the session that built it
-modeling-3d create-3d-model "Make the snout longer" --name bear --resume
+# Change it, in a fresh session that reads its model.py
+modeling-3d create-3d-model "Make it a polar bear" --name bear
 
-# Coming back to it later, in a fresh session that reads its model.py
-modeling-3d create-3d-model "Make it a polar bear" --name bear --edit
+# Or continuing the session that last worked on it
+modeling-3d create-3d-model "Make the snout longer" --name bear --resume-session true
+
+# A cub that works from the bear, left running on its own
+modeling-3d create-3d-model "A cub like the bear" --name cub --detach \
+    --reference .modeling-3d/bear/model.py --reference .modeling-3d/bear/renders/front.png
 
 # Steer or stop it from another shell while it works
 modeling-3d steer-3d-model --name bear --message "Make the ears rounder"
 modeling-3d cancel-3d-model --name bear
+
+# What was asked of a model, by whom, and what its agent did, in the app or anywhere else
+modeling-3d read-3d-model-activity --name bear
 
 # List the models in .modeling-3d, newest first, with their state, and record one as viewed last
 modeling-3d list-3d-models
@@ -72,7 +76,7 @@ modeling-3d view-3d-model --name bear
 # Optionally, make `blender` run your installed Blender, for opening models in it
 modeling-3d add-blender-to-path
 
-# Serve the app in a browser page, showing the models in .modeling-3d
+# Serve the app in a browser page, where you create, change, and steer the models in .modeling-3d
 modeling-3d app
 modeling-3d app --directory path/to/models
 
@@ -80,8 +84,9 @@ modeling-3d app --directory path/to/models
 modeling-3d mcp
 ```
 
-To steer Claude Code through the app, start `claude` from this directory, where `.mcp.json` loads the server, and ask it to open the app.
+To use the app beside Claude Code, start `claude` from this directory, where `.mcp.json` loads the server, and ask it to open the app.
 Hosts that render MCP Apps, such as VS Code, show it inline instead.
+What you do in the app is not sent to the session. Any session in the directory sees it by reading a model's activity, and what a session does shows in the app.
 
 See the [CLI reference](docs/02-cli.md) for every flag and the [library reference](docs/01-library.md) for the Python surface.
 

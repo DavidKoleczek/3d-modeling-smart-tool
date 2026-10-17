@@ -1,6 +1,6 @@
 """The contract every model-backed capability runs through, so the implementation is swappable."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from importlib.util import find_spec
 import os
 from pathlib import Path
@@ -8,7 +8,8 @@ import sys
 from typing import Protocol
 
 from modeling_3d.core.skill import DISTRIBUTION, repository_url
-from modeling_3d.intelligence.schemas import AgentEvent, AgentRequest, AgentResult, Steering
+from modeling_3d.intelligence import claude_steps
+from modeling_3d.intelligence.schemas import AgentEvent, AgentRequest, AgentResult, AgentStep, Steering
 from modeling_3d.schemas import AGENT_PROVIDERS, AgentProvider, Modeling3dError
 
 # The import each agent provider's SDK answers to; its extra is named after the agent provider.
@@ -70,7 +71,8 @@ def resolve_agent_provider(agent_provider: AgentProvider | None = None) -> Agent
             raise Modeling3dError(
                 f"The {agent_provider} agent provider is not installed. Install modeling-3d with it: "
                 f"`uv tool install {_install_source(agent_provider)}`. A project that uses the library runs `uv add` "
-                "with the same requirement."
+                "with the same requirement.",
+                "agent-unavailable",
             )
         return agent_provider
     for candidate in AGENT_PROVIDERS:
@@ -81,7 +83,8 @@ def resolve_agent_provider(agent_provider: AgentProvider | None = None) -> Agent
         f"one: `uv tool install {_install_source('all')}`, or put "
         + " or ".join(f"[{candidate}]" for candidate in AGENT_PROVIDERS)
         + " in place of [all] for just one. Use `uv add` instead of `uv tool install` in a project that uses the "
-        "library."
+        "library.",
+        "agent-unavailable",
     )
 
 
@@ -118,6 +121,18 @@ def select_intelligence(
         model = default_models[agent_provider] if model is None else model
         return resolve_intelligence(agent_provider, model), model
     return intelligence, default_models[agent_provider or AGENT_PROVIDERS[0]] if model is None else model
+
+
+def agent_steps(agent_provider: AgentProvider) -> Callable[[AgentEvent, Path], list[AgentStep]]:
+    """The agent provider's reader of its events, as kept, into what they show of a run; given the run's workspace.
+
+    An agent provider without one yet shows nothing of what its agent did.
+    """
+    match agent_provider:
+        case "claude":
+            return claude_steps.steps
+        case "codex":
+            return lambda event, workspace: []
 
 
 def state_directory(agent_provider: AgentProvider) -> Path:

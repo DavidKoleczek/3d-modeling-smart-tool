@@ -16,7 +16,7 @@ CAPABILITIES = (
     Capability("manifest", "Print the tool's manifest as JSON.", model_backed=False, skill="core/skill_manifest.md"),
     Capability(
         "app",
-        "Serve the app in a browser page on this machine, without an agent session; print its URL.",
+        "Serve the app in a browser page on this machine, where the person creates, changes, and steers models.",
         model_backed=False,
         skill="capabilities/app/skill_app.md",
     ),
@@ -45,6 +45,12 @@ CAPABILITIES = (
         skill="capabilities/create_3d_model/skill_list_3d_models.md",
     ),
     Capability(
+        "read-3d-model-activity",
+        "Print a model's summary and its activity: each request, steering message, agent step, and how runs ended.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skill_read_3d_model_activity.md",
+    ),
+    Capability(
         "view-3d-model",
         "Record a model as the one viewed last in its directory and print its summary as JSON.",
         model_backed=False,
@@ -58,7 +64,7 @@ CAPABILITIES = (
     ),
     Capability(
         "mcp",
-        "Serve the app over stdio as an MCP App, so the person watches and steers the agent through it.",
+        "Serve the app over stdio as an MCP App, so a session can show it to the person inline or in a browser.",
         model_backed=False,
         skill="adapters/skill_mcp.md",
     ),

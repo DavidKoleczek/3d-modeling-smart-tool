@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  describe,
   listModels,
   viewModel,
   type ModelListing,
   type ModelSummary,
 } from "@/lib/api";
+import { describe } from "@/lib/errors";
 
 const POLL_MS = 1000;
 

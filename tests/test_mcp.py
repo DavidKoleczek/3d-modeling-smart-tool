@@ -1,19 +1,13 @@
 """The MCP adapter on the wire, spoken to over stdio the way Claude Code and MCP Apps hosts speak to it."""
 
-import asyncio
 from collections.abc import Callable, Iterator
 import json
-from multiprocessing.connection import Listener
-import os
 from pathlib import Path
 import queue
-import socket
 import subprocess
 import sys
-import tempfile
 import threading
 from typing import Any
-import uuid
 
 from mcp import Client
 from mcp.client.context import ClientRequestContext
@@ -23,67 +17,32 @@ from mcp.types import ElicitRequestParams, ElicitRequestURLParams, ElicitResult,
 import pytest
 
 from modeling_3d import lib
-from modeling_3d.adapters.inbox import SOCKET_VARIABLE, TOKEN_VARIABLE
 from modeling_3d.capabilities.app.mcp_server import VIEW_URI
 
 TIMEOUT_SECONDS = 10
 # What Claude Code 2.1 asks for in `initialize`.
 PROTOCOL_VERSION = "2025-11-25"
 MCP_APPS_HOST = {"extensions": {EXTENSION_ID: {"mimeTypes": [APP_MIME_TYPE]}}}
-TOKEN = "test-token"
-
-
-class FakeInbox:
-    """A Claude Code session inbox: a named pipe on Windows, a Unix socket elsewhere. Collects what is posted."""
-
-    def __init__(self) -> None:
-        self.posts: queue.Queue[list[dict[str, Any]]] = queue.Queue()
-        if sys.platform == "win32":
-            self.address = rf"\\.\pipe\modeling-3d-test-{uuid.uuid4().hex}"
-            listener = Listener(self.address, family="AF_PIPE")
-            threading.Thread(target=self._accept_pipe, args=(listener,), daemon=True).start()
-        else:
-            # Unix socket paths are capped near 100 bytes, which pytest's tmp_path can pass on macOS.
-            self.address = str(Path(tempfile.mkdtemp(dir="/tmp")) / "inbox.sock")
-            server = socket.socket(socket.AF_UNIX)
-            server.bind(self.address)
-            server.listen()
-            threading.Thread(target=self._accept_socket, args=(server,), daemon=True).start()
-
-    def _accept_pipe(self, listener: Listener) -> None:
-        while True:
-            with listener.accept() as connection:
-                self._collect(connection.recv_bytes())
-
-    def _accept_socket(self, server: socket.socket) -> None:
-        while True:
-            connection, _ = server.accept()
-            with connection, connection.makefile("rb") as stream:
-                self._collect(stream.read())
-
-    def _collect(self, payload: bytes) -> None:
-        self.posts.put([json.loads(line) for line in payload.decode("utf-8").splitlines()])
-
-
-def server_environment(inbox: FakeInbox | None = None) -> dict[str, str]:
-    # Run inside Claude Code, the tests inherit its session's inbox, and must never post into it.
-    environment = {name: value for name, value in os.environ.items() if name not in (SOCKET_VARIABLE, TOKEN_VARIABLE)}
-    if inbox is not None:
-        environment |= {SOCKET_VARIABLE: inbox.address, TOKEN_VARIABLE: TOKEN}
-    return environment
+VIEW_TOOLS = (
+    "list_3d_models",
+    "view_3d_model",
+    "create_3d_model",
+    "steer_3d_model",
+    "cancel_3d_model",
+    "read_3d_model_activity",
+)
 
 
 class Wire:
     """One `modeling-3d mcp` process, spoken to in newline-delimited JSON-RPC on the initialize handshake."""
 
-    def __init__(self, inbox: FakeInbox | None = None, arguments: list[str] | None = None) -> None:
+    def __init__(self, arguments: list[str] | None = None) -> None:
         self.process = subprocess.Popen(
             [sys.executable, "-m", "modeling_3d.cli", "mcp", *(arguments or [])],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
             encoding="utf-8",
-            env=server_environment(inbox),
         )
         self.messages: queue.Queue[dict[str, Any]] = queue.Queue()
         self.next_id = 0
@@ -138,21 +97,8 @@ class Wire:
 
 
 @pytest.fixture
-def inbox() -> FakeInbox:
-    return FakeInbox()
-
-
-@pytest.fixture
 def wire() -> Iterator[Wire]:
     server = Wire()
-    yield server
-    if server.process.poll() is None:
-        server.process.kill()
-
-
-@pytest.fixture
-def wire_with_inbox(inbox: FakeInbox) -> Iterator[Wire]:
-    server = Wire(inbox)
     yield server
     if server.process.poll() is None:
         server.process.kill()
@@ -162,38 +108,26 @@ def text_of(result: dict[str, Any]) -> str:
     return "\n".join(block["text"] for block in result["content"])
 
 
-def message_from_the_browser(url: str, text: str) -> str:
-    """Hand over `text` the way the browser host page does with the view's `ui/message`, over the app's own `/mcp`."""
-
-    async def hand_over() -> str:
-        async with Client(f"{url}/mcp") as client:
-            result = (await client.call_tool("app_message", {"text": text})).content[0]
-        assert isinstance(result, TextContent)
-        return result.text
-
-    return asyncio.run(hand_over())
-
-
-def test_a_client_without_mcp_apps_sees_only_the_model_tools(wire: Wire) -> None:
-    wire.initialize()
+def test_a_client_without_mcp_apps_sees_only_open_app(wire: Wire) -> None:
+    initialized = wire.initialize()
     tools = {tool["name"]: tool for tool in wire.request("tools/list", {})["tools"]}
 
-    assert set(tools) == {"open_app", "reply"}
+    assert set(tools) == {"open_app"}
     assert tools["open_app"]["_meta"] == {"ui": {"resourceUri": VIEW_URI}}
+    assert "read-3d-model-activity" in initialized["instructions"]
     assert wire.request("resources/list", {})["resources"] == []
     assert wire.request("resources/templates/list", {})["resourceTemplates"] == []
 
 
-def test_an_mcp_apps_host_gets_the_view_its_app_only_tools_and_the_model_files(wire: Wire) -> None:
+def test_an_mcp_apps_host_gets_the_view_the_tools_it_calls_and_the_model_files(wire: Wire) -> None:
     wire.initialize(MCP_APPS_HOST)
     tools = {tool["name"]: tool for tool in wire.request("tools/list", {})["tools"]}
     resources = wire.request("resources/list", {})["resources"]
     templates = wire.request("resources/templates/list", {})["resourceTemplates"]
     contents = wire.request("resources/read", {"uri": VIEW_URI})["contents"]
 
-    app_only = ("app_updates", "app_message", "list_3d_models", "view_3d_model")
-    assert set(tools) == {"open_app", "reply", *app_only}
-    assert all(tools[name]["_meta"]["ui"]["visibility"] == ["app"] for name in app_only)
+    assert set(tools) == {"open_app", *VIEW_TOOLS}
+    assert all(tools[name]["_meta"]["ui"]["visibility"] == ["app"] for name in VIEW_TOOLS)
     assert [resource["uri"] for resource in resources] == [VIEW_URI]
     assert [template["uriTemplate"] for template in templates] == ["modeling-3d://models/{name}/{+path}"]
     assert contents == [{"uri": VIEW_URI, "mimeType": APP_MIME_TYPE, "text": lib.app_view()}]
@@ -220,35 +154,16 @@ def test_the_app_shows_the_directory_it_was_started_on_until_open_app_names_anot
     assert "is a file, not a directory of models" in text_of(refused)
 
 
-def test_the_view_in_an_mcp_apps_host_hears_the_agent(wire: Wire) -> None:
-    wire.initialize(MCP_APPS_HOST)
+@pytest.mark.parametrize(("capabilities", "where"), [(MCP_APPS_HOST, "inline"), (None, "URL to open the app: ")])
+def test_open_app_says_the_user_acts_in_the_app_and_how_the_session_sees_it(
+    wire: Wire, capabilities: dict[str, Any] | None, where: str
+) -> None:
+    wire.initialize(capabilities)
+    opened = text_of(wire.call_tool("open_app", {}))
 
-    assert "inline" in text_of(wire.call_tool("open_app", {}))
-    wire.call_tool("reply", {"text": "a cube it is"})
-    assert wire.call_tool("app_updates", {"after": 0})["structuredContent"] == {"messages": ["a cube it is"]}
-
-
-def test_a_message_from_the_browser_reaches_the_session_inbox(wire_with_inbox: Wire, inbox: FakeInbox) -> None:
-    wire_with_inbox.initialize()
-    url = text_of(wire_with_inbox.call_tool("open_app", {})).split("URL to open the app: ")[1].split()[0]
-
-    assert text_of(wire_with_inbox.call_tool("open_app", {})).count(url) == 1
-    assert message_from_the_browser(url, "make the legs longer") == "delivered to the agent"
-    auth, posted = inbox.posts.get(timeout=TIMEOUT_SECONDS)
-
-    assert auth == {"type": "auth", "token": TOKEN}
-    assert posted["type"] == "user"
-    assert posted["message"]["content"].endswith("\n\nmake the legs longer")
-    assert "Modeling 3D app" in posted["message"]["content"]
-
-
-def test_without_an_inbox_a_message_comes_back_with_the_next_tool_result(wire: Wire) -> None:
-    wire.initialize()
-    url = text_of(wire.call_tool("open_app", {})).split("URL to open the app: ")[1].split()[0]
-    message_from_the_browser(url, "make the legs longer")
-
-    assert "make the legs longer" in text_of(wire.call_tool("reply", {"text": "on it"}))
-    assert "make the legs longer" not in text_of(wire.call_tool("reply", {"text": "done"}))
+    assert where in opened
+    assert "Nothing they do there is sent to you" in opened
+    assert "modeling-3d read-3d-model-activity --name <name>" in opened
 
 
 # "auto" lands on 2026-07-28, where the question rides back on the result and the client retries; "legacy" is the
@@ -262,9 +177,7 @@ async def test_open_app_asks_the_client_to_open_it_in_the_browser(mode: str, era
         asked.append(params)
         return ElicitResult(action="accept")
 
-    server = StdioServerParameters(
-        command=sys.executable, args=["-m", "modeling_3d.cli", "mcp"], env=server_environment()
-    )
+    server = StdioServerParameters(command=sys.executable, args=["-m", "modeling_3d.cli", "mcp"])
     async with Client(server, mode=mode, elicitation_callback=open_it) as client:
         opened = (await client.call_tool("open_app", {})).content[0]
         again = (await client.call_tool("open_app", {})).content[0]
@@ -276,14 +189,6 @@ async def test_open_app_asks_the_client_to_open_it_in_the_browser(mode: str, era
     assert len(asked) == 1
     assert f"The user opened the app at {asked[0].url}." in opened.text
     assert f"Give the user this URL to open the app: {asked[0].url}" in again.text
-
-
-def test_reply_before_open_app_is_a_tool_error_naming_the_fix(wire: Wire) -> None:
-    wire.initialize()
-    result = wire.call_tool("reply", {"text": "hello"})
-
-    assert result["isError"]
-    assert "open_app" in text_of(result)
 
 
 def test_it_exits_cleanly_when_the_client_disconnects(wire: Wire) -> None:

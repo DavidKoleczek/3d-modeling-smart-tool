@@ -66,3 +66,11 @@ class AgentResult(BaseModel):
     session_id: str | None = Field(
         default=None, description="Identifies this run's session so a later request can resume it"
     )
+
+
+class AgentStep(BaseModel):
+    """What one agent event amounts to in a model's activity: words for the person, a tool call, or its result."""
+
+    kind: Literal["said", "tool", "tool-result"]
+    text: str = ""
+    data: dict[str, Any] = Field(default_factory=dict)

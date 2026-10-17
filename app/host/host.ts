@@ -15,7 +15,6 @@ import {
 
 const HOST = { name: "Modeling 3D browser host", version: "1.0.0" };
 const VIEW_URI = "ui://modeling-3d/app";
-const MESSAGE_TOOL = "app_message";
 const SANDBOX_ATTRIBUTE = "allow-scripts allow-same-origin allow-forms";
 const PROXY_READY: McpUiSandboxProxyReadyNotification["method"] =
   "ui/notifications/sandbox-proxy-ready";
@@ -93,7 +92,6 @@ function createBridge(client: Client): AppBridge {
       openLinks: {},
       serverTools: capabilities?.tools,
       serverResources: capabilities?.resources,
-      message: { text: {} },
     },
     {
       // No style variables, so the view keeps its own bundled font and palette.
@@ -109,18 +107,6 @@ function createBridge(client: Client): AppBridge {
   bridge.onopenlink = async ({ url }) => {
     window.open(url, "_blank", "noopener,noreferrer");
     return {};
-  };
-  // This page has no conversation of its own, so a message from the view goes to the server, which hands it to the
-  // agent session that opened the app.
-  bridge.onmessage = async ({ content }) => {
-    const text = content
-      .flatMap((block) => (block.type === "text" ? [block.text] : []))
-      .join("\n");
-    const result = await client.callTool({
-      name: MESSAGE_TOOL,
-      arguments: { text },
-    });
-    return result.isError ? { isError: true } : {};
   };
   // The view fills the window and scrolls itself, so its reported size changes nothing here.
   bridge.onsizechange = () => {};
@@ -160,7 +146,7 @@ async function main(): Promise<void> {
 
 main().catch((cause: unknown) => {
   const status = document.getElementById("status")!;
-  status.textContent = `Could not open the app. ${cause instanceof Error ? cause.message : String(cause)} Check that the agent session that opened it is still running, then reload.`;
+  status.textContent = `Could not open the app. ${cause instanceof Error ? cause.message : String(cause)} Check that what served it, \`modeling-3d app\` or an agent session, is still running, then reload.`;
   status.hidden = false;
   document.querySelector("iframe")?.remove();
 });

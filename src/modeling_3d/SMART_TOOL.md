@@ -35,8 +35,10 @@ wrapper over it, so anything you can do from the shell you can also do from Pyth
 ## When to reach for it
 
 - Creates and edits 3D models from a description of what to build, and reference images or models. 
-  - Use `create-3d-model` for both use cases.
+  - Use `create-3d-model` for both use cases, with `--detach` for a run that should go on by itself.
   - Use `list-3d-models` to find the models already made in a directory, and how their runs went.
+  - Use `read-3d-model-activity` before acting on a model: it shows what was asked of it and by whom, what its
+    agent did, and how its runs ended, including what the person did in the app.
 
 ## Before writing code
 

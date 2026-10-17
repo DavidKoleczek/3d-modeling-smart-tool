@@ -19,8 +19,35 @@ SEMVER_PATTERN = r"^\d+\.\d+\.\d+$"
 SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 
 
+# Which failure it was, for a surface that words it for a person in its own terms rather than passing on the message.
+FailureReason = Literal[
+    "invalid-name",
+    "name-in-use",
+    "no-such-model",
+    "no-such-session",
+    "missing-reference",
+    "no-reference-model",
+    "already-running",
+    "not-running",
+    "provider-mismatch",
+    "agent-unavailable",
+    "start-failed",
+    "bad-cursor",
+    "bad-upload",
+]
+
+
 class Modeling3dError(Exception):
-    """Raised for any failure the library can name and explain how to fix."""
+    """Raised for any failure the library can name and explain how to fix.
+
+    The message is for an agent or a terminal, naming the command or argument that fixes it. `reason` says which
+    failure it is, and `model` names the model it is about, so a surface can word it for a person instead.
+    """
+
+    def __init__(self, message: str, reason: FailureReason | None = None, model: str | None = None) -> None:
+        super().__init__(message)
+        self.reason = reason
+        self.model = model
 
 
 # region: Manifest
@@ -82,6 +109,7 @@ class ModelRunRecord(BaseModel):
     model: str
     reasoning_effort: ReasoningEffort
     session_id: str | None = None
+    origin: str | None = Field(default=None, description="Who asked: `app`, `claude-code:<session id>`, or unknown")
     status: ModelRunStatus = "running"
     pid: int = Field(description="The process running it; a `running` run whose process is gone has crashed")
     started: datetime
@@ -141,6 +169,9 @@ class ModelSummary(BaseModel):
     )
     last_run: ModelRunRecord | None = Field(description="Its prompt, agent provider, and session, for a follow-up")
     files: list[str] = Field(description="The model's files, relative to its directory")
+    references: list[str] = Field(
+        default_factory=list, description="What its runs were given to work from, as copied into its directory"
+    )
 
 
 class ModelListing(BaseModel):
@@ -156,6 +187,28 @@ class ModelsState(BaseModel):
     """.state.json in a models directory: what the person last did there."""
 
     last_viewed: str | None = None
+
+
+ActivityKind = Literal["request", "said", "tool", "tool-result", "steered", "ended"]
+
+
+class ActivityEntry(BaseModel):
+    """One step in making a model: a request, what its agent said or did, steering, or how a run ended."""
+
+    time: datetime
+    run_id: str
+    kind: ActivityKind
+    text: str = Field(description="The prompt, the agent's words, the tool's target, the message, or the outcome")
+    origin: str | None = Field(default=None, description="Who sent a request or steering message")
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelActivity(BaseModel):
+    """A model's summary, its activity past a cursor, and the cursor to read on from."""
+
+    model: ModelSummary
+    entries: list[ActivityEntry]
+    cursor: str = Field(description="Pass as `after` to read only what comes next")
 
 
 class BlenderOnPath(BaseModel):

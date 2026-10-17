@@ -1,13 +1,12 @@
 """Top level entry point for the Modeling 3D library."""
 
-from collections.abc import Callable
 from pathlib import Path
 
 from modeling_3d.capabilities.app import mcp_server as app_server_module
 from modeling_3d.capabilities.app import server as app_module
 from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.capabilities.blender import blender
-from modeling_3d.capabilities.create_3d_model import create, models
+from modeling_3d.capabilities.create_3d_model import activity, create, models
 from modeling_3d.capabilities.create_3d_model.create import ModelRun
 from modeling_3d.capabilities.create_3d_model.record import DEFAULT_DIRECTORY
 from modeling_3d.core import manifest
@@ -18,6 +17,7 @@ from modeling_3d.schemas import (
     AgentProvider,
     BlenderOnPath,
     Manifest,
+    ModelActivity,
     ModelListing,
     ModelSummary,
     ReasoningEffort,
@@ -44,26 +44,27 @@ def version() -> str:
     return skill_module.version()
 
 
-def app_server(deliver: Callable[[str], None] | None = None, directory: Path | None = None) -> AppServer:
-    """The app's MCP server: tools that open the app and talk through it, and its view as an MCP App resource.
+def app_server(directory: Path | None = None) -> AppServer:
+    """The app's MCP server: the tool that opens the app, the tools its view calls, and the view as an MCP App.
 
     Serve `AppServer.server` over any MCP transport. `AppServer.open` serves the browser host page, which renders
     the view for agents that cannot embed it and reaches the same server at its own `/mcp`. The view shows the models
-    in `AppServer.directory`, through `list_3d_models` and `view_3d_model`.
+    in `AppServer.directory`, and creates, changes, steers, and stops them through this library's capabilities, as
+    from `app`. Nothing done in it is sent to an agent session; a session sees it with `read_3d_model_activity`.
 
     Args:
-        deliver: Called with each message the user sends from the browser host page, on a worker thread; raises
-            `OSError` when it cannot deliver. Without it, or when it raises, the message is handed to the agent with
-            its next tool result instead.
         directory: Where the models the app shows are kept; `.modeling-3d` in the working directory when omitted.
     """
     return app_server_module.AppServer(
         skill_module.DISTRIBUTION,
         version(),
         (directory or DEFAULT_DIRECTORY).resolve(),
-        models.list_3d_models,
-        models.view_3d_model,
-        deliver,
+        list_models=models.list_3d_models,
+        view_model=models.view_3d_model,
+        create_model=create.create_3d_model,
+        steer_model=create.steer_3d_model,
+        cancel_model=create.cancel_3d_model,
+        read_activity=activity.read_3d_model_activity,
     )
 
 
@@ -77,59 +78,88 @@ async def create_3d_model(
     name: str,
     directory: Path | None = None,
     references: list[Path] | None = None,
-    edit: bool = False,
-    resume: bool = False,
+    resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
     model: str | None = None,
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
     timeout_seconds: int = 3600,
+    origin: str | None = None,
+    detach: bool = False,
     intelligence: Intelligence | None = None,
 ) -> ModelRun:
-    """Create a 3D model, or change one with `edit`, returning its handle as soon as the agent runs. Model-backed.
+    """Create a 3D model, or change it when it exists, returning its handle as soon as the agent runs. Model-backed.
 
     An agent writes the model as a Blender script, model.py, in the model's own directory, builds model.glb with it,
     and renders and looks at the result until it matches the request.
 
     Args:
         prompt: What to build, or what to change.
-        name: The model's name and directory under `directory`. A new model's name must not be taken there, ignoring
-            case; with `edit` or `resume`, it names the existing model to change.
+        name: The model's name and directory under `directory`. When a model by that name exists there, ignoring
+            case, the request changes it; otherwise it creates a new model.
         directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
-        references: Images and models to work from, copied into the model's directory. Images are also shown to the
-            agent with the prompt.
-        edit: Change the existing model named `name`, in a fresh session that reads its model.py first.
-        resume: Implies `edit`. Continue the session that last worked on the model, for a follow-up soon after it while its context
-            is still cached, or after a run that was cut short. Leave it out when coming back later: a fresh session
-            reads model.py, which holds the whole model, and starts from a small context.
-        agent_provider: The first installed when omitted; a resumed model's own when omitted.
+        references: Files to work from, such as images, models, or another model's model.py, model.glb, and renders.
+            Each is copied into the model's references/, and images are also shown to the agent with the prompt.
+        resume_session: For a model that exists, which agent session to continue, so the agent keeps the
+            conversation: True for its last session, or the id of one of its sessions. False, the default, starts a
+            fresh session, which reads model.py, the whole model, and starts from a small context. A new model, or one
+            without a session, starts a fresh one. A model's sessions are the `session_id` of each run in its
+            model.json; `read_3d_model_activity` gives each request's, and `list_3d_models` gives the last run's.
+        agent_provider: The first installed when omitted; the session's own when continuing one.
         model: The agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS` when omitted.
         reasoning_effort: How hard the model thinks.
         timeout_seconds: How long the run may take before it is stopped; its session can still be resumed.
-        intelligence: An implementation to run the agent with, in place of the agent provider's.
+        origin: Who is asking, shown with the request in the model's activity: `app`, `claude-code:<session id>`, or
+            a name of the caller's own.
+        detach: Run in a process of its own, which outlives this one. It still returns once the agent runs, and a
+            request that cannot run still raises. The handle follows the run through the files it writes.
+        intelligence: An implementation to run the agent with, in place of the agent provider's; not with `detach`.
     """
     return await create.create_3d_model(
         prompt=prompt,
         name=name,
         directory=directory,
         references=references,
-        edit=edit,
-        resume=resume,
+        resume_session=resume_session,
         agent_provider=agent_provider,
         model=model,
         reasoning_effort=reasoning_effort,
         timeout_seconds=timeout_seconds,
+        origin=origin,
+        detach=detach,
         intelligence=intelligence,
     )
 
 
-def steer_3d_model(name: str, message: str, directory: Path | None = None) -> None:
-    """Send a message to the agent working on the model, from any process; the run's events show when it lands."""
-    create.steer_3d_model(name=name, message=message, directory=directory)
+def steer_3d_model(name: str, message: str, directory: Path | None = None, origin: str | None = None) -> None:
+    """Send a message to the agent working on the model, from any process; the run's events show when it lands.
+
+    Args:
+        name: The model being worked on.
+        message: What to tell its agent.
+        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        origin: Who is sending it, shown with it in the model's activity, as for `create_3d_model`.
+    """
+    create.steer_3d_model(name=name, message=message, directory=directory, origin=origin)
 
 
 def cancel_3d_model(name: str, directory: Path | None = None) -> None:
     """Stop the run working on the model at once, from any process; its session can still be resumed."""
     create.cancel_3d_model(name=name, directory=directory)
+
+
+def read_3d_model_activity(name: str, directory: Path | None = None, after: str | None = None) -> ModelActivity:
+    """Everything about how a model is being made: its summary, and its activity across every run.
+
+    The activity is each request and steering message with who sent it, what the agent said, the tools it ran and
+    which failed, and how each run ended. It is the one view of a run every agent provider shares; their own events
+    stay in each run's events.jsonl as they gave them. Reads only, so it is safe while runs write.
+
+    Args:
+        name: The model's name, exactly as its directory is named.
+        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        after: The `cursor` of an earlier read, for only the activity since.
+    """
+    return activity.read_3d_model_activity(name=name, directory=directory, after=after)
 
 
 def list_3d_models(directory: Path | None = None) -> ModelListing:

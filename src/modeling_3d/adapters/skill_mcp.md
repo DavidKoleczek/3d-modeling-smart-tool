@@ -21,30 +21,28 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
   `_meta.ui.resourceUri` names the view, so a host that renders MCP Apps shows it inline. A
   client that takes URL elicitation, such as Claude Code, is asked to open the URL in the
   browser. Calling it again returns the same URL. `directory` switches which models it shows.
-- `reply` with `text`: shows `text` in every open view, on the view's next poll.
-- `app_updates` with `after`: the agent's messages past the first `after`, which the view polls.
-- `app_message` with `text`: hands the agent a message from the browser host page.
-- `list_3d_models` and `view_3d_model` with `name`: the library's, on the app's directory,
-  which the view polls and calls when the person picks a model.
+- `list_3d_models`, `view_3d_model`, and `read_3d_model_activity`: the library's, on the app's
+  directory, which the view polls and calls when the person picks a model.
+- `create_3d_model`, `steer_3d_model`, and `cancel_3d_model`: the library's, on the app's
+  directory with origin `app`, which the view calls for the person. `create_3d_model` always
+  detaches, so its runs outlive the server, and takes the files to work from as `{name, data}`
+  with `data` in base64.
 
-All but the first two are listed only to hosts that render MCP Apps, with
-`visibility: ["app"]`, so no model sees them.
+All but `open_app` are listed only to hosts that render MCP Apps, with `visibility: ["app"]`, so
+no model sees them.
 
 ## Resources
 
 - `ui://modeling-3d/app`: the view.
-- `modeling-3d://models/{name}/{+path}`: a model's `model.glb` or one of its renders, as a
-  base64 blob, which the view reads to show it. Nothing else in the directory can be read.
+- `modeling-3d://models/{name}/{+path}`: a model's `model.glb`, one of its renders, or a
+  reference image it was given, as a base64 blob, which the view reads to show it. Nothing else
+  in the directory can be read.
 
-## Where the user's messages go
+## What the person does in the app
 
-1. In a host that renders MCP Apps, such as VS Code, the view sends them as `ui/message`, and
-   the host adds them to the conversation.
-1. In Claude Code, which does not render MCP Apps, the user opens the URL. The page there is an
-   MCP Apps host for the same view, connected to this server at the page's `/mcp`. It hands each
-   message to `app_message`, and the server posts it into the inbox of the session that launched
-   it, from `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`. An idle session
-   starts a turn with it; a busy one reads it between tool calls. It arrives as a
-   [message from another session](https://code.claude.com/docs/en/cross-session-messaging),
-   so it cannot approve anything.
-1. Anywhere else, they come back with the result of the agent's next `reply` or `open_app`.
+The person creates models, asks for changes, and steers and stops runs in the app, and the view
+calls the capabilities for each itself. Nothing is sent to the session, whether the app is inline
+or in the browser. The session sees what they did by reading a model's activity with
+`modeling-3d read-3d-model-activity --name <name>`, which shows each request and steering message
+with who sent it, so it reads that before acting on a model. What the session does shows in the
+app the same way, as from Claude Code.

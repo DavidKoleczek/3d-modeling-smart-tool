@@ -15,3 +15,9 @@ export function ago(iso: string, now: number = Date.now()): string {
   }
   return "just now";
 }
+
+/** A span of seconds as the activity shows one, such as "45s" or "3m 5s". */
+export function duration(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
+}

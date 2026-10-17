@@ -243,14 +243,16 @@ class ClaudeIntelligence:
             raise Modeling3dError(
                 f"The Claude Code runtime did not start: {type(error).__name__}: {error} "
                 "Check that ~/.claude/settings.json is valid, and reinstall modeling-3d with the [claude] extra, "
-                "which brings the runtime."
+                "which brings the runtime.",
+                "agent-unavailable",
             ) from None
         if not signed_in(account):
             raise Modeling3dError(
                 "The Claude Agent SDK has no credentials. Set ANTHROPIC_API_KEY to a Claude Console API key, or set "
                 "CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_ANTHROPIC_AWS, CLAUDE_CODE_USE_VERTEX, or "
                 f"CLAUDE_CODE_USE_FOUNDRY to 1 with that cloud's credentials, as {AUTHENTICATION_DOCUMENTATION} "
-                "describes."
+                "describes.",
+                "agent-unavailable",
             )
 
     async def start(self, request: AgentRequest) -> ClaudeRun:

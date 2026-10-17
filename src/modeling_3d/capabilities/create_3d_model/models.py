@@ -11,6 +11,7 @@ from modeling_3d.capabilities.create_3d_model.record import (
     missing_model,
     model_files,
     model_names,
+    read_atomically,
     write_atomically,
 )
 from modeling_3d.schemas import Modeling3dError, ModelListing, ModelRecord, ModelsState, ModelStatus, ModelSummary
@@ -30,7 +31,7 @@ def list_3d_models(directory: Path | None = None) -> ModelListing:
     unreadable: list[str] = []
     for name in model_names(root):
         try:
-            models.append(_summary(root / name, load_record(root / name)))
+            models.append(model_summary(root / name, load_record(root / name)))
         except Modeling3dError as error:
             unreadable.append(str(error))
     # Stable, so models updated at the same time stay in name order.
@@ -50,13 +51,14 @@ def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary:
     # Compared against the names on disk, since Windows and macOS find `Bear` when only `bear` exists.
     if name not in model_names(root):
         raise missing_model(root, name)
-    summary = _summary(root / name, load_record(root / name))
+    summary = model_summary(root / name, load_record(root / name))
     state = _state(root).model_copy(update={"last_viewed": name})
     write_atomically(root / STATE, state.model_dump_json(indent=2))
     return summary
 
 
-def _summary(target: Path, record: ModelRecord) -> ModelSummary:
+def model_summary(target: Path, record: ModelRecord) -> ModelSummary:
+    """The model as a listing shows it, from its directory and its record."""
     run = record.runs[-1] if record.runs else None
     status: ModelStatus | None = None
     if run is not None:
@@ -73,6 +75,7 @@ def _summary(target: Path, record: ModelRecord) -> ModelSummary:
         status=status,
         last_run=run,
         files=model_files(target),
+        references=list(dict.fromkeys(path for entry in record.runs for path in entry.references)),
     )
 
 
@@ -86,6 +89,6 @@ def _built(target: Path) -> datetime | None:
 def _state(root: Path) -> ModelsState:
     """What the person last did in the directory; nothing when it was never written or cannot be read."""
     try:
-        return ModelsState.model_validate_json((root / STATE).read_text(encoding="utf-8"))
+        return ModelsState.model_validate_json(read_atomically(root / STATE))
     except (OSError, ValueError):
         return ModelsState()

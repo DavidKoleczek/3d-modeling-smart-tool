@@ -1,7 +1,7 @@
 `cancel-3d-model` stops the run working on a model, from any process. The process running it
 stops its agent at once, along with every command the agent started, and ends with a `finished`
 event whose status is `cancelled`. Its session can still be resumed, with `create-3d-model --name
-<name> --resume`.
+<name> --resume-session true`.
 
 ```bash
 modeling-3d cancel-3d-model --name bear

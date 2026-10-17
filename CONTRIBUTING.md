@@ -95,7 +95,7 @@ Install dependencies (also done by `setup-for-dev.py` when pnpm is present):
 pnpm --dir app install --frozen-lockfile
 ```
 
-Serve the app on its own, then rebuild whichever side changed and reload the browser, since the server reads both on every request. Messages sent from the page are printed in the terminal:
+Serve the app on its own, then rebuild whichever side changed and reload the browser, since the server reads both on every request:
 
 ```bash
 uv run modeling-3d app --port 5199

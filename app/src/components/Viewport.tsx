@@ -21,12 +21,12 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 
 import { StatusBadge } from "@/components/StatusBadge";
 import {
-  describe,
   GLB,
   readModelFile,
   type ModelListing,
   type ModelSummary,
 } from "@/lib/api";
+import { describe } from "@/lib/errors";
 import { dispose, parseGlb } from "@/lib/scene";
 
 type Shown = { name: string; scene: Object3D };
@@ -199,7 +199,8 @@ export function Viewport({
         icon={<Box className="size-6 text-primary" />}
         title="No models yet"
       >
-        Ask your agent to create one, and it will appear here as it is built.
+        Start one with New model, or ask your agent to, and it appears here as
+        it is built.
       </Message>
     );
   } else if (!model.built) {

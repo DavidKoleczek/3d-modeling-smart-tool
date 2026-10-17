@@ -14,7 +14,8 @@ steer_3d_model("bear", "Make the ears rounder.")
 ```
 
 When nothing is working on the model, it fails and names the command that sends the message as a
-new request instead.
+new request instead. Run from Claude Code, the message is recorded as from
+`claude-code:<session id>`, so the model's activity shows which session sent it.
 
 ## Arguments
 

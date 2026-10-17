@@ -1,12 +1,16 @@
-"""The app's MCP server: tools that open the app and talk through it, and its view as an MCP App resource."""
+"""The app's MCP server: the tool that opens the app, the tools its view calls, and the view as an MCP App resource."""
 
 import asyncio
 import base64
-from collections.abc import Callable
+import binascii
+from collections.abc import Awaitable, Callable
 import json
 from pathlib import Path, PurePosixPath
+import re
+import shutil
+import tempfile
 import threading
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import unquote
 import uuid
 
@@ -36,11 +40,12 @@ from mcp.types import (
 )
 
 from modeling_3d.capabilities.app.server import App, serve_app, view
-from modeling_3d.schemas import Modeling3dError, ModelListing, ModelSummary
+from modeling_3d.schemas import Modeling3dError, ModelActivity, ModelListing, ModelSummary
 
 VIEW_URI = "ui://modeling-3d/app"
 MODEL_FILE_PREFIX = "modeling-3d://models/"
-# What the view reads of a model: its GLB and its renders. The rest, such as model.py and its sessions, stays put.
+# What the view reads of a model: its GLB, its renders, and its reference images. The rest, such as model.py and its
+# sessions, stays put.
 MODEL_FILE_TYPES = {
     ".glb": "model/gltf-binary",
     ".png": "image/png",
@@ -48,20 +53,28 @@ MODEL_FILE_TYPES = {
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
 }
+# A model's own files that stand for it as a reference, beside its first render: its script and its GLB.
+REFERENCE_TYPES = (".py", ".glb")
 # The key `open_app` files its request to open the browser under, when the client answers by retrying the call.
 OPEN_REQUEST = "open"
-INSTRUCTIONS = """\
-Modeling 3D has an app where the user watches the work and steers it. Call `open_app` when they ask for it. It \
-shows the models in one directory, and `modeling-3d view-3d-model --name <name>` brings one up in it.
+# Who the model's activity shows as asking, for everything done in the app.
+ORIGIN = "app"
+SEES_THE_APP = (
+    "Nothing they do there is sent to you: see the models and their state with `modeling-3d list-3d-models`, and what "
+    "was asked of one and what its agent did with `modeling-3d read-3d-model-activity --name <name>`."
+)
+INSTRUCTIONS = f"""\
+Modeling 3D has an app where the user watches the models in one directory being made, and creates, changes, steers, \
+and stops them. Call `open_app` when they ask for it. `modeling-3d view-3d-model --name <name>` brings a model up in it.
 
-What they write in the app reaches you as a message that names the app. They read the app, not this conversation, so \
-answer those messages with `reply`."""
+{SEES_THE_APP} Read a model's activity before acting on it, since they may have changed or steered it in the app."""
 
+APP_ONLY = {"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}}
 OPEN_APP = Tool(
     name="open_app",
-    description="Show the Modeling 3D app, where the user watches the models in a directory being made and steers "
-    "the work, and return its browser URL. Hosts that render MCP Apps show it inline. Opening it again returns the "
-    "same URL.",
+    description="Show the Modeling 3D app, where the user watches the models in a directory being made, and creates, "
+    "changes, and steers them, and return its browser URL. Hosts that render MCP Apps show it inline. Opening it "
+    "again returns the same URL.",
     input_schema={
         "type": "object",
         "properties": {
@@ -74,50 +87,95 @@ OPEN_APP = Tool(
     },
     _meta={"ui": {"resourceUri": VIEW_URI}},
 )
-REPLY = Tool(
-    name="reply",
-    description="Show a message to the user in the app. The app must be open.",
-    input_schema={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
-)
-APP_UPDATES = Tool(
-    name="app_updates",
-    description="The agent's messages the app's view has not shown yet, past the first `after`. Called by the view.",
-    input_schema={"type": "object", "properties": {"after": {"type": "integer", "minimum": 0}}},
-    _meta={"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}},
-)
-APP_MESSAGE = Tool(
-    name="app_message",
-    description="Hand the agent a message the user wrote in the app. Called by the app's browser host page.",
-    input_schema={"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
-    _meta={"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}},
-)
 LIST_MODELS = Tool(
     name="list_3d_models",
     description="The models in the app's directory, newest first, with their state, and the one viewed last. Called "
     "by the view.",
     input_schema={"type": "object", "properties": {}},
-    _meta={"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}},
+    _meta=APP_ONLY,
 )
 VIEW_MODEL = Tool(
     name="view_3d_model",
     description="Record a model in the app's directory as the one viewed last, and return its summary. Called by the "
     "view.",
     input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
-    _meta={"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}},
+    _meta=APP_ONLY,
 )
+CREATE_MODEL = Tool(
+    name="create_3d_model",
+    description="Create a model in the app's directory, or change the one by that name, in a run of its own that "
+    "outlives this server; return the model's summary once its agent runs, and record it as viewed last. Called by "
+    "the view.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string"},
+            "name": {"type": "string"},
+            "resume_session": {"type": ["boolean", "string"]},
+            "reference_models": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Models in the app's directory, whose script, GLB, and first render are references",
+            },
+            "references": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}, "data": {"type": "string", "description": "Base64"}},
+                    "required": ["name", "data"],
+                },
+            },
+        },
+        "required": ["prompt", "name"],
+    },
+    _meta=APP_ONLY,
+)
+STEER_MODEL = Tool(
+    name="steer_3d_model",
+    description="Send a message to the agent working on a model in the app's directory. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "message": {"type": "string"}},
+        "required": ["name", "message"],
+    },
+    _meta=APP_ONLY,
+)
+CANCEL_MODEL = Tool(
+    name="cancel_3d_model",
+    description="Stop the run working on a model in the app's directory. Called by the view.",
+    input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    _meta=APP_ONLY,
+)
+READ_ACTIVITY = Tool(
+    name="read_3d_model_activity",
+    description="A model's summary and its activity, or only what came after the cursor `after`. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "after": {"type": "string"}},
+        "required": ["name"],
+    },
+    _meta=APP_ONLY,
+)
+VIEW_TOOLS = [LIST_MODELS, VIEW_MODEL, CREATE_MODEL, STEER_MODEL, CANCEL_MODEL, READ_ACTIVITY]
 VIEW = Resource(uri=VIEW_URI, name="Modeling 3D app", mime_type=APP_MIME_TYPE)
 MODEL_FILE = ResourceTemplate(
     name="Model file",
     uri_template=f"{MODEL_FILE_PREFIX}{{name}}/{{+path}}",
-    description="A model's GLB or one of its renders, as base64, for the app's view.",
+    description="A model's GLB, one of its renders, or a reference image it was given, as base64, for the app's view.",
 )
 
 
+class Started(Protocol):
+    """What the view needs of a run `create_model` started: the model it works on."""
+
+    name: str
+
+
 class AppServer:
-    """The app's MCP server, what the agent has said in the app, and the browser host page once it is open.
+    """The app's MCP server, and the browser host page once it is open.
 
     Serve `server` over any MCP transport. Several at once share this state, so the browser host page reaches the
-    same server the agent's session does.
+    same server the agent's session does. The capabilities the view calls are passed in, so this stays a surface.
     """
 
     def __init__(
@@ -127,16 +185,19 @@ class AppServer:
         directory: Path,
         list_models: Callable[[Path], ModelListing],
         view_model: Callable[[str, Path], ModelSummary],
-        deliver: Callable[[str], None] | None = None,
+        create_model: Callable[..., Awaitable[Started]],
+        steer_model: Callable[[str, str, Path, str], None],
+        cancel_model: Callable[[str, Path], None],
+        read_activity: Callable[[str, Path, str | None], ModelActivity],
     ) -> None:
         self.directory = directory
         self._list_models = list_models
         self._view_model = view_model
-        self._deliver = deliver
+        self._create_model = create_model
+        self._steer_model = steer_model
+        self._cancel_model = cancel_model
+        self._read_activity = read_activity
         self._lock = threading.Lock()
-        self._said: list[str] = []
-        # Messages from the app that never reached the agent, handed to it with its next tool result instead.
-        self._undelivered: list[str] = []
         self._app: App | None = None
         self._offered = False
         self.server = Server(
@@ -158,16 +219,6 @@ class AppServer:
                 self._app = serve_app(self.server, port)
             return self._app
 
-    def say(self, text: str) -> None:
-        """Show `text` as the agent's in every open view, each on its next poll."""
-        with self._lock:
-            self._said.append(text)
-
-    def updates(self, after: int = 0) -> list[str]:
-        """What the agent has said, past the first `after` messages: what a view that has shown `after` is missing."""
-        with self._lock:
-            return self._said[after:]
-
     def close(self) -> None:
         """Stop serving the browser host page, if it was opened."""
         with self._lock:
@@ -178,10 +229,8 @@ class AppServer:
     async def _list_tools(
         self, ctx: ServerRequestContext[Any], params: PaginatedRequestParams | None
     ) -> ListToolsResult:
-        # Tools only the app calls stay hidden from clients that would show them to the model.
-        if client_supports_apps(ctx):
-            return ListToolsResult(tools=[OPEN_APP, REPLY, APP_UPDATES, APP_MESSAGE, LIST_MODELS, VIEW_MODEL])
-        return ListToolsResult(tools=[OPEN_APP, REPLY])
+        # Tools only the view calls stay hidden from clients that would show them to the model.
+        return ListToolsResult(tools=[OPEN_APP, *VIEW_TOOLS] if client_supports_apps(ctx) else [OPEN_APP])
 
     async def _list_resources(
         self, ctx: ServerRequestContext[Any], params: PaginatedRequestParams | None
@@ -207,8 +256,8 @@ class AppServer:
                 raise MCPError(INVALID_PARAMS, str(error)) from None
         raise MCPError(
             INVALID_PARAMS,
-            f"'{params.uri}' is not a resource of this server. It has {VIEW_URI}, and each model's GLB and renders at "
-            f"{MODEL_FILE.uri_template}.",
+            f"'{params.uri}' is not a resource of this server. It has {VIEW_URI}, and each model's GLB, renders, and "
+            f"reference images at {MODEL_FILE.uri_template}.",
         )
 
     def _model_file(self, uri: str) -> ReadResourceResult:
@@ -219,7 +268,8 @@ class AppServer:
             known = ", ".join(model.name for model in listing.models) or "none"
             raise Modeling3dError(f"There is no model named {name!r} in {listing.directory}. The models there: {known}.")
         # Only what the model's summary lists, so no other path in the directory can be read through this.
-        readable = [file for file in summary.files if PurePosixPath(file).suffix.lower() in MODEL_FILE_TYPES]
+        listed = [*summary.files, *summary.references]
+        readable = [file for file in listed if PurePosixPath(file).suffix.lower() in MODEL_FILE_TYPES]
         if path not in readable:
             raise Modeling3dError(
                 f"{path!r} is not a file the app reads from model {name}. It has: {', '.join(readable) or 'none yet'}."
@@ -235,7 +285,13 @@ class AppServer:
         try:
             return await self._call_tool(ctx, params)
         except Modeling3dError as error:
-            return CallToolResult(content=[TextContent(type="text", text=str(error))], is_error=True)
+            # Which failure it was rides along, so the view words it for the person rather than showing the message,
+            # which names commands and arguments for an agent.
+            return CallToolResult(
+                content=[TextContent(type="text", text=str(error))],
+                structured_content={"reason": error.reason, "model": error.model},
+                is_error=True,
+            )
 
     async def _call_tool(
         self, ctx: ServerRequestContext[Any], params: CallToolRequestParams
@@ -243,22 +299,64 @@ class AppServer:
         arguments = params.arguments or {}
         if params.name == OPEN_APP.name:
             return await self._open_app(ctx, params)
-        if params.name == REPLY.name:
-            if self._app is None:
-                raise Modeling3dError("The app is not open. Call open_app and give the user its URL first.")
-            self.say(arguments["text"])
-            return self._result("shown in the app")
-        if params.name == APP_UPDATES.name:
-            return _structured({"messages": self.updates(arguments.get("after", 0))})
-        if params.name == APP_MESSAGE.name:
-            return CallToolResult(content=[TextContent(type="text", text=await self._hand_over(arguments["text"]))])
         if params.name == LIST_MODELS.name:
             listing = await asyncio.to_thread(self._list_models, self.directory)
             return _structured(listing.model_dump(mode="json"))
         if params.name == VIEW_MODEL.name:
             summary = await asyncio.to_thread(self._view_model, arguments["name"], self.directory)
             return _structured(summary.model_dump(mode="json"))
-        raise Modeling3dError(f"'{params.name}' is not a tool of this server. The tools are: open_app, reply.")
+        if params.name == CREATE_MODEL.name:
+            return await self._create(arguments)
+        if params.name == STEER_MODEL.name:
+            await asyncio.to_thread(self._steer_model, arguments["name"], arguments["message"], self.directory, ORIGIN)
+            return _text("Sent; the model's activity shows it once its agent has it.")
+        if params.name == CANCEL_MODEL.name:
+            await asyncio.to_thread(self._cancel_model, arguments["name"], self.directory)
+            return _text("Stopping; the model's activity shows the run end.")
+        if params.name == READ_ACTIVITY.name:
+            activity = await asyncio.to_thread(
+                self._read_activity, arguments["name"], self.directory, arguments.get("after")
+            )
+            return _structured(activity.model_dump(mode="json"))
+        known = ", ".join(tool.name for tool in [OPEN_APP, *VIEW_TOOLS])
+        raise Modeling3dError(f"'{params.name}' is not a tool of this server. The tools are: {known}.")
+
+    async def _create(self, arguments: dict[str, Any]) -> CallToolResult:
+        uploads = Path(tempfile.mkdtemp(prefix="modeling-3d-"))
+        try:
+            references = await asyncio.to_thread(_write_uploads, uploads, arguments.get("references") or [])
+            references += await asyncio.to_thread(self._model_references, arguments.get("reference_models") or [])
+            run = await self._create_model(
+                prompt=arguments["prompt"],
+                name=arguments["name"],
+                directory=self.directory,
+                references=references,
+                resume_session=arguments.get("resume_session", False),
+                origin=ORIGIN,
+                detach=True,
+            )
+        finally:
+            # The run has copied its references into the model by the time it starts.
+            await asyncio.to_thread(shutil.rmtree, uploads, True)
+        summary = await asyncio.to_thread(self._view_model, run.name, self.directory)
+        return _structured(summary.model_dump(mode="json"))
+
+    def _model_references(self, names: list[str]) -> list[Path]:
+        """The files that stand for each named model as a reference: its script, its GLB, and its first render."""
+        models = {model.name: model for model in self._list_models(self.directory).models}
+        paths: list[Path] = []
+        for name in names:
+            files = models[name].files if name in models else []
+            own = [file for file in files if PurePosixPath(file).suffix in REFERENCE_TYPES]
+            if not own:
+                raise Modeling3dError(
+                    f"There is no built model named {name!r} in {self.directory} to work from.",
+                    "no-reference-model",
+                    name,
+                )
+            renders = [file for file in files if file.startswith("renders/") and _image(file)]
+            paths += [models[name].directory / file for file in [*own, *renders[:1]]]
+        return paths
 
     async def _open_app(
         self, ctx: ServerRequestContext[Any], params: CallToolRequestParams
@@ -287,28 +385,44 @@ class AppServer:
             except MCPError:
                 response = None
             opened = response is not None and response.action == "accept"
-        text = _opened_text(app.url, embedded, opened, pushed=self._deliver is not None)
-        return self._result(f"{text} It shows the models in {self.directory}.")
+        if embedded:
+            where = f"The app is shown to the user inline, and at {app.url} for a browser."
+        elif opened:
+            where = f"The user opened the app at {app.url}."
+        else:
+            where = f"Give the user this URL to open the app: {app.url}"
+        return _text(
+            f"{where} It shows the models in {self.directory}. There the user creates models, asks for changes, and "
+            f"steers and stops runs themselves. {SEES_THE_APP}"
+        )
 
-    async def _hand_over(self, text: str) -> str:
-        if self._deliver is not None:
-            try:
-                await asyncio.to_thread(self._deliver, text)
-                return "delivered to the agent"
-            except OSError as error:
-                text = f"{text}\n(It could not be delivered: {error}.)"
-        with self._lock:
-            self._undelivered.append(text)
-        return "held for the agent, who sees it with its next call to this server"
 
-    def _result(self, text: str) -> CallToolResult:
-        content = [TextContent(type="text", text=text)]
-        with self._lock:
-            undelivered, self._undelivered = self._undelivered, []
-        if undelivered:
-            messages = "\n\n".join(undelivered)
-            content.append(TextContent(type="text", text=f"The user wrote this in the app meanwhile:\n\n{messages}"))
-        return CallToolResult(content=content)
+def _write_uploads(folder: Path, uploads: list[dict[str, Any]]) -> list[Path]:
+    """Write each file the view sent, under its own name, in a folder of its own so no two names collide."""
+    paths: list[Path] = []
+    for index, upload in enumerate(uploads):
+        name = re.split(r"[\\/]", str(upload.get("name", "")))[-1].strip()
+        if name in ("", ".", ".."):
+            name = "reference"
+        try:
+            data = base64.b64decode(str(upload.get("data", "")), validate=True)
+        except binascii.Error:
+            raise Modeling3dError(
+                f"The reference {name} did not arrive as base64. Add it again.", "bad-upload"
+            ) from None
+        path = folder / str(index) / name
+        path.parent.mkdir()
+        path.write_bytes(data)
+        paths.append(path)
+    return paths
+
+
+def _image(path: str) -> bool:
+    return MODEL_FILE_TYPES.get(PurePosixPath(path).suffix.lower(), "").startswith("image/")
+
+
+def _text(text: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)])
 
 
 def _structured(structured: dict[str, Any]) -> CallToolResult:
@@ -318,21 +432,3 @@ def _structured(structured: dict[str, Any]) -> CallToolResult:
 def _takes_url_elicitation(ctx: ServerRequestContext[Any]) -> bool:
     capabilities = ctx.session.client_capabilities
     return capabilities is not None and capabilities.elicitation is not None and capabilities.elicitation.url is not None
-
-
-def _opened_text(url: str, embedded: bool, opened: bool, pushed: bool) -> str:
-    if embedded:
-        return (
-            f"The app is shown to the user inline, and at {url} for a browser. What they write in the inline app "
-            "arrives as their own message. Use `reply` to show progress in it."
-        )
-    where = f"The user opened the app at {url}." if opened else f"Give the user this URL to open the app: {url}"
-    if pushed:
-        return (
-            f"{where} What they write there reaches this session as a message naming the app, between tool calls or "
-            "as a new turn. Answer it with `reply`."
-        )
-    return (
-        f"{where} This client gives the server no way to reach you, so what they write there comes back with the "
-        "result of your next call to `reply` or `open_app`."
-    )

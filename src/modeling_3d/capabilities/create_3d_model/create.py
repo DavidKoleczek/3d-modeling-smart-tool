@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+import contextlib
 from datetime import UTC, datetime
 import json
 import os
@@ -9,18 +10,24 @@ from pathlib import Path
 import re
 import secrets
 import shutil
-from typing import Any
+import subprocess
+import sys
+import threading
+from typing import IO, Any, Protocol
 import uuid
+
+from pydantic import BaseModel
 
 from modeling_3d.capabilities.create_3d_model.record import (
     DEFAULT_DIRECTORY,
+    EVENTS,
     RECORD,
     REQUIRED_FILES,
     alive,
     load_record,
     missing_model,
     model_files,
-    model_names,
+    read_events,
     write_record,
 )
 from modeling_3d.intelligence.interface import AgentRun, Intelligence, resolve_agent_provider, select_intelligence
@@ -48,10 +55,58 @@ NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 POLL_SECONDS = 1.0
 # The agent's own timeout outlasts the run's, so the run is what stops it and can say it timed out.
 AGENT_TIMEOUT_GRACE_SECONDS = 60
+# What starts a detached run, given its request on stdin. Tests swap it for a command that fakes the agent.
+BACKGROUND_COMMAND = [sys.executable, "-m", "modeling_3d.capabilities.create_3d_model.background"]
+# Where a detached run's process writes once its agent runs, beside the run's events.
+PROCESS_LOG = "process.log"
 
 
-class ModelRun:
+class ModelRun(Protocol):
     """A model being created or changed: its events, a way to talk to its agent, and how it ended."""
+
+    name: str
+    directory: Path
+    run_id: str
+
+    @property
+    def session_id(self) -> str | None:
+        """The session a later run resumes, once the agent provider has made it; None before."""
+        ...
+
+    def events(self) -> AsyncIterator[ModelEvent]:
+        """Every event from the start, then live ones until the run ends with `finished` or `failed`."""
+        ...
+
+    async def steer(self, message: str) -> None:
+        """Send a message to the agent while it works; a `steered` event shows when it is delivered."""
+        ...
+
+    async def cancel(self) -> None:
+        """Stop the run at once and wait for it to end; its session can still be resumed."""
+        ...
+
+    async def result(self) -> ModelResult:
+        """Wait for the run to end."""
+        ...
+
+
+class DetachedRequest(BaseModel):
+    """What `create_3d_model` hands the process a detached run runs in."""
+
+    prompt: str
+    name: str
+    directory: Path | None
+    references: list[Path]
+    resume_session: bool | str
+    agent_provider: AgentProvider | None
+    model: str | None
+    reasoning_effort: ReasoningEffort
+    timeout_seconds: int
+    origin: str | None
+
+
+class InProcessRun:
+    """A model being created or changed by an agent this process runs."""
 
     def __init__(
         self,
@@ -74,7 +129,13 @@ class ModelRun:
         # Replaced on every append, so a reader waits on the one current when it ran out of events.
         self._appended = asyncio.Event()
         self._cancelling: asyncio.Task[None] | None = None
-        self._emit("started", f"Model {self.name} is being worked on in {directory}.", {"directory": str(directory)})
+        request = self._run.model_dump(
+            mode="json",
+            include={"prompt", "references", "resumed", "agent_provider", "model", "reasoning_effort", "origin"},
+        )
+        self._emit(
+            "started", f"Model {self.name} is being worked on in {directory}.", {"directory": str(directory), **request}
+        )
         self._task = asyncio.create_task(self._drive())
 
     @property
@@ -86,11 +147,8 @@ class ModelRun:
         return self._replay()
 
     async def steer(self, message: str) -> None:
-        """Send a message to the agent while it works; a `steered` event shows when it is delivered."""
-        if self._task.done():
-            raise _not_running(self.name, self._run.status, self._next)
-        await self._agent.steer(message)
-        self._emit("steered", message, {"steering": self._intelligence.steering})
+        """Send a message to the agent while it works, as from whoever asked for the run."""
+        await self._deliver(message, self._run.origin)
 
     async def cancel(self) -> None:
         """Stop the run at once and wait for it to end; its session can still be resumed."""
@@ -108,6 +166,12 @@ class ModelRun:
     @property
     def _run_directory(self) -> Path:
         return self.directory / "runs" / self.run_id
+
+    async def _deliver(self, message: str, origin: str | None) -> None:
+        if self._task.done():
+            raise _not_running(self.name, self._run.status, self._next)
+        await self._agent.steer(message)
+        self._emit("steered", message, {"steering": self._intelligence.steering, "origin": origin})
 
     async def _replay(self) -> AsyncIterator[ModelEvent]:
         index = 0
@@ -152,7 +216,7 @@ class ModelRun:
             status = "cancelled"
         elif outcome.error is not None:
             status = "failed"
-            error = f"The agent failed: {outcome.error} Its events are in {self._run_directory / 'events.jsonl'}."
+            error = f"The agent failed: {outcome.error} Its events are in {self._run_directory / EVENTS}."
         elif missing := [name for name in REQUIRED_FILES if not (self.directory / name).is_file()]:
             status = "failed"
             error = (
@@ -194,15 +258,15 @@ class ModelRun:
             self._note_session()
             if (self._run_directory / "cancel").exists():
                 self._request_cancel()
-            for path in sorted(steer.glob("*.md")):
-                message = path.read_text(encoding="utf-8")
+            for path in sorted(steer.glob("*.json")):
+                note = json.loads(path.read_text(encoding="utf-8"))
                 path.unlink()
                 if self._cancelling is not None:
                     continue
                 try:
-                    await self.steer(message)
+                    await self._deliver(note["message"], note.get("origin"))
                 except Modeling3dError as error:
-                    self._emit("steered", message, {"error": str(error)})
+                    self._emit("steered", note["message"], {"error": str(error), "origin": note.get("origin")})
             await asyncio.sleep(POLL_SECONDS)
 
     def _request_cancel(self) -> None:
@@ -228,7 +292,7 @@ class ModelRun:
         event = ModelEvent(run_id=self.run_id, kind=kind, text=text, data=data or {})
         if time is not None:
             event.time = time
-        with (self._run_directory / "events.jsonl").open("a", encoding="utf-8") as events:
+        with (self._run_directory / EVENTS).open("a", encoding="utf-8") as events:
             events.write(json.dumps(event.model_dump(mode="json")) + "\n")
         self._run.last_event = event.time
         write_record(self.directory, self._record)
@@ -237,38 +301,139 @@ class ModelRun:
         self._appended = asyncio.Event()
 
 
+class DetachedRun:
+    """A model being created or changed in a process of its own, followed through the files that process writes."""
+
+    def __init__(self, directory: Path, run_id: str, origin: str | None, next_command: str) -> None:
+        self.name = directory.name
+        self.directory = directory
+        self.run_id = run_id
+        self._origin = origin
+        self._next = next_command
+
+    @property
+    def session_id(self) -> str | None:
+        return self._record().session_id
+
+    def events(self) -> AsyncIterator[ModelEvent]:
+        """Every event from the start, then each as the run's process writes it, until the run ends."""
+        return self._follow()
+
+    async def steer(self, message: str) -> None:
+        """Send a message to the agent while it works, as from whoever asked for the run."""
+        _write_steering(await asyncio.to_thread(self._running), message, self._origin)
+
+    async def cancel(self) -> None:
+        """Stop the run at once and wait for it to end; its session can still be resumed."""
+        # A run that has ended already needs no stopping.
+        with contextlib.suppress(Modeling3dError):
+            (await asyncio.to_thread(self._running) / "cancel").touch()
+        await self.result()
+
+    async def result(self) -> ModelResult:
+        """Wait for the run to end."""
+        last: ModelEvent | None = None
+        async for event in self._follow():
+            last = event
+        if last is not None and last.kind in ("finished", "failed"):
+            return ModelResult.model_validate(last.data)
+        run = self._record()
+        log = self.directory / "runs" / self.run_id / PROCESS_LOG
+        return ModelResult(
+            name=self.name,
+            directory=self.directory,
+            run_id=self.run_id,
+            status="failed",
+            error=f"The process running the model, {run.pid}, ended before the run did. What it printed is in {log}. "
+            f"Go on where it stopped with `{self._next}`.",
+            session_id=run.session_id,
+            agent_provider=run.agent_provider,
+            files=model_files(self.directory),
+            next=self._next,
+        )
+
+    def _record(self) -> ModelRunRecord:
+        return next(run for run in load_record(self.directory).runs if run.id == self.run_id)
+
+    def _running(self) -> Path:
+        run = self._record()
+        if run.status != "running" or not alive(run.pid):
+            raise _not_running(self.name, run.status, self._next)
+        return self.directory / "runs" / self.run_id
+
+    async def _follow(self) -> AsyncIterator[ModelEvent]:
+        path = self.directory / "runs" / self.run_id / EVENTS
+        offset = 0
+        while True:
+            # Looked at before reading, so every event of a run seen to have ended is read.
+            run = await asyncio.to_thread(self._record)
+            ended = run.status != "running" or not alive(run.pid)
+            events, offset = await asyncio.to_thread(read_events, path, offset)
+            for event in events:
+                yield event
+                if event.kind in ("finished", "failed"):
+                    return
+            if ended:
+                return
+            await asyncio.sleep(POLL_SECONDS)
+
+
 async def create_3d_model(
     prompt: str,
     name: str,
     directory: Path | None = None,
     references: list[Path] | None = None,
-    edit: bool = False,
-    resume: bool = False,
+    resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
     model: str | None = None,
     reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT,
     timeout_seconds: int = 3600,
+    origin: str | None = None,
+    detach: bool = False,
     intelligence: Intelligence | None = None,
 ) -> ModelRun:
-    """Start creating a new model, or changing an existing one, and return its handle once the agent runs."""
+    """Start creating the model named `name`, or changing it when it exists, and return its handle once the agent runs."""
+    if detach:
+        if intelligence is not None:
+            raise Modeling3dError(
+                "A detached run's agent runs in a process of its own, which the intelligence passed cannot reach. "
+                "Leave out detach to run the agent with it here, or leave out the intelligence."
+            )
+        request = DetachedRequest(
+            prompt=prompt,
+            name=name,
+            directory=directory,
+            references=references or [],
+            resume_session=resume_session,
+            agent_provider=agent_provider,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            timeout_seconds=timeout_seconds,
+            origin=origin,
+        )
+        return await _detach(request)
     root = (directory or DEFAULT_DIRECTORY).resolve()
-    target, existing = _model_directory(root, name, edit=edit or resume)
+    target, existing = _model_directory(root, name)
     sources = _references(references or [])
     previous = existing.runs[-1] if existing is not None and existing.runs else None
     if previous is not None and previous.status == "running" and alive(previous.pid):
         raise Modeling3dError(
             f"Model {target.name} is already being worked on by process {previous.pid}. Steer that run with "
             f"`modeling-3d steer-3d-model --name {target.name} --message <text>`, stop it with "
-            f"`modeling-3d cancel-3d-model --name {target.name}`, or wait for it to end."
+            f"`modeling-3d cancel-3d-model --name {target.name}`, or wait for it to end.",
+            "already-running",
+            target.name,
         )
-    resumed = _resumable(target.name, existing) if resume and existing is not None else None
+    resumed = _resumed(target.name, existing, resume_session)
     if resumed is not None and agent_provider is None:
         agent_provider = resumed.agent_provider
     if resumed is not None and agent_provider != resumed.agent_provider:
         raise Modeling3dError(
             f"Model {target.name}'s session ran on {resumed.agent_provider}, and {agent_provider} was asked for. "
-            f"Resume it on {resumed.agent_provider} by leaving the agent provider out, or leave out --resume for a "
-            "fresh session that reads its model.py."
+            f"Continue it on {resumed.agent_provider} by leaving the agent provider out, or pass --resume-session "
+            "false for a fresh session that reads its model.py.",
+            "provider-mismatch",
+            target.name,
         )
     if intelligence is None:
         agent_provider = resolve_agent_provider(agent_provider)
@@ -295,6 +460,7 @@ async def create_3d_model(
             model=model,
             reasoning_effort=reasoning_effort,
             session_id=resumed.session_id if resumed is not None else None,
+            origin=origin,
             pid=os.getpid(),
             started=now,
         )
@@ -322,22 +488,90 @@ async def create_3d_model(
             record.runs[-1].finished = datetime.now(UTC)
             write_record(target, record)
         raise
-    return ModelRun(target, record, agent, intelligence, timeout_seconds, next_command)
+    return InProcessRun(target, record, agent, intelligence, timeout_seconds, next_command)
 
 
-def steer_3d_model(name: str, message: str, directory: Path | None = None) -> None:
+def steer_3d_model(name: str, message: str, directory: Path | None = None, origin: str | None = None) -> None:
     """Write a steering message for the process running the model's run to deliver."""
-    steer = _running_run(name, directory) / "steer"
-    stamp = f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}-{secrets.token_hex(3)}"
-    # Written aside and renamed, so the running run never reads half a message.
-    partial = steer / f"{stamp}.tmp"
-    partial.write_text(message, encoding="utf-8")
-    partial.replace(steer / f"{stamp}.md")
+    _write_steering(_running_run(name, directory), message, origin)
 
 
 def cancel_3d_model(name: str, directory: Path | None = None) -> None:
     """Write the cancel the process running the model's run acts on."""
     (_running_run(name, directory) / "cancel").touch()
+
+
+def _write_steering(run_directory: Path, message: str, origin: str | None) -> None:
+    steer = run_directory / "steer"
+    stamp = f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}-{secrets.token_hex(3)}"
+    # Written aside and renamed, so the running run never reads half a message.
+    partial = steer / f"{stamp}.tmp"
+    partial.write_text(json.dumps({"message": message, "origin": origin}), encoding="utf-8")
+    partial.replace(steer / f"{stamp}.json")
+
+
+async def _detach(request: DetachedRequest) -> DetachedRun:
+    report = await asyncio.to_thread(_start_process, request)
+    if report.get("error"):
+        raise Modeling3dError(report["error"], report.get("reason"), report.get("model"))
+    target = (request.directory or DEFAULT_DIRECTORY).resolve() / report["name"]
+    return DetachedRun(target, report["run_id"], request.origin, _next_command(target.name, request.directory))
+
+
+def _start_process(request: DetachedRequest) -> dict[str, Any]:
+    """Start the process a detached run runs in, and return what it reports once its agent runs or cannot."""
+    process = detached_process(BACKGROUND_COMMAND, subprocess.PIPE, subprocess.PIPE)
+    # It only starts the run's own process and exits; waited on here so it leaves no zombie.
+    threading.Thread(target=process.wait, daemon=True).start()
+    assert process.stdin is not None
+    assert process.stdout is not None
+    with process.stdin:
+        process.stdin.write(request.model_dump_json().encode("utf-8"))
+    with process.stdout:
+        line = process.stdout.readline()
+    if not line:
+        return {
+            "error": "The process that runs the model ended before its agent ran, without saying why. Run the request "
+            "without detach to see why.",
+            "reason": "start-failed",
+            "model": request.name,
+        }
+    return json.loads(line)
+
+
+def detached_process(
+    command: list[str], stdin: int | IO[Any], stdout: int | IO[Any], environment: dict[str, str] | None = None
+) -> subprocess.Popen[bytes]:
+    """Start `command` apart from this process's console, session, and job, so ending them leaves it running."""
+    if sys.platform != "win32":
+        return _popen(command, stdin, stdout, environment, start_new_session=True)
+    # A console of its own without a window, which the agent's processes share, so none of them opens one.
+    flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        # Out of the caller's job as well, since a host may end everything in its job when it exits.
+        return _popen(command, stdin, stdout, environment, creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB)
+    except PermissionError:
+        # The job allows no breaking away. Hosts built on Node let the children of their children leave it anyway.
+        return _popen(command, stdin, stdout, environment, creationflags=flags)
+
+
+def _popen(
+    command: list[str],
+    stdin: int | IO[Any],
+    stdout: int | IO[Any],
+    environment: dict[str, str] | None,
+    start_new_session: bool = False,
+    creationflags: int = 0,
+) -> subprocess.Popen[bytes]:
+    return subprocess.Popen(
+        command,
+        stdin=stdin,
+        stdout=stdout,
+        stderr=subprocess.DEVNULL,
+        env=environment,
+        start_new_session=start_new_session,
+        creationflags=creationflags,
+    )
 
 
 def _running_run(name: str, directory: Path | None) -> Path:
@@ -355,47 +589,49 @@ def _running_run(name: str, directory: Path | None) -> Path:
 def _not_running(name: str, status: str, next_command: str) -> Modeling3dError:
     ending = "its process is gone" if status == "running" else f"its last run ended {status}"
     return Modeling3dError(
-        f"Model {name} is not being worked on; {ending}. Send the message as a new request instead: {next_command}"
+        f"Model {name} is not being worked on; {ending}. Send the message as a new request instead: {next_command}",
+        "not-running",
+        name,
     )
 
 
-def _model_directory(root: Path, name: str, edit: bool) -> tuple[Path, ModelRecord | None]:
-    """The model's directory, and its record when an existing model is to be changed."""
+def _model_directory(root: Path, name: str) -> tuple[Path, ModelRecord | None]:
+    """The model's directory, and its record when a model by that name exists already, ignoring case."""
     if not NAME_PATTERN.match(name):
         raise Modeling3dError(
             f"{name!r} cannot name a model. Use letters, digits, '.', '_', and '-', starting with a letter or "
-            "digit, such as 'bear' or 'bear-2'."
+            "digit, such as 'bear' or 'bear-2'.",
+            "invalid-name",
+            name,
         )
     # Listed rather than probed, since Windows and macOS find `Bear` when only `bear` exists.
     taken = {path.name.lower(): path for path in root.iterdir()} if root.is_dir() else {}
     found = taken.get(name.lower())
-    if edit:
-        if found is None or found.name != name:
-            known = ", ".join(model_names(root)) or "none"
-            raise Modeling3dError(
-                f"There is no model named {name!r} in {root}, so there is nothing to edit. The models there: "
-                f"{known}. Name one of them, or leave out --edit and --resume to create {name!r}."
-            )
-        return found, load_record(found)
-    if found is not None:
-        if (found / RECORD).is_file():
-            raise Modeling3dError(
-                f"A model named {found.name!r} already exists in {root}. Pass --edit to change it, or choose "
-                "another name."
-            )
-        raise Modeling3dError(f"{found} already exists and is not a model. Choose another name.")
-    return root / name, None
-
-
-def _resumable(name: str, existing: ModelRecord) -> ModelRunRecord:
-    """The latest run with a session, which a resumed run continues."""
-    resumable = next((run for run in reversed(existing.runs) if run.session_id is not None), None)
-    if resumable is None:
+    if found is None:
+        return root / name, None
+    if not (found / RECORD).is_file():
         raise Modeling3dError(
-            f"Model {name} has no session to resume. Pass --edit without --resume to change it in a fresh session "
-            "that reads its model.py."
+            f"{found} already exists and is not a model. Choose another name.", "name-in-use", found.name
         )
-    return resumable
+    return found, load_record(found)
+
+
+def _resumed(name: str, existing: ModelRecord | None, resume_session: bool | str) -> ModelRunRecord | None:
+    """The run whose session this one continues: the latest with a session, or the one with the session named."""
+    runs = list(reversed(existing.runs)) if existing is not None else []
+    if not isinstance(resume_session, str):
+        # A model without a session yet changes in a fresh one.
+        return next((run for run in runs if run.session_id is not None), None) if resume_session else None
+    resumed = next((run for run in runs if run.session_id == resume_session), None)
+    if resumed is None:
+        sessions = ", ".join(dict.fromkeys(run.session_id for run in runs if run.session_id is not None))
+        raise Modeling3dError(
+            f"Model {name} has no session {resume_session!r}. Its sessions, newest first: {sessions or 'none'}. "
+            f"`modeling-3d read-3d-model-activity --name {name}` shows the session each request worked in.",
+            "no-such-session",
+            name,
+        )
+    return resumed
 
 
 def _references(paths: list[Path]) -> list[Path]:
@@ -404,7 +640,8 @@ def _references(paths: list[Path]) -> list[Path]:
         if not path.is_file():
             raise Modeling3dError(
                 f"The reference {path} is not a file. Name each reference image or model by its path, relative to "
-                "the working directory or absolute."
+                "the working directory or absolute.",
+                "missing-reference",
             )
     return resolved
 
@@ -419,7 +656,7 @@ def _copy_references(target: Path, sources: list[Path]) -> list[str]:
     for source in sources:
         destination = folder / source.name
         suffix = 2
-        while destination.exists() and destination.read_bytes() != source.read_bytes():
+        while destination.exists() and (destination.is_dir() or destination.read_bytes() != source.read_bytes()):
             destination = folder / f"{source.stem}-{suffix}{source.suffix}"
             suffix += 1
         if not destination.exists():
@@ -452,7 +689,7 @@ def _prompt(request: str, target: Path, references: list[str], resumed: bool, cr
 
 
 def _next_command(name: str, directory: Path | None) -> str:
-    command = f'modeling-3d create-3d-model "<what to change>" --name {name} --resume'
+    command = f'modeling-3d create-3d-model "<what to change>" --name {name} --resume-session true'
     if directory is not None and directory != DEFAULT_DIRECTORY:
         resolved = str(directory.resolve())
         command += f' --directory "{resolved}"' if re.search(r"\s", resolved) else f" --directory {resolved}"

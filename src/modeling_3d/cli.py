@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable, Coroutine, Generator
 import contextlib
 import json
+import os
 from pathlib import Path
 import signal
 import time
@@ -25,6 +26,8 @@ from modeling_3d.schemas import DEFAULT_REASONING_EFFORT, AgentProvider, ModelEv
 # Every signal that ends the process stops a run first, so its session stays resumable and nothing it started
 # outlives it. SIGHUP is the console closing on Linux and macOS, SIGBREAK on Windows.
 STOPPING_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
+# Claude Code sets it for the commands its sessions run, so what a session asks for shows in the activity as its own.
+SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 
 
 class CapabilityCommand(TyperCommand):
@@ -130,10 +133,10 @@ def app_(
 ) -> None:
     """Serve the app in a browser page on this machine and print its URL. Deterministic.
 
-    Not connected to an agent session: each message sent from the page is printed instead. Keeps serving until
-    Ctrl+C. Exits 1 with the cause and remedy when the port is held.
+    The person creates, changes, steers, and stops models in it without an agent session. Keeps serving until Ctrl+C;
+    runs started in it go on after. Exits 1 with the cause and remedy when the port is held.
     """
-    app_server = lib.app_server(deliver=typer.echo, directory=directory)
+    app_server = lib.app_server(directory=directory)
     typer.echo(app_server.open(port).url)
     with contextlib.suppress(KeyboardInterrupt):
         while True:
@@ -145,32 +148,37 @@ def app_(
 def create_3d_model(
     prompt: Annotated[str, typer.Argument(help="What to build, or what to change.", show_default=False)],
     name: Annotated[
-        str, typer.Option("--name", help="The new model's name, unique in the directory, or the model to edit.")
+        str, typer.Option("--name", help="The model's name; a model by that name in the directory is changed.")
     ],
     directory: Annotated[
         Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
     ] = None,
     references: Annotated[
-        list[Path] | None, typer.Option("--reference", help="An image or model to work from; repeatable.")
+        list[Path] | None,
+        typer.Option("--reference", help="A file to work from, such as an image or a model; repeatable."),
     ] = None,
-    edit: Annotated[bool, typer.Option("--edit", help="Change the existing model named by --name.")] = False,
-    resume: Annotated[
-        bool,
+    resume_session: Annotated[
+        str,
         typer.Option(
-            "--resume",
-            help="Edit, continuing the session that last worked on the model; for a follow-up soon after it.",
+            "--resume-session",
+            help="For a model that exists: true to continue its last session, false for a fresh one, or the id of "
+            "one of its sessions.",
         ),
-    ] = False,
+    ] = "false",
     agent_provider: Annotated[
         AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
     reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,
     timeout_seconds: Annotated[int, typer.Option("--timeout-seconds", min=1)] = 3600,
+    detach: Annotated[
+        bool, typer.Option("--detach", help="Leave the run going in a process of its own once its agent runs.")
+    ] = False,
 ) -> None:
     """Create a 3D model, or change one, printing each event as a JSON line. Model-backed.
 
-    The last line is the `finished` or `failed` event, carrying the result. Exits 0 when the model is done.
+    The last line is the `finished` or `failed` event, carrying the result. Exits 0 when the model is done. With
+    --detach, prints the `started` event and exits 0 once the agent runs, and the run goes on by itself.
     """
     code = asyncio.run(
         _run_model(
@@ -179,13 +187,15 @@ def create_3d_model(
                 name=name,
                 directory=directory,
                 references=references,
-                edit=edit,
-                resume=resume,
+                resume_session={"true": True, "false": False}.get(resume_session.lower(), resume_session),
                 agent_provider=agent_provider,
                 model=model,
                 reasoning_effort=reasoning_effort,
                 timeout_seconds=timeout_seconds,
-            )
+                origin=_origin(),
+                detach=detach,
+            ),
+            detach,
         )
     )
     raise typer.Exit(code)
@@ -200,7 +210,7 @@ def steer_3d_model(
     ] = None,
 ) -> None:
     """Send a message to the agent working on a model. Deterministic."""
-    lib.steer_3d_model(name=name, message=message, directory=directory)
+    lib.steer_3d_model(name=name, message=message, directory=directory, origin=_origin())
 
 
 @app.command()
@@ -222,6 +232,20 @@ def list_3d_models(
 ) -> None:
     """List the models in a directory, newest first, with their state, printed as JSON. Deterministic."""
     typer.echo(lib.list_3d_models(directory=directory).model_dump_json(indent=2))
+
+
+@app.command()
+def read_3d_model_activity(
+    name: Annotated[str, typer.Option("--name", help="The model to read.")],
+    after: Annotated[
+        str | None, typer.Option("--after", help="The cursor of an earlier read, for only what came since.")
+    ] = None,
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """Print a model's summary and its activity across every run as JSON. Deterministic."""
+    typer.echo(lib.read_3d_model_activity(name=name, directory=directory, after=after).model_dump_json(indent=2))
 
 
 @app.command()
@@ -261,14 +285,23 @@ def mcp(
     mcp_adapter.run_stdio(directory)
 
 
-async def _run_model(starting: Coroutine[Any, Any, lib.ModelRun]) -> int:
+async def _run_model(starting: Coroutine[Any, Any, lib.ModelRun], detach: bool) -> int:
     """Run a model's request to its end, one JSON line per event, and the exit code its end calls for."""
     run = await starting
+    if detach:
+        # The run goes on in its own process, so its start is all there is to print.
+        _print_event(await anext(run.events()))
+        return 0
     with _stopped_by_signals(run):
         async for event in run.events():
             _print_event(event)
         result = await run.result()
     return 0 if result.status == "done" else 1
+
+
+def _origin() -> str | None:
+    session = os.environ.get(SESSION_VARIABLE)
+    return f"claude-code:{session}" if session else None
 
 
 def _print_event(event: ModelEvent) -> None:

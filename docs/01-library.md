@@ -51,36 +51,63 @@ async def create_3d_model(
     name: str,
     directory: Path | None = None,
     references: list[Path] | None = None,
-    edit: bool = False,
-    resume: bool = False,
+    resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
     model: str | None = None,
     reasoning_effort: ReasoningEffort = "medium",
     timeout_seconds: int = 3600,
+    origin: str | None = None,
+    detach: bool = False,
     intelligence: Intelligence | None = None,
 ) -> ModelRun
 ```
 
-- `prompt`: what to build, or what to change.
-- `name`: the model's name and its directory under `directory`. A new model's name must not be taken there, ignoring case, or it is refused before anything starts; the caller then chooses another name or edits the model that has it.
-- `directory`: where models are kept, `.modeling-3d` in the working directory when omitted.
-- `references`: images and models to work from, copied into the model's `references/`. Images are also shown to the agent with the prompt.
-- `edit`: change the existing model named `name`, in a fresh session that reads `model.py` first, which holds the whole model. Naming a model that does not exist is refused.
-- `resume`: implies `edit`, continuing the session that last worked on the model, on the agent provider that made it. Use it for a follow-up soon after the last run, while the session's context is still cached, after a run that was cut short, or when the request refers back to the conversation. Coming back later, `edit` alone costs only the conversation and starts from a small context.
+- `prompt`: The text that tells the agent what to do. For a new model, it tells what to build. For a model that exists, it tells what to change.
+- `name`: The name of the model. The model is in a directory with this name, in `directory` which must be unique.
+  If a model with this name exists, the tool works with that model. If not, the tool makes a new model.
+- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
+- `references`: Files that the agent uses as examples, such as images or 3D models.
+  To use another model as an example, give its files, such as its `model.py`, its `model.glb`, and a render.
+  The tool copies each file into `references/` in the directory of the model. The agent also sees each image with the prompt.
+- `resume_session`: The agent session to continue, for a model that exists.
+  If `True`, the agent continues the last session of the model. Thus the agent remembers the conversation from the earlier runs.
+  If it is a session ID, the agent continues that session of the model. If `False`, the agent starts a new session.
+  To find a session ID, look at the runs of the model. Each run keeps its session ID in `session_id` in `model.json`.
+  `read_3d_model_activity` gives the session ID of each request, and `list_3d_models` gives the session ID of the last run.
+  If the model does not have the session ID, the request stops before the agent starts.
+- `agent_provider`: The service that runs the agent: `claude` or `codex`. At this time, only `claude` can run agents.
+  If you do not give an agent provider, the tool uses the first one that is installed.
+  When the agent continues a session, the tool uses the agent provider of that session.
+- `model`: The AI model that the agent uses. If you do not give a model, the tool uses the default for the agent provider, from `DEFAULT_INTELLIGENCE_MODELS`.
+- `reasoning_effort`: How much the AI model thinks before it acts: `low`, `medium`, `high`, `xhigh`, or `max`. The default is `medium`.
+- `timeout_seconds`: The maximum time for the run, in seconds. After this time, the tool stops the run.
+  You can continue the session of a stopped run later. The default is 3600, one hour.
+- `origin`: A label that tells who sent the request. The tool keeps the label with the run. The activity of the model shows the label with the request.
+  The app uses `app`. A Claude Code session uses `claude-code:<session id>`. Other callers can use their own label.
+- `detach`: If `True`, the run occurs in a separate process. That process continues when the caller stops.
+  The function still returns when the agent starts. If the request cannot start, the function still raises `Modeling3dError`.
+  You cannot use `detach` with `intelligence`.
+- `intelligence`: An object that runs the agent in place of the agent provider. Tests use it to replace the agent with a fake agent.
+  You cannot use it with `detach`, because the separate process cannot get the object.
 
-It returns once the agent runs. `ModelRun` has `name`, `directory`, `run_id`, and `session_id`, and the same `events`, `steer`, `cancel`, and `result` as an `AgentRun`.
-Each `ModelEvent` has a `kind`: `started`, `agent` (one `AgentEvent`, as given), `steered`, `finished`, or `failed`. The last carries the `ModelResult`: `status` (`done`, `failed`, `cancelled`, or `timed-out`), the model's `files`, the agent's final message, `session_id`, and in `next` the command that goes on changing the model.
+It returns once the agent runs. `ModelRun` is a protocol with `name`, `directory`, `run_id`, and `session_id`, and the same `events`, `steer`, `cancel`, and `result` as an `AgentRun`. A detached run's handle follows the run through its files: its events from `events.jsonl`, steering and stopping as `steer_3d_model` and `cancel_3d_model` do, and its result once it ends. Steering through a handle is from the run's `origin`.
+Each `ModelEvent` has a `kind`: `started` (its `data` holding the request), `agent` (one `AgentEvent`, as given), `steered`, `finished`, or `failed`. The last carries the `ModelResult`: `status` (`done`, `failed`, `cancelled`, or `timed-out`), the model's `files`, the agent's final message, `session_id`, and in `next` the command that goes on changing the model.
 A run that ends without `model.py` and `model.glb` has failed.
 
-A model's directory holds `model.json`, which marks it as a model made by this tool and records each run: its prompt, status, process, last event, and session. Beside it are `model.py`, `model.glb`, `renders/`, `references/`, `sessions/` (a copy of each agent session), and `runs/<run id>/events.jsonl`.
+A model's directory holds `model.json`, which marks it as a model made by this tool and records each run: its prompt, origin, status, process, last event, and session. Beside it are `model.py`, `model.glb`, `renders/`, `references/`, `sessions/` (a copy of each agent session), and `runs/<run id>/` with `events.jsonl` and, for a detached run, `process.log`, what its process printed.
 From `model.json` and `events.jsonl` alone, a UX can tell a run that is working, one busy in a long command, one whose process is gone, and one that ended.
 
 ```python
-def steer_3d_model(name: str, message: str, directory: Path | None = None) -> None
+def steer_3d_model(name: str, message: str, directory: Path | None = None, origin: str | None = None) -> None
 def cancel_3d_model(name: str, directory: Path | None = None) -> None
 ```
 
-Steer or stop the run working on a model from any process. Each writes a file in the run's directory that the process running it acts on within a second. Both raise `Modeling3dError` when nothing is working on the model.
+- `name`: The name of the model that the agent works on now.
+- `message`: The text to send to the agent.
+- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
+- `origin`: A label that tells who sent the message, as for `create_3d_model`. The activity of the model shows it with the message.
+
+Steer or stop the run working on a model from any process. Each writes a file in the run's directory that the process running it acts on within a second. The `steered` event of a message carries its `origin`. Both raise `Modeling3dError` when nothing is working on the model.
 
 ## List and view models
 
@@ -91,10 +118,30 @@ def list_3d_models(directory: Path | None = None) -> ModelListing
 def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary
 ```
 
-`list_3d_models` only reads, so it is safe while runs write. `ModelListing` has the resolved `directory`, its `models` most recently updated first, `last_viewed`, and `unreadable`, one message for each `model.json` that could not be read, naming what is wrong. A directory that does not exist lists as empty; a file in its place raises `Modeling3dError`.
-Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run last started, sent an event, or finished), `built` (when `model.glb` was last written, `None` before the first build), `status`, `last_run` (that run's entry in `model.json`), and `files`. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. Both are `None` for a model that never ran.
+- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory. If the directory does not exist, the list is empty.
+- `name`: For `view_3d_model`, the name of the model to record. It must be the same as the name of its directory, with the same upper case and lower case letters.
 
-`view_3d_model` records the model as viewed last in `.state.json` in the models directory, and returns its summary. `name` must match the model's directory exactly; an unknown one raises `Modeling3dError` naming the models there. `last_viewed` is `None` when nothing was viewed, or that model is gone.
+`list_3d_models` only reads, so it is safe while runs write. `ModelListing` has the resolved `directory`, its `models` most recently updated first, `last_viewed`, and `unreadable`, one message for each `model.json` that could not be read, naming what is wrong. A file in place of the directory raises `Modeling3dError`.
+Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run last started, sent an event, or finished), `built` (when `model.glb` was last written, `None` before the first build), `status`, `last_run` (that run's entry in `model.json`), `files`, and `references`, every reference its runs were given. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. Both are `None` for a model that never ran.
+
+`view_3d_model` records the model as viewed last in `.state.json` in the models directory, and returns its summary. An unknown name raises `Modeling3dError` naming the models there. `last_viewed` is `None` when nothing was viewed, or that model is gone.
+
+## Read a model's activity
+
+Deterministic. Everything about how a model is being made, for a session picking up work it did not start, and for the app beside the model.
+
+```python
+def read_3d_model_activity(name: str, directory: Path | None = None, after: str | None = None) -> ModelActivity
+```
+
+- `name`: The name of the model. It must be the same as the name of its directory, with the same upper case and lower case letters.
+- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
+- `after`: The `cursor` from an earlier read. If you give it, you get only the activity that occurred after that read. If you do not give it, you get all the activity.
+  A cursor that is not from this model raises `Modeling3dError`.
+
+`ModelActivity` has `model`, the model's summary as `list_3d_models` gives it, its activity across every run in `entries`, and a `cursor`. It only reads, so it is safe while runs write, and a read past a cursor takes only what was written since.
+Each `ActivityEntry` has `time`, `run_id`, `kind`, `text`, `origin`, and `data`. `kind` is `request` (a run's prompt, with `references`, `resumed`, `agent_provider`, `model`, and `session_id`), `said` (the agent's words), `tool` (a call, with `id`, `name`, and `target`, what it works on), `tool-result` (the end of the call with that `id`, and whether it `failed`), `steered`, or `ended` (`status`, `error`, and `files`). `origin` is who sent a request or steering message.
+The activity is the one view of a run that every agent provider shares. Each provider's events stay in `events.jsonl` as it gave them, and `interface.agent_steps(agent_provider)` reads them into `said`, `tool`, and `tool-result`; Codex has no reader yet.
 
 ## Blender on PATH
 
@@ -104,7 +151,9 @@ Deterministic. Makes `blender` run an installed Blender from terminals opened af
 def add_blender_to_path(blender_path: Path | None = None) -> BlenderOnPath
 ```
 
-`blender_path` is Blender's executable or its folder; without it, the newest Blender installed where the platform puts it. On Windows it adds Blender's folder to the user PATH in the registry; on macOS and Linux it links `~/.local/bin/blender`. When `blender` already runs one, nothing changes. `BlenderOnPath` holds the `executable`, whether anything `changed`, and a `message` saying what to do next.
+- `blender_path`: The Blender program, or the folder that holds it. If you do not give a path, the tool finds the newest Blender in the usual location for the platform.
+
+On Windows it adds Blender's folder to the user PATH in the registry; on macOS and Linux it links `~/.local/bin/blender`. When `blender` already runs one, nothing changes. `BlenderOnPath` holds the `executable`, whether anything `changed`, and a `message` saying what to do next.
 
 ## App
 
@@ -114,14 +163,17 @@ Its view is an [MCP App](https://github.com/modelcontextprotocol/ext-apps): one 
 def app_view() -> str
 ```
 
-The view's HTML, compiled from `app/` and offered as the `ui://modeling-3d/app` resource in the MCP server. It sends the person's messages as `ui/message` and polls the `app_updates` tool for the agent's. Raises `Modeling3dError` naming the build command when the view is not compiled.
+The view's HTML, compiled from `app/` and offered as the `ui://modeling-3d/app` resource in the MCP server. Raises `Modeling3dError` naming the build command when the view is not compiled.
 It shows the models in the server's directory: it polls `list_3d_models`, opens on `last_viewed`, and renders the model in view in 3D, reading its GLB again whenever `built` changes. Picking a model calls `view_3d_model`. It switches models on its own when `last_viewed` changes to one it did not pick, so `view_3d_model` from anywhere brings a model up, and when a new model appears.
+Beside the model it shows the model's activity, polled from `read_3d_model_activity`. The person creates a model there from a prompt, files, and models in the directory; asks for a change, continuing the model's session unless they switch that off; and steers or stops a run. The view calls the capabilities for each, as from `app`, and sends nothing to any session.
 
 ```python
-def app_server(deliver: Callable[[str], None] | None = None, directory: Path | None = None) -> AppServer
+def app_server(directory: Path | None = None) -> AppServer
 ```
 
-The app's MCP server: `open_app`, `reply`, the app-only `app_updates`, `app_message`, `list_3d_models`, and `view_3d_model`, the view, and each model's GLB and renders as base64 blob resources at `modeling-3d://models/{name}/{+path}`. Only the files a model's summary lists, and of those only the GLB and images, can be read. `deliver` is called on a worker thread with each message the person sends from the browser page, and raises `OSError` when it cannot deliver; without it, or when it raises, the message comes back with the agent's next tool result. `directory` is where the models it shows are kept, `.modeling-3d` in the working directory when omitted; `open_app`'s `directory` switches it.
+- `directory`: The directory that holds the models that the app shows. If you do not give a directory, the tool uses `.modeling-3d` in the working directory. The `open_app` tool can change it.
+
+The app's MCP server: `open_app`; the app-only `list_3d_models`, `view_3d_model`, `create_3d_model`, `steer_3d_model`, `cancel_3d_model`, and `read_3d_model_activity`, each the library's on the app's directory with origin `app`; the view; and each model's GLB, renders, and reference images as base64 blob resources at `modeling-3d://models/{name}/{+path}`. Only the files a model's summary lists in `files` and `references`, and of those only the GLB and images, can be read. Its `create_3d_model` always detaches, so runs outlive the server, and takes the files to work from as `{name, data}` with `data` in base64.
 
 ```python
 class AppServer:
@@ -129,12 +181,12 @@ class AppServer:
     directory: Path
 
     def open(self, port: int | None = None) -> App: ...
-    def say(self, text: str) -> None: ...
-    def updates(self, after: int = 0) -> list[str]: ...
     def close(self) -> None: ...
 ```
 
-`server` is an MCP SDK low-level server to run over any transport; several at once share the state. `open` serves the browser host page on `127.0.0.1` from daemon threads and returns once it listens, or returns the one already open. The page reaches the same server at its own `/mcp` and renders the view behind a sandbox proxy on a second port, a separate origin as the MCP Apps spec requires. Without `port` a free one is chosen; a held one raises `Modeling3dError`. `say` adds to the agent's messages, which every open view shows on its next poll, and `updates` returns those past the first `after`. `close` stops serving. `App.url` is where to open the page.
+- `port`: The port for the browser page, on `127.0.0.1`. If you do not give a port, the tool selects a free port. If another program uses the port, `open` raises `Modeling3dError`.
+
+`server` is an MCP SDK low-level server to run over any transport; several at once share the state. `open` serves the browser host page on `127.0.0.1` from daemon threads and returns once it listens, or returns the one already open. The page reaches the same server at its own `/mcp` and renders the view behind a sandbox proxy on a second port, a separate origin as the MCP Apps spec requires. `close` stops serving. `App.url` is where to open the page.
 
 ## MCP server
 
@@ -144,7 +196,9 @@ The app's MCP server over stdio, a thin surface over the library like the CLI, i
 def run_stdio(directory: Path | None = None) -> None
 ```
 
-It runs `app_server(directory=directory).server` over stdio. Its `deliver` posts each message from the browser page into the inbox of the Claude Code session that launched it; where there is none, the message comes back with the next tool result.
+- `directory`: The directory that holds the models that the app shows, as for `app_server`.
+
+It runs `app_server(directory=directory).server` over stdio. Nothing the person does in the app is sent to the session; the server's instructions point it at `list_3d_models` and `read_3d_model_activity`.
 
 ## Manifest
 
@@ -162,7 +216,9 @@ The agent skill for the given capability. Without providing a capability it retu
 def skill(capability: str | None = None) -> str
 ```
 
-The valid values for `capability` are the names the tool's skill lists under `## Capabilities`. Any other name raises `Modeling3dError` listing the valid ones.
+- `capability`: The name of one capability, as the tool's skill lists it under `## Capabilities`.
+  If you give a name, you get the skill of that capability. If you do not give a name, you get the skill of the tool.
+  An unknown name raises `Modeling3dError`, which lists the valid names.
 
 The installed package's version, from its metadata. The skill carries it too.
 

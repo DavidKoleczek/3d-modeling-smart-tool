@@ -32,17 +32,21 @@ modeling-3d manifest
 modeling-3d app [--port <n>] [--directory <dir>]
 ```
 
-`lib.app_server().open()`, with its URL printed. With no agent connected, each message sent from the page is printed instead. The command then keeps serving until Ctrl+C, which exits 0. Exits 1 when `--port` names a held port; without `--port` a free one is chosen.
+`lib.app_server().open()`, with its URL printed. The command then keeps serving until Ctrl+C, which exits 0; runs started in the app go on after. Exits 1 when `--port` names a held port; without `--port` a free one is chosen.
 
 ## modeling-3d create-3d-model
 
 ```bash
-modeling-3d create-3d-model PROMPT --name <name> [--directory <dir>] [--reference <path>]... [--edit | --resume]
-    [--agent-provider claude] [--model <model>] [--reasoning-effort medium] [--timeout-seconds 3600]
+modeling-3d create-3d-model PROMPT --name <name> [--directory <dir>] [--reference <path>]...
+    [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
+    [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
 ```
 
 `lib.create_3d_model()`, run to its end. Each event is printed to stdout as one JSON line; the last is `finished` or `failed`, carrying the result in `data`. Exits 0 when the result's `status` is `done`, otherwise 1. A failure before the agent starts exits 1 with its message on stderr.
 Ctrl+C, and every other signal that ends the process, stops the run at once, and its session can still be resumed.
+`--resume-session` takes `true`, `false`, or a session id, the values of `resume_session`.
+With `--detach`, it prints the `started` event and exits 0 once the agent runs, and the run goes on in a process of its own.
+Run from Claude Code, the origin is `claude-code:` and the session's `CLAUDE_CODE_SESSION_ID`, so the model's activity shows which session asked.
 
 A run takes minutes, so start it in the background with its output in a file, rather than waiting on it. Read the file to follow it, and steer or stop the run from the foreground meanwhile:
 
@@ -60,7 +64,7 @@ An agent harness with its own way to run a command in the background can use tha
 modeling-3d steer-3d-model --name <name> --message <text> [--directory <dir>]
 ```
 
-`lib.steer_3d_model()`. Prints nothing; exits 1 when nothing is working on the model.
+`lib.steer_3d_model()`, with the origin from `CLAUDE_CODE_SESSION_ID` as for `create-3d-model`. Prints nothing; exits 1 when nothing is working on the model.
 
 ## modeling-3d cancel-3d-model
 
@@ -77,6 +81,14 @@ modeling-3d list-3d-models [--directory <dir>]
 ```
 
 `lib.list_3d_models()`, printed as JSON. Exits 1 when the directory is a file.
+
+## modeling-3d read-3d-model-activity
+
+```bash
+modeling-3d read-3d-model-activity --name <name> [--after <cursor>] [--directory <dir>]
+```
+
+`lib.read_3d_model_activity()`, printed as JSON. Exits 1 when there is no model by that name, or `--after` is not a cursor into its activity.
 
 ## modeling-3d view-3d-model
 
