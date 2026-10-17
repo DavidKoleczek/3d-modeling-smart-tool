@@ -82,6 +82,20 @@ def cancel_3d_model(name: str, directory: Path | None = None) -> None
 
 Steer or stop the run working on a model from any process. Each writes a file in the run's directory that the process running it acts on within a second. Both raise `Modeling3dError` when nothing is working on the model.
 
+## List and view models
+
+Deterministic. What a gallery of the models in a directory needs: each model's state and files, and the one the person viewed last.
+
+```python
+def list_3d_models(directory: Path | None = None) -> ModelListing
+def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary
+```
+
+`list_3d_models` only reads, so it is safe while runs write. `ModelListing` has the resolved `directory`, its `models` most recently updated first, `last_viewed`, and `unreadable`, one message for each `model.json` that could not be read, naming what is wrong. A directory that does not exist lists as empty; a file in its place raises `Modeling3dError`.
+Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run last started, sent an event, or finished), `status`, `last_run` (that run's entry in `model.json`), and `files`. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. Both are `None` for a model that never ran.
+
+`view_3d_model` records the model as viewed last in `.state.json` in the models directory, and returns its summary. `name` must match the model's directory exactly; an unknown one raises `Modeling3dError` naming the models there. `last_viewed` is `None` when nothing was viewed, or that model is gone.
+
 ## Blender on PATH
 
 Deterministic. Makes `blender` run an installed Blender from terminals opened afterward, for opening models in Blender. Building models does not need it.

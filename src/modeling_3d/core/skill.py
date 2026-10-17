@@ -39,6 +39,18 @@ CAPABILITIES = (
         skill="capabilities/create_3d_model/skill_cancel_3d_model.md",
     ),
     Capability(
+        "list-3d-models",
+        "List the models in a directory, newest first, with their state and the one viewed last; prints JSON.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skill_list_3d_models.md",
+    ),
+    Capability(
+        "view-3d-model",
+        "Record a model as the one viewed last in its directory and print its summary as JSON.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skill_view_3d_model.md",
+    ),
+    Capability(
         "add-blender-to-path",
         "Make `blender` run an installed Blender from new terminals; building models does not need it.",
         model_backed=False,

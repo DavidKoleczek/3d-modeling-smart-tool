@@ -124,6 +124,39 @@ class ModelResult(BaseModel):
     next: str = Field(description="The command that goes on changing this model in the same session")
 
 
+ModelStatus = Literal["running", "crashed", "done", "failed", "cancelled", "timed-out"]
+
+
+class ModelSummary(BaseModel):
+    """One model as a gallery shows it: where it is, what state it is in, and its files."""
+
+    name: str
+    id: str
+    directory: Path
+    created: datetime
+    updated: datetime = Field(description="The latest time its last run started, sent an event, or finished")
+    status: ModelStatus | None = Field(
+        description="Its last run's; `crashed` when that run is `running` but its process is gone; None if never run"
+    )
+    last_run: ModelRunRecord | None = Field(description="Its prompt, agent provider, and session, for a follow-up")
+    files: list[str] = Field(description="The model's files, relative to its directory")
+
+
+class ModelListing(BaseModel):
+    """Every model in a directory, most recently updated first, and the one viewed last."""
+
+    directory: Path
+    models: list[ModelSummary]
+    last_viewed: str | None = Field(description="None when nothing was viewed, or that model is gone")
+    unreadable: list[str] = Field(default_factory=list, description="Why each broken model.json was skipped")
+
+
+class ModelsState(BaseModel):
+    """.state.json in a models directory: what the person last did there."""
+
+    last_viewed: str | None = None
+
+
 class BlenderOnPath(BaseModel):
     """Where Blender is, and whether it took a change for a new terminal to find it as `blender`."""
 

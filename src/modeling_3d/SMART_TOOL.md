@@ -36,6 +36,7 @@ wrapper over it, so anything you can do from the shell you can also do from Pyth
 
 - Creates and edits 3D models from a description of what to build, and reference images or models. 
   - Use `create-3d-model` for both use cases.
+  - Use `list-3d-models` to find the models already made in a directory, and how their runs went.
 
 ## Before writing code
 

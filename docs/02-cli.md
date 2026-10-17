@@ -70,6 +70,22 @@ modeling-3d cancel-3d-model --name <name> [--directory <dir>]
 
 `lib.cancel_3d_model()`. Prints nothing; exits 1 when nothing is working on the model.
 
+## modeling-3d list-3d-models
+
+```bash
+modeling-3d list-3d-models [--directory <dir>]
+```
+
+`lib.list_3d_models()`, printed as JSON. Exits 1 when the directory is a file.
+
+## modeling-3d view-3d-model
+
+```bash
+modeling-3d view-3d-model --name <name> [--directory <dir>]
+```
+
+`lib.view_3d_model()`, the model's summary printed as JSON. Exits 1 when there is no model by that name.
+
 ## modeling-3d add-blender-to-path
 
 ```bash

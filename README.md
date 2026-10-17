@@ -65,6 +65,10 @@ modeling-3d create-3d-model "Make it a polar bear" --name bear --edit
 modeling-3d steer-3d-model --name bear --message "Make the ears rounder"
 modeling-3d cancel-3d-model --name bear
 
+# List the models in .modeling-3d, newest first, with their state, and record one as viewed last
+modeling-3d list-3d-models
+modeling-3d view-3d-model --name bear
+
 # Optionally, make `blender` run your installed Blender, for opening models in it
 modeling-3d add-blender-to-path
 

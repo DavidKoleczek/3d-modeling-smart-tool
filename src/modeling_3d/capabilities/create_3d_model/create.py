@@ -9,13 +9,20 @@ from pathlib import Path
 import re
 import secrets
 import shutil
-import sys
-import time
 from typing import Any
 import uuid
 
-from pydantic import ValidationError
-
+from modeling_3d.capabilities.create_3d_model.record import (
+    DEFAULT_DIRECTORY,
+    RECORD,
+    REQUIRED_FILES,
+    alive,
+    load_record,
+    missing_model,
+    model_files,
+    model_names,
+    write_record,
+)
 from modeling_3d.intelligence.interface import AgentRun, Intelligence, resolve_agent_provider, select_intelligence
 from modeling_3d.intelligence.schemas import IMAGE_MEDIA_TYPES, AgentEvent, AgentRequest, HostWorkspace
 from modeling_3d.schemas import (
@@ -34,9 +41,6 @@ from modeling_3d.schemas import (
 )
 
 HERE = Path(__file__).parent
-DEFAULT_DIRECTORY = Path(".modeling-3d")
-RECORD = "model.json"
-REQUIRED_FILES = ("model.py", "model.glb")
 # Blender as a Python module from PyPI, so building a model needs only uv.
 BPY_REQUIREMENT = "bpy==5.2.*"
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -44,9 +48,6 @@ NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 POLL_SECONDS = 1.0
 # The agent's own timeout outlasts the run's, so the run is what stops it and can say it timed out.
 AGENT_TIMEOUT_GRACE_SECONDS = 60
-# Windows refuses to replace a file another process has open, such as a UX reading model.json; such a read is brief.
-REPLACE_ATTEMPTS = 20
-REPLACE_WAIT_SECONDS = 0.05
 
 
 class ModelRun:
@@ -171,7 +172,7 @@ class ModelRun:
             error=error,
             session_id=session_id,
             agent_provider=self._run.agent_provider,
-            files=_files(self.directory),
+            files=model_files(self.directory),
             next=self._next,
         )
         if status in ("done", "cancelled"):
@@ -213,13 +214,13 @@ class ModelRun:
         session_id = self._agent.session_id
         if session_id is not None and session_id != self._run.session_id:
             self._run.session_id = session_id
-            _write_record(self.directory, self._record)
+            write_record(self.directory, self._record)
 
     def _end(self, status: ModelRunStatus, session_id: str | None) -> None:
         self._run.status = status
         self._run.finished = datetime.now(UTC)
         self._run.session_id = session_id or self._run.session_id
-        _write_record(self.directory, self._record)
+        write_record(self.directory, self._record)
 
     def _emit(
         self, kind: ModelEventKind, text: str = "", data: dict[str, Any] | None = None, time: datetime | None = None
@@ -230,7 +231,7 @@ class ModelRun:
         with (self._run_directory / "events.jsonl").open("a", encoding="utf-8") as events:
             events.write(json.dumps(event.model_dump(mode="json")) + "\n")
         self._run.last_event = event.time
-        _write_record(self.directory, self._record)
+        write_record(self.directory, self._record)
         self._events.append(event)
         self._appended.set()
         self._appended = asyncio.Event()
@@ -254,7 +255,7 @@ async def create_3d_model(
     target, existing = _model_directory(root, name, edit=edit or resume)
     sources = _references(references or [])
     previous = existing.runs[-1] if existing is not None and existing.runs else None
-    if previous is not None and previous.status == "running" and _alive(previous.pid):
+    if previous is not None and previous.status == "running" and alive(previous.pid):
         raise Modeling3dError(
             f"Model {target.name} is already being worked on by process {previous.pid}. Steer that run with "
             f"`modeling-3d steer-3d-model --name {target.name} --message <text>`, stop it with "
@@ -298,7 +299,7 @@ async def create_3d_model(
             started=now,
         )
     )
-    _write_record(target, record)
+    write_record(target, record)
     next_command = _next_command(target.name, directory)
     request = AgentRequest(
         prompt=_prompt(prompt, target, copied, resumed=resumed is not None, created=created),
@@ -319,7 +320,7 @@ async def create_3d_model(
         else:
             record.runs[-1].status = "failed"
             record.runs[-1].finished = datetime.now(UTC)
-            _write_record(target, record)
+            write_record(target, record)
         raise
     return ModelRun(target, record, agent, intelligence, timeout_seconds, next_command)
 
@@ -343,14 +344,10 @@ def _running_run(name: str, directory: Path | None) -> Path:
     root = (directory or DEFAULT_DIRECTORY).resolve()
     target = root / name
     if not target.is_dir():
-        known = ", ".join(_models(root)) or "none"
-        raise Modeling3dError(
-            f"There is no model named {name!r} in {root}. The models there: {known}. Name one of them, or pass the "
-            "--directory the model was created in."
-        )
-    record = _load_record(target)
+        raise missing_model(root, name)
+    record = load_record(target)
     run = record.runs[-1] if record.runs else None
-    if run is None or run.status != "running" or not _alive(run.pid):
+    if run is None or run.status != "running" or not alive(run.pid):
         raise _not_running(name, run.status if run is not None else "never run", _next_command(name, directory))
     return target / "runs" / run.id
 
@@ -374,12 +371,12 @@ def _model_directory(root: Path, name: str, edit: bool) -> tuple[Path, ModelReco
     found = taken.get(name.lower())
     if edit:
         if found is None or found.name != name:
-            known = ", ".join(_models(root)) or "none"
+            known = ", ".join(model_names(root)) or "none"
             raise Modeling3dError(
                 f"There is no model named {name!r} in {root}, so there is nothing to edit. The models there: "
                 f"{known}. Name one of them, or leave out --edit and --resume to create {name!r}."
             )
-        return found, _load_record(found)
+        return found, load_record(found)
     if found is not None:
         if (found / RECORD).is_file():
             raise Modeling3dError(
@@ -388,22 +385,6 @@ def _model_directory(root: Path, name: str, edit: bool) -> tuple[Path, ModelReco
             )
         raise Modeling3dError(f"{found} already exists and is not a model. Choose another name.")
     return root / name, None
-
-
-def _load_record(target: Path) -> ModelRecord:
-    path = target / RECORD
-    if not path.is_file():
-        raise Modeling3dError(
-            f"{target} is not a model made by modeling-3d: it has no {RECORD}. Choose another name, or another "
-            "--directory."
-        )
-    try:
-        return ModelRecord.model_validate_json(path.read_text(encoding="utf-8"))
-    except ValidationError as error:
-        raise Modeling3dError(
-            f"{path} is not a modeling-3d model record: {error.errors()[0]['msg']}. Fix or remove it, or choose "
-            "another name."
-        ) from None
 
 
 def _resumable(name: str, existing: ModelRecord) -> ModelRunRecord:
@@ -470,60 +451,9 @@ def _prompt(request: str, target: Path, references: list[str], resumed: bool, cr
     )
 
 
-def _files(target: Path) -> list[str]:
-    """The model's own files: its script and what it builds, not the run's bookkeeping."""
-    names = [name for name in (*REQUIRED_FILES, "model.py.lock", "model.blend") if (target / name).is_file()]
-    renders = sorted(path.relative_to(target).as_posix() for path in (target / "renders").glob("*") if path.is_file())
-    return names + renders
-
-
-def _models(root: Path) -> list[str]:
-    return sorted(path.parent.name for path in root.glob(f"*/{RECORD}"))
-
-
 def _next_command(name: str, directory: Path | None) -> str:
     command = f'modeling-3d create-3d-model "<what to change>" --name {name} --resume'
     if directory is not None and directory != DEFAULT_DIRECTORY:
         resolved = str(directory.resolve())
         command += f' --directory "{resolved}"' if re.search(r"\s", resolved) else f" --directory {resolved}"
     return command
-
-
-def _write_record(target: Path, record: ModelRecord) -> None:
-    # Written aside and renamed, because other processes read it while a run writes it.
-    partial = target / f"{RECORD}.tmp"
-    partial.write_text(record.model_dump_json(indent=2), encoding="utf-8")
-    for attempt in range(REPLACE_ATTEMPTS):
-        try:
-            partial.replace(target / RECORD)
-            return
-        except PermissionError:
-            if attempt == REPLACE_ATTEMPTS - 1:
-                raise
-            time.sleep(REPLACE_WAIT_SECONDS)
-
-
-def _alive(pid: int) -> bool:
-    """Whether a process with this id is running."""
-    if sys.platform == "win32":
-        import ctypes
-
-        # os.kill on Windows terminates the process rather than probing it, so ask the kernel instead.
-        process_query_limited_information = 0x1000
-        still_active = 259
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
-        if not handle:
-            return False
-        try:
-            code = ctypes.c_ulong()
-            return bool(kernel32.GetExitCodeProcess(handle, ctypes.byref(code))) and code.value == still_active
-        finally:
-            kernel32.CloseHandle(handle)
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True

@@ -7,12 +7,20 @@ from modeling_3d.capabilities.app import mcp_server as app_server_module
 from modeling_3d.capabilities.app import server as app_module
 from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.capabilities.blender import blender
-from modeling_3d.capabilities.create_3d_model import create
+from modeling_3d.capabilities.create_3d_model import create, models
 from modeling_3d.capabilities.create_3d_model.create import ModelRun
 from modeling_3d.core import manifest
 from modeling_3d.core import skill as skill_module
 from modeling_3d.intelligence.interface import Intelligence
-from modeling_3d.schemas import DEFAULT_REASONING_EFFORT, AgentProvider, BlenderOnPath, Manifest, ReasoningEffort
+from modeling_3d.schemas import (
+    DEFAULT_REASONING_EFFORT,
+    AgentProvider,
+    BlenderOnPath,
+    Manifest,
+    ModelListing,
+    ModelSummary,
+    ReasoningEffort,
+)
 
 
 def load_manifest() -> Manifest:
@@ -112,6 +120,27 @@ def steer_3d_model(name: str, message: str, directory: Path | None = None) -> No
 def cancel_3d_model(name: str, directory: Path | None = None) -> None:
     """Stop the run working on the model at once, from any process; its session can still be resumed."""
     create.cancel_3d_model(name=name, directory=directory)
+
+
+def list_3d_models(directory: Path | None = None) -> ModelListing:
+    """Every model in a directory, most recently updated first, with its state, and the one viewed last.
+
+    Reads only, so it is safe while runs write. A directory that does not exist lists as empty.
+
+    Args:
+        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+    """
+    return models.list_3d_models(directory=directory)
+
+
+def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary:
+    """Record the model as the one viewed last in its directory, and return its summary.
+
+    Args:
+        name: The model's name, exactly as its directory is named.
+        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+    """
+    return models.view_3d_model(name=name, directory=directory)
 
 
 def add_blender_to_path(blender_path: Path | None = None) -> BlenderOnPath:

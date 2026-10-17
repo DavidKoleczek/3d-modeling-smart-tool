@@ -211,6 +211,27 @@ def cancel_3d_model(
 
 
 @app.command()
+def list_3d_models(
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """List the models in a directory, newest first, with their state, printed as JSON. Deterministic."""
+    typer.echo(lib.list_3d_models(directory=directory).model_dump_json(indent=2))
+
+
+@app.command()
+def view_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The model to record as the one viewed last.")],
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """Record a model as the one viewed last in its directory, printing its summary as JSON. Deterministic."""
+    typer.echo(lib.view_3d_model(name=name, directory=directory).model_dump_json(indent=2))
+
+
+@app.command()
 def add_blender_to_path(
     blender_path: Annotated[
         Path | None,
