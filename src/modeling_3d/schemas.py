@@ -135,6 +135,7 @@ class ModelSummary(BaseModel):
     directory: Path
     created: datetime
     updated: datetime = Field(description="The latest time its last run started, sent an event, or finished")
+    built: datetime | None = Field(description="When model.glb was last written; None before the first build")
     status: ModelStatus | None = Field(
         description="Its last run's; `crashed` when that run is `running` but its process is gone; None if never run"
     )

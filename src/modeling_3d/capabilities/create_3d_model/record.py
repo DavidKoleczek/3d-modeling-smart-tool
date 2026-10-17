@@ -11,7 +11,8 @@ from modeling_3d.schemas import Modeling3dError, ModelRecord
 
 DEFAULT_DIRECTORY = Path(".modeling-3d")
 RECORD = "model.json"
-REQUIRED_FILES = ("model.py", "model.glb")
+GLB = "model.glb"
+REQUIRED_FILES = ("model.py", GLB)
 # Windows refuses to replace a file another process has open, such as a UX reading model.json; such a read is brief.
 REPLACE_ATTEMPTS = 20
 REPLACE_WAIT_SECONDS = 0.05

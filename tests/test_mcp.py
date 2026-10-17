@@ -76,9 +76,9 @@ def server_environment(inbox: FakeInbox | None = None) -> dict[str, str]:
 class Wire:
     """One `modeling-3d mcp` process, spoken to in newline-delimited JSON-RPC on the initialize handshake."""
 
-    def __init__(self, inbox: FakeInbox | None = None) -> None:
+    def __init__(self, inbox: FakeInbox | None = None, arguments: list[str] | None = None) -> None:
         self.process = subprocess.Popen(
-            [sys.executable, "-m", "modeling_3d.cli", "mcp"],
+            [sys.executable, "-m", "modeling_3d.cli", "mcp", *(arguments or [])],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             text=True,
@@ -181,17 +181,43 @@ def test_a_client_without_mcp_apps_sees_only_the_model_tools(wire: Wire) -> None
     assert set(tools) == {"open_app", "reply"}
     assert tools["open_app"]["_meta"] == {"ui": {"resourceUri": VIEW_URI}}
     assert wire.request("resources/list", {})["resources"] == []
+    assert wire.request("resources/templates/list", {})["resourceTemplates"] == []
 
 
-def test_an_mcp_apps_host_gets_the_view_and_its_app_only_tool(wire: Wire) -> None:
+def test_an_mcp_apps_host_gets_the_view_its_app_only_tools_and_the_model_files(wire: Wire) -> None:
     wire.initialize(MCP_APPS_HOST)
     tools = {tool["name"]: tool for tool in wire.request("tools/list", {})["tools"]}
     resources = wire.request("resources/list", {})["resources"]
+    templates = wire.request("resources/templates/list", {})["resourceTemplates"]
     contents = wire.request("resources/read", {"uri": VIEW_URI})["contents"]
 
-    assert [tools[name]["_meta"]["ui"]["visibility"] for name in ("app_updates", "app_message")] == [["app"], ["app"]]
+    app_only = ("app_updates", "app_message", "list_3d_models", "view_3d_model")
+    assert set(tools) == {"open_app", "reply", *app_only}
+    assert all(tools[name]["_meta"]["ui"]["visibility"] == ["app"] for name in app_only)
     assert [resource["uri"] for resource in resources] == [VIEW_URI]
+    assert [template["uriTemplate"] for template in templates] == ["modeling-3d://models/{name}/{+path}"]
     assert contents == [{"uri": VIEW_URI, "mimeType": APP_MIME_TYPE, "text": lib.app_view()}]
+
+
+def test_the_app_shows_the_directory_it_was_started_on_until_open_app_names_another(tmp_path: Path) -> None:
+    (tmp_path / "first").mkdir()
+    (tmp_path / "file").write_text("", encoding="utf-8")
+    wire = Wire(arguments=["--directory", str(tmp_path / "first")])
+    try:
+        wire.initialize(MCP_APPS_HOST)
+        started = wire.call_tool("list_3d_models", {})["structuredContent"]["directory"]
+        opened = text_of(wire.call_tool("open_app", {"directory": str(tmp_path / "second")}))
+        switched = wire.call_tool("list_3d_models", {})["structuredContent"]["directory"]
+        refused = wire.call_tool("open_app", {"directory": str(tmp_path / "file")})
+        kept = wire.call_tool("list_3d_models", {})["structuredContent"]["directory"]
+    finally:
+        wire.close()
+
+    assert started == str((tmp_path / "first").resolve())
+    assert f"It shows the models in {tmp_path / 'second'}." in opened
+    assert switched == kept == str((tmp_path / "second").resolve())
+    assert refused["isError"]
+    assert "is a file, not a directory of models" in text_of(refused)
 
 
 def test_the_view_in_an_mcp_apps_host_hears_the_agent(wire: Wire) -> None:

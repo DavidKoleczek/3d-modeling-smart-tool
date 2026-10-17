@@ -1,5 +1,6 @@
 `view-3d-model` records a model as the one viewed last in its directory, and prints its summary.
-`list-3d-models` reports it as `last_viewed`, so whatever shows the models can open on it. The
+An open app on that directory switches to it within a second, so use it to show the person a
+model. `list-3d-models` reports it as `last_viewed`, and the app opens on it next time. The
 record is `.state.json` in the models directory.
 
 ```bash
@@ -23,4 +24,4 @@ names the models there.
 ## Result
 
 The model's summary as JSON on stdout, the same as one entry of `list-3d-models`' `models`:
-`name`, `id`, `directory`, `created`, `updated`, `status`, `last_run`, and `files`.
+`name`, `id`, `directory`, `created`, `updated`, `built`, `status`, `last_run`, and `files`.

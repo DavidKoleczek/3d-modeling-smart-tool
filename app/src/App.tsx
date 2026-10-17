@@ -1,10 +1,12 @@
 import { Box } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { ModelList, ModelMenu } from "@/components/ModelList";
 import { SteeringPanel, type Message } from "@/components/SteeringPanel";
 import { Viewport } from "@/components/Viewport";
 import { agentMessages, describe, steer } from "@/lib/api";
 import { onDisplayMode } from "@/lib/host";
+import { useModels } from "@/lib/models";
 import { cn } from "@/lib/utils";
 
 const POLL_MS = 1000;
@@ -12,6 +14,7 @@ const POLL_MS = 1000;
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [fullscreen, setFullscreen] = useState(false);
+  const { listing, model, error, pick } = useModels();
 
   useEffect(
     () => onDisplayMode((mode) => setFullscreen(mode === "fullscreen")),
@@ -66,6 +69,8 @@ function App() {
     }
   }, []);
 
+  const picker = { listing, selected: model?.name ?? null, onSelect: pick };
+
   return (
     <div
       className={cn(
@@ -76,9 +81,11 @@ function App() {
       <header className="flex items-center gap-2">
         <Box className="size-5 text-primary" />
         <h1 className="font-heading text-base font-semibold">Modeling 3D</h1>
+        <ModelMenu {...picker} className="ml-auto lg:hidden" />
       </header>
-      <main className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-3 md:grid-cols-[minmax(0,1fr)_20rem] md:grid-rows-1">
-        <Viewport />
+      <main className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-3 md:grid-cols-[minmax(0,1fr)_20rem] md:grid-rows-1 lg:grid-cols-[16rem_minmax(0,1fr)_20rem]">
+        <ModelList {...picker} error={error} className="hidden lg:flex" />
+        <Viewport listing={listing} model={model} />
         <SteeringPanel messages={messages} onSend={send} />
       </main>
     </div>

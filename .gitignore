@@ -1,6 +1,7 @@
 reference/
 plans/
 temp/
+.modeling-3d/
 .env
 
 # From https://github.com/github/gitignore/blob/main/Python.gitignore

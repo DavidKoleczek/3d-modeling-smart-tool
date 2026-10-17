@@ -92,7 +92,7 @@ def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary
 ```
 
 `list_3d_models` only reads, so it is safe while runs write. `ModelListing` has the resolved `directory`, its `models` most recently updated first, `last_viewed`, and `unreadable`, one message for each `model.json` that could not be read, naming what is wrong. A directory that does not exist lists as empty; a file in its place raises `Modeling3dError`.
-Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run last started, sent an event, or finished), `status`, `last_run` (that run's entry in `model.json`), and `files`. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. Both are `None` for a model that never ran.
+Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run last started, sent an event, or finished), `built` (when `model.glb` was last written, `None` before the first build), `status`, `last_run` (that run's entry in `model.json`), and `files`. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. Both are `None` for a model that never ran.
 
 `view_3d_model` records the model as viewed last in `.state.json` in the models directory, and returns its summary. `name` must match the model's directory exactly; an unknown one raises `Modeling3dError` naming the models there. `last_viewed` is `None` when nothing was viewed, or that model is gone.
 
@@ -115,16 +115,18 @@ def app_view() -> str
 ```
 
 The view's HTML, compiled from `app/` and offered as the `ui://modeling-3d/app` resource in the MCP server. It sends the person's messages as `ui/message` and polls the `app_updates` tool for the agent's. Raises `Modeling3dError` naming the build command when the view is not compiled.
+It shows the models in the server's directory: it polls `list_3d_models`, opens on `last_viewed`, and renders the model in view in 3D, reading its GLB again whenever `built` changes. Picking a model calls `view_3d_model`. It switches models on its own when `last_viewed` changes to one it did not pick, so `view_3d_model` from anywhere brings a model up, and when a new model appears.
 
 ```python
-def app_server(deliver: Callable[[str], None] | None = None) -> AppServer
+def app_server(deliver: Callable[[str], None] | None = None, directory: Path | None = None) -> AppServer
 ```
 
-The app's MCP server: `open_app`, `reply`, the app-only `app_updates` and `app_message`, and the view. `deliver` is called on a worker thread with each message the person sends from the browser page, and raises `OSError` when it cannot deliver; without it, or when it raises, the message comes back with the agent's next tool result.
+The app's MCP server: `open_app`, `reply`, the app-only `app_updates`, `app_message`, `list_3d_models`, and `view_3d_model`, the view, and each model's GLB and renders as base64 blob resources at `modeling-3d://models/{name}/{+path}`. Only the files a model's summary lists, and of those only the GLB and images, can be read. `deliver` is called on a worker thread with each message the person sends from the browser page, and raises `OSError` when it cannot deliver; without it, or when it raises, the message comes back with the agent's next tool result. `directory` is where the models it shows are kept, `.modeling-3d` in the working directory when omitted; `open_app`'s `directory` switches it.
 
 ```python
 class AppServer:
     server: Server
+    directory: Path
 
     def open(self, port: int | None = None) -> App: ...
     def say(self, text: str) -> None: ...
@@ -139,10 +141,10 @@ class AppServer:
 The app's MCP server over stdio, a thin surface over the library like the CLI, in `modeling_3d.adapters.mcp`.
 
 ```python
-def run_stdio() -> None
+def run_stdio(directory: Path | None = None) -> None
 ```
 
-It runs `app_server().server` over stdio. Its `deliver` posts each message from the browser page into the inbox of the Claude Code session that launched it; where there is none, the message comes back with the next tool result.
+It runs `app_server(directory=directory).server` over stdio. Its `deliver` posts each message from the browser page into the inbox of the Claude Code session that launched it; where there is none, the message comes back with the next tool result.
 
 ## Manifest
 

@@ -10,18 +10,31 @@ Nothing is served until `open_app` is called, so each session gets its own app o
 
 The library has no `mcp` function. The command calls `run_stdio()` in `modeling_3d.adapters.mcp`, which serves `app_server().server` from the library over stdio.
 
+## Arguments
+
+- `--directory DIR`: where the models the app shows are kept; `.modeling-3d` in the working
+  directory when omitted. `open_app` can switch it.
+
 ## Tools
 
-- `open_app`: serves the app and returns its browser URL. Its `_meta.ui.resourceUri` names the
-  view, so a host that renders MCP Apps shows it inline. A client that takes URL elicitation,
-  such as Claude Code, is asked to open the URL in the browser. Calling it again returns the
-  same URL.
+- `open_app` with an optional `directory`: serves the app and returns its browser URL. Its
+  `_meta.ui.resourceUri` names the view, so a host that renders MCP Apps shows it inline. A
+  client that takes URL elicitation, such as Claude Code, is asked to open the URL in the
+  browser. Calling it again returns the same URL. `directory` switches which models it shows.
 - `reply` with `text`: shows `text` in every open view, on the view's next poll.
 - `app_updates` with `after`: the agent's messages past the first `after`, which the view polls.
 - `app_message` with `text`: hands the agent a message from the browser host page.
+- `list_3d_models` and `view_3d_model` with `name`: the library's, on the app's directory,
+  which the view polls and calls when the person picks a model.
 
-The last two are listed only to hosts that render MCP Apps, with `visibility: ["app"]`, so no
-model sees them.
+All but the first two are listed only to hosts that render MCP Apps, with
+`visibility: ["app"]`, so no model sees them.
+
+## Resources
+
+- `ui://modeling-3d/app`: the view.
+- `modeling-3d://models/{name}/{+path}`: a model's `model.glb` or one of its renders, as a
+  base64 blob, which the view reads to show it. Nothing else in the directory can be read.
 
 ## Where the user's messages go
 

@@ -108,6 +108,18 @@ def test_models_list_newest_first_with_their_files_and_folders_without_a_record_
     assert listing.unreadable == []
 
 
+def test_built_is_when_the_glb_was_last_written() -> None:
+    glb = make_model("bear") / "model.glb"
+    make_model("owl", minutes=None)
+    os.utime(glb, (START.timestamp(), START.timestamp()))
+    first = {model.name: model.built for model in lib.list_3d_models().models}
+    rebuilt = START + timedelta(minutes=5)
+    os.utime(glb, (rebuilt.timestamp(), rebuilt.timestamp()))
+
+    assert first == {"bear": START, "owl": None}
+    assert lib.list_3d_models().models[0].built == rebuilt
+
+
 def test_a_run_whose_process_is_gone_lists_as_crashed_and_is_left_as_it_is() -> None:
     crashed = make_model("bear", status="running", pid=GONE_PID)
     make_model("fox", status="running", pid=os.getpid())

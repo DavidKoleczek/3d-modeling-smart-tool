@@ -35,6 +35,7 @@ JSON on stdout:
       "directory": "/work/.modeling-3d/bear",
       "created": "2026-10-17T10:00:00Z",
       "updated": "2026-10-17T10:28:41Z",
+      "built": "2026-10-17T10:27:55Z",
       "status": "done",
       "last_run": {
         "id": "20261017-100000-ab12cd",
@@ -60,7 +61,7 @@ JSON on stdout:
 ```
 
 `last_run` is the last run's entry in the model's `model.json`, and null for a model that never
-ran. `status` is the last run's: `running`, `done`, `failed`, `cancelled`, or `timed-out`, or
+ran. `built` is when `model.glb` was last written, and null before the first build. `status` is the last run's: `running`, `done`, `failed`, `cancelled`, or `timed-out`, or
 `crashed` when a run is recorded as running but its process is gone. A crashed model goes on
 with `create-3d-model --name <name> --edit`, or `--resume` to continue its session.
 `last_viewed` is set by `view-3d-model`, and is null when that model is gone.

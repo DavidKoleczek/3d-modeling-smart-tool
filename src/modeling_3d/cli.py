@@ -123,13 +123,17 @@ def manifest() -> None:
 @app.command("app")
 def app_(
     port: Annotated[int | None, typer.Option(help="The port to bind; a free one is chosen when omitted.")] = None,
+    directory: Annotated[
+        Path | None,
+        typer.Option("--directory", help="Where the models to show are kept; .modeling-3d here when omitted."),
+    ] = None,
 ) -> None:
     """Serve the app in a browser page on this machine and print its URL. Deterministic.
 
     Not connected to an agent session: each message sent from the page is printed instead. Keeps serving until
     Ctrl+C. Exits 1 with the cause and remedy when the port is held.
     """
-    app_server = lib.app_server(deliver=typer.echo)
+    app_server = lib.app_server(deliver=typer.echo, directory=directory)
     typer.echo(app_server.open(port).url)
     with contextlib.suppress(KeyboardInterrupt):
         while True:
@@ -243,13 +247,18 @@ def add_blender_to_path(
 
 
 @app.command()
-def mcp() -> None:
+def mcp(
+    directory: Annotated[
+        Path | None,
+        typer.Option("--directory", help="Where the models to show are kept; .modeling-3d here when omitted."),
+    ] = None,
+) -> None:
     """Serve the app's MCP server on stdio, with the app as an MCP App. Deterministic.
 
     For MCP clients that launch the server themselves. Reads and writes MCP messages on stdin and stdout until the
     client disconnects; prints nothing else to stdout.
     """
-    mcp_adapter.run_stdio()
+    mcp_adapter.run_stdio(directory)
 
 
 async def _run_model(starting: Coroutine[Any, Any, lib.ModelRun]) -> int:

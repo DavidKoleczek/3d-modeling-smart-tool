@@ -72,8 +72,9 @@ modeling-3d view-3d-model --name bear
 # Optionally, make `blender` run your installed Blender, for opening models in it
 modeling-3d add-blender-to-path
 
-# Serve the app in a browser page, without an agent session; messages sent from it are printed
+# Serve the app in a browser page, showing the models in .modeling-3d
 modeling-3d app
+modeling-3d app --directory path/to/models
 
 # Serve the app as an MCP App; an MCP client launches this
 modeling-3d mcp

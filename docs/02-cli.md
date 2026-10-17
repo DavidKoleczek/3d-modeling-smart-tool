@@ -29,7 +29,7 @@ modeling-3d manifest
 ## modeling-3d app
 
 ```bash
-modeling-3d app [--port <n>]
+modeling-3d app [--port <n>] [--directory <dir>]
 ```
 
 `lib.app_server().open()`, with its URL printed. With no agent connected, each message sent from the page is printed instead. The command then keeps serving until Ctrl+C, which exits 0. Exits 1 when `--port` names a held port; without `--port` a free one is chosen.
@@ -97,7 +97,7 @@ modeling-3d add-blender-to-path [--blender-path <path>]
 ## modeling-3d mcp
 
 ```bash
-modeling-3d mcp
+modeling-3d mcp [--directory <dir>]
 ```
 
 `modeling_3d.adapters.mcp.run_stdio()`, the app as an MCP App, for MCP clients that launch the server themselves. stdin and stdout carry only MCP messages until the client disconnects.

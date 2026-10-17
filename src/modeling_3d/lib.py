@@ -9,6 +9,7 @@ from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.capabilities.blender import blender
 from modeling_3d.capabilities.create_3d_model import create, models
 from modeling_3d.capabilities.create_3d_model.create import ModelRun
+from modeling_3d.capabilities.create_3d_model.record import DEFAULT_DIRECTORY
 from modeling_3d.core import manifest
 from modeling_3d.core import skill as skill_module
 from modeling_3d.intelligence.interface import Intelligence
@@ -43,18 +44,27 @@ def version() -> str:
     return skill_module.version()
 
 
-def app_server(deliver: Callable[[str], None] | None = None) -> AppServer:
+def app_server(deliver: Callable[[str], None] | None = None, directory: Path | None = None) -> AppServer:
     """The app's MCP server: tools that open the app and talk through it, and its view as an MCP App resource.
 
     Serve `AppServer.server` over any MCP transport. `AppServer.open` serves the browser host page, which renders
-    the view for agents that cannot embed it and reaches the same server at its own `/mcp`.
+    the view for agents that cannot embed it and reaches the same server at its own `/mcp`. The view shows the models
+    in `AppServer.directory`, through `list_3d_models` and `view_3d_model`.
 
     Args:
         deliver: Called with each message the user sends from the browser host page, on a worker thread; raises
             `OSError` when it cannot deliver. Without it, or when it raises, the message is handed to the agent with
             its next tool result instead.
+        directory: Where the models the app shows are kept; `.modeling-3d` in the working directory when omitted.
     """
-    return app_server_module.AppServer(skill_module.DISTRIBUTION, version(), deliver)
+    return app_server_module.AppServer(
+        skill_module.DISTRIBUTION,
+        version(),
+        (directory or DEFAULT_DIRECTORY).resolve(),
+        models.list_3d_models,
+        models.view_3d_model,
+        deliver,
+    )
 
 
 def app_view() -> str:

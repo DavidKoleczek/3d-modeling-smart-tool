@@ -1,9 +1,11 @@
 """List the models in a directory, and remember the one viewed last."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from modeling_3d.capabilities.create_3d_model.record import (
     DEFAULT_DIRECTORY,
+    GLB,
     alive,
     load_record,
     missing_model,
@@ -67,10 +69,18 @@ def _summary(target: Path, record: ModelRecord) -> ModelSummary:
         directory=target,
         created=record.created,
         updated=max(time for time in times if time is not None),
+        built=_built(target),
         status=status,
         last_run=run,
         files=model_files(target),
     )
+
+
+def _built(target: Path) -> datetime | None:
+    try:
+        return datetime.fromtimestamp((target / GLB).stat().st_mtime, UTC)
+    except FileNotFoundError:
+        return None
 
 
 def _state(root: Path) -> ModelsState:
