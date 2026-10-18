@@ -76,9 +76,10 @@ A continued session runs on the agent provider that made it; a fresh one can use
 - `--name NAME`: required. The model's name and directory. A model by that name in the directory
   is changed; any other name creates one. Letters, digits, `.`, `_`, and `-`.
 - `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
-- `--reference PATH`: a file to work from, repeatable: an image, a model, or another model's
-  `model.py`, `model.glb`, or render. Each is copied into the model's `references/`, and images are
-  also shown to the agent with the prompt.
+- `--reference PATH`: a file or folder to work from, repeatable: an image, a model, another
+  model's `model.py`, `model.glb`, or render, or a folder of them. Each is copied into the model's
+  `references/`, a folder whole but for its hidden folders, `node_modules`, and `__pycache__`, and
+  images are also shown to the agent with the prompt.
 - `--resume-session S`: for a model that exists, `false` (the default) for a fresh session, `true`
   to continue its last one, or the id of one of its sessions. See Changing a model.
 - `--agent-provider claude`: only `claude` runs agents for now.

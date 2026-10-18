@@ -1,6 +1,5 @@
-import { Grid, OrbitControls } from "@react-three/drei";
+import { ContactShadows, Grid, OrbitControls } from "@react-three/drei";
 import { Canvas, useThree } from "@react-three/fiber";
-import { Box, LoaderCircle } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -8,10 +7,12 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
   Box3,
   PerspectiveCamera,
+  type Camera,
   PMREMGenerator,
   Sphere,
   Vector3,
@@ -19,7 +20,24 @@ import {
 } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
-import { StatusBadge } from "@/components/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Icon } from "@/components/ui/icon";
+import { LoadingMark } from "@/components/ui/loading-mark";
+import { Notice } from "@/components/ui/notice";
+import { ProgressBar } from "@/components/ui/progress-bar";
+import {
+  AxisGizmo,
+  GizmoDriver,
+  type GizmoApi,
+} from "@/components/viewport/AxisGizmo";
+import { Dimensions } from "@/components/viewport/Dimensions";
+import { Renders } from "@/components/viewport/Renders";
+import {
+  ViewportToolbar,
+  type ViewTool,
+} from "@/components/viewport/ViewportToolbar";
+import { Wireframe } from "@/components/viewport/Wireframe";
 import {
   GLB,
   readModelFile,
@@ -27,9 +45,18 @@ import {
   type ModelSummary,
 } from "@/lib/api";
 import { describe } from "@/lib/errors";
+import { pastelFor } from "@/lib/models";
 import { dispose, parseGlb } from "@/lib/scene";
+import { updateSettings, useSettings } from "@/lib/settings";
+import { sceneStats, type SceneStats } from "@/lib/stats";
+import { timeOfDay, useDelayed, useElapsed } from "@/lib/time";
+import { useTheme } from "@/lib/theme";
+import { useSceneColors } from "@/lib/tokens";
 
-type Shown = { name: string; scene: Object3D };
+export type ViewMode = "3d" | "renders";
+
+/** The model's scene as loaded, from the build at `built`; `rebuilt` once it replaced an earlier build in view. */
+type Shown = { name: string; scene: Object3D; built: string; rebuilt: boolean };
 
 /** What the viewport needs of drei's OrbitControls, which `makeDefault` puts in the store untyped. */
 type Orbit = {
@@ -43,48 +70,70 @@ type Orbit = {
 const VIEW_DIRECTION = new Vector3(0.8, 0.55, 1).normalize();
 const MARGIN = 1.1;
 
+/** Points the camera at the whole model from the three-quarter view, unless the person moved it and `force` is off. */
+function frame(
+  scene: Object3D,
+  camera: Camera,
+  controls: Orbit | null,
+  movedRef: RefObject<boolean>,
+  force: boolean,
+) {
+  const sphere = new Box3()
+    .setFromObject(scene)
+    .getBoundingSphere(new Sphere());
+  const inside =
+    camera.position.distanceTo(sphere.center) < sphere.radius * MARGIN;
+  if (
+    (!force && movedRef.current && !inside) ||
+    !(camera instanceof PerspectiveCamera)
+  ) {
+    return;
+  }
+  // Whichever field of view is narrower decides, so the model fits a tall viewport as well as a wide one.
+  const vertical = (camera.fov * Math.PI) / 180;
+  const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
+  const distance =
+    (sphere.radius * MARGIN) / Math.sin(Math.min(vertical, horizontal) / 2);
+  camera.position.copy(sphere.center).addScaledVector(VIEW_DIRECTION, distance);
+  camera.lookAt(sphere.center);
+  controls?.target.copy(sphere.center);
+  controls?.update();
+  movedRef.current = false;
+}
+
 /**
  * Frames the model when it is first shown, and again on each rebuild unless the person has moved the camera since,
- * or the rebuilt model would swallow the camera.
+ * or the rebuilt model would swallow the camera. Each new `fit` frames it whatever the camera did.
  */
-function Framing({ scene }: { scene: Object3D }) {
+function Framing({
+  scene,
+  movedRef,
+  fit,
+}: {
+  scene: Object3D;
+  movedRef: RefObject<boolean>;
+  fit: number;
+}) {
   const camera = useThree((state) => state.camera);
   const controls = useThree((state) => state.controls) as Orbit | null;
-  const moved = useRef(false);
+  const fitted = useRef(fit);
 
   useEffect(() => {
     if (!controls) {
       return;
     }
     const onStart = () => {
-      moved.current = true;
+      movedRef.current = true;
     };
     controls.addEventListener("start", onStart);
     return () => controls.removeEventListener("start", onStart);
-  }, [controls]);
+  }, [controls, movedRef]);
 
   useLayoutEffect(() => {
-    const sphere = new Box3()
-      .setFromObject(scene)
-      .getBoundingSphere(new Sphere());
-    const inside =
-      camera.position.distanceTo(sphere.center) < sphere.radius * MARGIN;
-    if ((moved.current && !inside) || !(camera instanceof PerspectiveCamera)) {
-      return;
-    }
-    // Whichever field of view is narrower decides, so the model fits a tall viewport as well as a wide one.
-    const vertical = (camera.fov * Math.PI) / 180;
-    const horizontal = 2 * Math.atan(Math.tan(vertical / 2) * camera.aspect);
-    const distance =
-      (sphere.radius * MARGIN) / Math.sin(Math.min(vertical, horizontal) / 2);
-    camera.position
-      .copy(sphere.center)
-      .addScaledVector(VIEW_DIRECTION, distance);
-    camera.lookAt(sphere.center);
-    controls?.target.copy(sphere.center);
-    controls?.update();
-    moved.current = false;
-  }, [scene, camera, controls]);
+    const force = fitted.current !== fit;
+    fitted.current = fit;
+    frame(scene, camera, controls, movedRef, force);
+  }, [scene, camera, controls, movedRef, fit]);
 
   return null;
 }
@@ -106,42 +155,101 @@ function RoomLighting() {
   return <primitive object={environment} attach="environment" />;
 }
 
-function Message({
-  icon,
-  title,
-  children,
+/** The floor under the model: a grid scaled to its size, and a soft contact shadow that grounds it. */
+function Floor({
+  scene,
+  grid,
+  cell,
+  section,
+  shadow,
+  dark,
 }: {
-  icon: ReactNode;
-  title: string;
-  children?: ReactNode;
+  scene: Object3D;
+  grid: boolean;
+  cell: string;
+  section: string;
+  shadow: string;
+  dark: boolean;
 }) {
+  const { base, center, reach } = useMemo(() => {
+    const box = new Box3().setFromObject(scene);
+    const size = box.getSize(new Vector3());
+    return {
+      base: box.min.y,
+      center: box.getCenter(new Vector3()),
+      reach: Math.max(size.x, size.y, size.z) || 1,
+    };
+  }, [scene]);
+  // Sections a power of ten near the model's size, and cells a tenth of that.
+  const step = 10 ** Math.floor(Math.log10(reach));
   return (
-    <div className="relative m-auto flex max-w-xs flex-col items-center gap-3 p-4 text-center">
-      <div className="flex size-12 items-center justify-center rounded-xl border bg-background shadow-sm">
-        {icon}
-      </div>
-      <p className="text-sm font-medium">{title}</p>
-      {children && (
-        <p className="text-sm wrap-break-word text-muted-foreground">
-          {children}
-        </p>
+    <>
+      <ContactShadows
+        key={scene.uuid}
+        position={[center.x, base + reach * 0.001, center.z]}
+        scale={reach * 3}
+        far={reach}
+        blur={2.5}
+        opacity={dark ? 0.6 : 0.35}
+        resolution={512}
+        frames={1}
+        color={shadow}
+      />
+      {grid && (
+        <Grid
+          position={[0, base, 0]}
+          infiniteGrid
+          cellSize={step / 10}
+          sectionSize={step}
+          fadeDistance={reach * 25}
+          cellColor={cell}
+          sectionColor={section}
+        />
       )}
-    </div>
+    </>
   );
 }
 
-/** The model in view, in 3D, reloaded each time its GLB is rebuilt. */
+function Elapsed({ since }: { since: string }) {
+  return <>{useElapsed(since)}</>;
+}
+
+/**
+ * The model in view in 3D, reloaded each time its GLB is rebuilt, with its tools, or the renders the agent made of it.
+ * `onStats` hears what the loaded model is made of.
+ */
 export function Viewport({
   listing,
   model,
+  mode,
+  onMode,
+  compact,
+  fit,
+  onFit,
+  onStats,
+  onNew,
 }: {
   listing: ModelListing | null;
   model: ModelSummary | null;
+  mode: ViewMode;
+  onMode: (mode: ViewMode) => void;
+  /** Where the top bar has no room for the 3D or Renders switch, so the toolbar holds it. */
+  compact: boolean;
+  fit: number;
+  onFit: () => void;
+  onStats: (stats: SceneStats | null) => void;
+  onNew: () => void;
 }) {
   const [shown, setShown] = useState<Shown | null>(null);
   const [error, setError] = useState<{ name: string; text: string } | null>(
     null,
   );
+  const { settings } = useSettings();
+  const colors = useSceneColors();
+  const dark = useTheme() === "dark";
+  const moved = useRef(false);
+  const gizmo = useRef<SVGSVGElement>(null);
+  const look = useRef<GizmoApi | null>(null);
   const name = model?.name;
   const built = model?.built;
 
@@ -155,7 +263,12 @@ export function Viewport({
       .then(
         (scene) => {
           if (current) {
-            setShown({ name, scene });
+            setShown((before) => ({
+              name,
+              scene,
+              built,
+              rebuilt: before?.name === name,
+            }));
             setError(null);
           } else {
             dispose(scene);
@@ -184,61 +297,123 @@ export function Viewport({
 
   const showing = shown !== null && shown.name === name;
   const failure = error !== null && error.name === name ? error.text : null;
+  const loading = useDelayed(Boolean(model?.built) && !showing && !failure);
+  const looking = useDelayed(listing === null);
+
+  useEffect(
+    () => onStats(showing && scene ? sceneStats(scene) : null),
+    [showing, scene, onStats],
+  );
+
+  const toggle = (tool: ViewTool) =>
+    updateSettings((current) => ({ ...current, [tool]: !current[tool] }));
 
   let message: ReactNode = null;
   if (listing === null) {
+    message = looking && (
+      <div className="m-auto flex items-center gap-2 mono-annotation text-ink-muted">
+        <LoadingMark size={12} />
+        Looking for models
+      </div>
+    );
+  } else if (listing.models.length === 0) {
     message = (
-      <Message
-        icon={<LoaderCircle className="size-6 animate-spin text-primary" />}
-        title="Looking for models"
-      />
+      <EmptyState
+        className="flex-1"
+        measure="0 models"
+        tile={<Icon name="model" size={24} />}
+        tileClassName="bg-pastel-blue"
+        title="Start with a description"
+        action={
+          <>
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={onNew}
+              className="mt-2"
+            >
+              <Icon name="add" size={20} />
+              New model
+            </Button>
+            <p className="text-caption text-ink-muted">
+              Or ask your agent to make one.
+            </p>
+          </>
+        }
+      >
+        Describe a model, add reference images if you have them, and watch it
+        being built here.
+      </EmptyState>
     );
   } else if (model === null) {
     message = (
-      <Message
-        icon={<Box className="size-6 text-primary" />}
-        title="No models yet"
+      <EmptyState
+        className="flex-1"
+        tile={<Icon name="model" size={24} />}
+        tileClassName="bg-pastel-stone"
+        title="Pick a model"
       >
-        Start one with New model, or ask your agent to, and it appears here as
-        it is built.
-      </Message>
+        Choose one of your models to see it here.
+      </EmptyState>
     );
   } else if (!model.built) {
     message =
       model.status === "running" ? (
-        <Message
-          icon={<LoaderCircle className="size-6 animate-spin text-primary" />}
+        <EmptyState
+          className="flex-1"
+          measure={
+            <>
+              Working ·{" "}
+              <Elapsed since={model.last_run?.started ?? model.updated} />
+            </>
+          }
+          tile={<Icon name="model" size={24} />}
+          tileClassName={pastelFor(model.name)}
           title={`Building ${model.name}`}
         >
-          It appears here once the first version is built.
-        </Message>
+          It shows here as soon as the first version is built. Follow along in
+          Activity.
+        </EmptyState>
       ) : (
-        <Message
-          icon={<Box className="size-6 text-primary" />}
-          title={`${model.name} has no ${GLB}`}
+        <EmptyState
+          className="flex-1"
+          tile={<Icon name="model" size={24} />}
+          tileClassName={pastelFor(model.name)}
+          title={`${model.name} isn't built yet`}
         >
-          Ask your agent to change it, and it will appear here once it is built.
-        </Message>
+          {model.status === null
+            ? "Describe it in Activity, and it shows here once the first version is built."
+            : `Its last run ended before it made a ${GLB}. Ask for a change in Activity to try again.`}
+        </EmptyState>
       );
   } else if (!showing) {
     message = failure ? (
-      <Message
-        icon={<Box className="size-6 text-destructive" />}
-        title={`Could not show ${model.name}`}
+      <EmptyState
+        className="flex-1"
+        tile={<Icon name="warning" size={24} />}
+        tileClassName="bg-danger-soft text-danger"
+        title={`Couldn't show ${model.name}`}
       >
         {failure}
-      </Message>
+      </EmptyState>
     ) : (
-      <Message
-        icon={<LoaderCircle className="size-6 animate-spin text-primary" />}
-        title={`Loading ${model.name}`}
-      />
+      loading && (
+        <div className="m-auto flex items-center gap-2 mono-annotation text-ink-muted">
+          <LoadingMark size={12} />
+          Loading {model.name}
+        </div>
+      )
     );
   }
 
+  const in3d = mode === "3d";
   return (
-    <section className="relative flex min-h-48 flex-1 overflow-hidden rounded-xl border bg-muted/40">
-      {message ?? (
+    <section
+      aria-label="Viewport"
+      className="relative flex h-full min-h-48 flex-1 overflow-hidden bg-canvas"
+    >
+      {model?.status === "running" && <ProgressBar className="z-20" />}
+      {showing ? (
         <div className="absolute inset-0">
           <Canvas
             camera={{ position: [2, 1.5, 2.5], fov: 45, near: 0.01, far: 1000 }}
@@ -247,32 +422,81 @@ export function Viewport({
             <RoomLighting />
             <directionalLight position={[3, 6, 4]} intensity={1.5} />
             {/* Keyed by model, so switching models frames the new one however the camera was left. */}
-            <group key={shown!.name}>
-              <primitive object={shown!.scene} />
-              <Framing scene={shown!.scene} />
+            <group key={shown.name}>
+              <primitive object={shown.scene} />
+              <Framing scene={shown.scene} movedRef={moved} fit={fit} />
+              {settings.wireframe && (
+                <Wireframe scene={shown.scene} color={colors.accentInk} />
+              )}
+              {settings.dimensions && (
+                <Dimensions scene={shown.scene} color={colors.accentInk} />
+              )}
+              <Floor
+                scene={shown.scene}
+                grid={settings.grid}
+                cell={colors.gridCell}
+                section={colors.gridSection}
+                shadow={colors.shadow}
+                dark={dark}
+              />
             </group>
-            <Grid
-              infiniteGrid
-              cellSize={0.1}
-              sectionSize={1}
-              fadeDistance={25}
-              cellColor="#a1a1aa"
-              sectionColor="#71717a"
-            />
             <OrbitControls makeDefault />
+            <GizmoDriver svgRef={gizmo} apiRef={look} movedRef={moved} />
           </Canvas>
         </div>
+      ) : (
+        message
       )}
-      {model && (
-        <div className="pointer-events-none absolute top-3 left-3 flex items-center gap-2 rounded-lg border bg-background/90 px-2 py-1 shadow-sm">
-          <span className="text-sm font-medium">{model.name}</span>
-          <StatusBadge status={model.status} />
+      {showing && in3d && (
+        <>
+          <ViewportToolbar
+            on={{
+              grid: settings.grid,
+              wireframe: settings.wireframe,
+              dimensions: settings.dimensions,
+            }}
+            onToggle={toggle}
+            onFit={onFit}
+            compact={compact}
+            onRenders={compact ? () => onMode("renders") : undefined}
+          />
+          {shown.rebuilt && (
+            <div className="absolute top-3 right-3 z-10 flex h-7 items-center gap-1.5 rounded-md border border-line bg-panel px-2.5">
+              <Icon name="check" />
+              <span className="mono-annotation text-ink">
+                Rebuilt {timeOfDay(shown.built, true)}
+              </span>
+            </div>
+          )}
+          <AxisGizmo
+            svgRef={gizmo}
+            onAxis={(axis) => look.current?.look(axis)}
+          />
+        </>
+      )}
+      {model && !in3d && (
+        <div className="absolute inset-0 z-10 bg-canvas">
+          <Renders model={model} />
+          {compact && (
+            <button
+              type="button"
+              onClick={() => onMode("3d")}
+              className="absolute top-3 right-3 flex h-7 items-center gap-1.5 rounded-md border border-line-control bg-panel px-2.5 text-label hover:bg-hover"
+            >
+              <Icon name="model" />
+              Back to 3D
+            </button>
+          )}
         </div>
       )}
       {showing && failure && (
-        <p className="absolute inset-x-3 bottom-3 rounded-lg border border-destructive/30 bg-background/90 px-2 py-1 text-xs text-destructive">
-          Showing the last version that loaded. {failure}
-        </p>
+        <Notice
+          title={`Couldn't load the new ${GLB}.`}
+          className="absolute right-24 bottom-3 left-3 z-20"
+        >
+          Showing the version from {timeOfDay(shown.built)}. Ask the agent to
+          rebuild it. {failure}
+        </Notice>
       )}
     </section>
   );

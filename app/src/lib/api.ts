@@ -6,11 +6,17 @@ import { app } from "@/lib/host";
 const LIST_TOOL = "list_3d_models";
 const VIEW_TOOL = "view_3d_model";
 const CREATE_TOOL = "create_3d_model";
+const UPLOAD_TOOL = "upload_reference";
 const STEER_TOOL = "steer_3d_model";
 const CANCEL_TOOL = "cancel_3d_model";
 const ACTIVITY_TOOL = "read_3d_model_activity";
+const TOOL_CALL_TOOL = "read_3d_model_tool_call";
 const LIST_INTELLIGENCE_TOOL = "list_intelligence_models";
 const CHOOSE_INTELLIGENCE_TOOL = "choose_intelligence_model";
+const READ_SETTINGS_TOOL = "read_app_settings";
+const SAVE_SETTINGS_TOOL = "save_app_settings";
+const READ_FOLDERS_TOOL = "read_app_folders";
+const OPEN_FOLDER_TOOL = "open_app_folder";
 const MODEL_FILE_PREFIX = "modeling-3d://models/";
 // Starting a run waits for its agent to start, which can take a while on a cold machine.
 const CREATE_TIMEOUT_MS = 120_000;
@@ -31,6 +37,9 @@ export type ModelRun = {
   reasoning_effort: ReasoningEffort;
   session_id: string | null;
   origin: string | null;
+  resumed: boolean;
+  started: string;
+  finished: string | null;
 };
 
 /** `ModelSummary` in schemas.py. */
@@ -57,7 +66,16 @@ export type ModelListing = {
 
 /** `ActivityKind` in schemas.py. */
 export type ActivityKind =
-  "request" | "said" | "tool" | "tool-result" | "steered" | "ended";
+  | "request"
+  | "said"
+  | "reasoning"
+  | "thought"
+  | "composing"
+  | "tool"
+  | "tool-result"
+  | "usage"
+  | "steered"
+  | "ended";
 
 /** `ActivityEntry` in schemas.py. */
 export type ActivityEntry = {
@@ -74,6 +92,14 @@ export type ModelActivity = {
   model: ModelSummary;
   entries: ActivityEntry[];
   cursor: string;
+};
+
+/** `ToolCall` in schemas.py. */
+export type ToolCall = {
+  name: string;
+  input: Record<string, unknown>;
+  output: string | null;
+  failed: boolean;
 };
 
 /** `IntelligenceModel` in schemas.py. */
@@ -98,15 +124,33 @@ export type AppIntelligence = {
   chosen: IntelligenceChoice | null;
 };
 
-/** A file to work from, as the view sends it: its name, and its bytes in base64. */
-export type Upload = { name: string; data: string };
+/** `PaneLayout` in schemas.py. */
+export type PaneLayout = { size: number | null; open: boolean };
+
+/** `AppLayout` in schemas.py. */
+export type AppLayout = { models: PaneLayout; activity: PaneLayout };
+
+/** `AppSettings` in schemas.py. */
+export type AppSettings = {
+  theme: "system" | "light" | "dark";
+  grid: boolean;
+  wireframe: boolean;
+  dimensions: boolean;
+  wide: AppLayout;
+  medium: AppLayout;
+  /** By model id, the groups of steps in its activity the person opened or closed, and which. */
+  steps: Record<string, Record<string, boolean>>;
+};
+
+/** `AppFolders` in schemas.py. */
+export type AppFolders = { settings: string; models: string };
 
 /** What a request on a model asks for; a name a model has already changes that model. */
 export type ModelRequest = {
   prompt: string;
   name: string;
   resume_session?: boolean | string;
-  references?: Upload[];
+  uploads?: string[];
   reference_models?: string[];
 } & Partial<IntelligenceChoice>;
 
@@ -116,9 +160,25 @@ export type ModelFile = { base64: string; mimeType: string };
 export const GLB = "model.glb";
 const RENDER = /^renders\/.+\.(png|jpe?g|webp)$/i;
 
+// The views the agent usually renders, in the order the app shows them; others follow by name.
+const VIEWS = ["three_quarter", "front", "side", "back", "top"];
+
+/** The renders the agent left, three-quarter view first. */
+export function rendersOf(model: ModelSummary): string[] {
+  const rank = (file: string) => {
+    const view = VIEWS.indexOf(
+      file.replace(/^renders\//, "").replace(/\.\w+$/, ""),
+    );
+    return view === -1 ? VIEWS.length : view;
+  };
+  return model.files
+    .filter((file) => RENDER.test(file))
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+
 /** The render a model's thumbnail shows, if the agent has left any. */
 export function firstRender(model: ModelSummary): string | undefined {
-  return model.files.find((file) => RENDER.test(file));
+  return rendersOf(model)[0];
 }
 
 function textOf(result: CallToolResult): string {
@@ -204,6 +264,16 @@ export async function createModel(
   )) as ModelSummary;
 }
 
+/** Send a piece of a file to work from, `data` in base64, to land at `offset` in `path` of the upload. */
+export async function uploadReference(
+  upload: string,
+  path: string,
+  offset: number,
+  data: string,
+): Promise<void> {
+  await call(UPLOAD_TOOL, { upload, path, offset, data });
+}
+
 /** Tell the agent working on `name` something, as the person in the app. */
 export async function steerModel(name: string, message: string): Promise<void> {
   await call(STEER_TOOL, { name, message });
@@ -231,6 +301,19 @@ export async function readActivity(
   return structured as ModelActivity;
 }
 
+/** One tool call of the agent on `name` in full, by the run and id of its entry in the activity. */
+export async function readToolCall(
+  name: string,
+  runId: string,
+  callId: string,
+): Promise<ToolCall> {
+  return (await structuredFrom(TOOL_CALL_TOOL, {
+    name,
+    run_id: runId,
+    call_id: callId,
+  })) as ToolCall;
+}
+
 /** The AI models and reasoning efforts to pick from, and the ones picked last in the app's directory. */
 export async function listIntelligenceModels(): Promise<AppIntelligence> {
   return (await structuredFrom(LIST_INTELLIGENCE_TOOL, {})) as AppIntelligence;
@@ -245,4 +328,34 @@ export async function chooseIntelligenceModel(
     model,
     reasoning_effort: reasoningEffort,
   })) as AppIntelligence;
+}
+
+/** How the person set up the app, the same in every directory. */
+export async function readAppSettings(): Promise<AppSettings> {
+  return (await structuredFrom(READ_SETTINGS_TOOL, {})) as AppSettings;
+}
+
+/** Keep the app's settings for the person, replacing the ones kept before. */
+export async function saveAppSettings(
+  settings: AppSettings,
+): Promise<AppSettings> {
+  return (await structuredFrom(SAVE_SETTINGS_TOOL, {
+    settings,
+  })) as AppSettings;
+}
+
+/** Where the app keeps the person's settings, and the models it shows. */
+export async function readAppFolders(): Promise<AppFolders> {
+  return (await structuredFrom(READ_FOLDERS_TOOL, {})) as AppFolders;
+}
+
+/** Show the folder of the person's settings, of the models here, or of the model `name` in their file manager. */
+export async function openAppFolder(
+  folder: "settings" | "models" | "model",
+  name?: string,
+): Promise<void> {
+  await call(
+    OPEN_FOLDER_TOOL,
+    name === undefined ? { folder } : { folder, name },
+  );
 }

@@ -34,9 +34,11 @@ FailureReason = Literal[
     "agent-unavailable",
     "start-failed",
     "bad-cursor",
+    "no-such-tool-call",
     "bad-upload",
     "no-such-intelligence-model",
     "bad-reasoning-effort",
+    "bad-settings",
 ]
 
 
@@ -228,7 +230,9 @@ class ModelsState(BaseModel):
     last_viewed: str | None = None
 
 
-ActivityKind = Literal["request", "said", "tool", "tool-result", "steered", "ended"]
+ActivityKind = Literal[
+    "request", "said", "reasoning", "thought", "composing", "tool", "tool-result", "usage", "steered", "ended"
+]
 
 
 class ActivityEntry(BaseModel):
@@ -237,7 +241,10 @@ class ActivityEntry(BaseModel):
     time: datetime
     run_id: str
     kind: ActivityKind
-    text: str = Field(description="The prompt, the agent's words, the tool's target, the message, or the outcome")
+    text: str = Field(
+        description="The prompt, the agent's words, the summary of its reasoning, the tool's target, the message, or "
+        "the outcome"
+    )
     origin: str | None = Field(default=None, description="Who sent a request or steering message")
     data: dict[str, Any] = Field(default_factory=dict)
 
@@ -248,6 +255,15 @@ class ModelActivity(BaseModel):
     model: ModelSummary
     entries: list[ActivityEntry]
     cursor: str = Field(description="Pass as `after` to read only what comes next")
+
+
+class ToolCall(BaseModel):
+    """One tool call of a model's agent in full: what it was called with, and what came back."""
+
+    name: str = Field(description="The tool, as the agent provider names it")
+    input: dict[str, Any] = Field(description="The arguments the agent called it with")
+    output: str | None = Field(description="What came back, as text with any images left out; None while it runs")
+    failed: bool
 
 
 class BlenderOnPath(BaseModel):
@@ -273,6 +289,45 @@ class AppIntelligence(IntelligenceModels):
     """What the app's picker offers, and what the person picked last in its directory."""
 
     chosen: IntelligenceChoice | None = Field(description="None when nothing was picked, or it is no longer offered")
+
+
+ThemePreference = Literal["system", "light", "dark"]
+
+
+class PaneLayout(BaseModel):
+    """One side pane of the app at one of its widths: how wide it is, and whether it shows."""
+
+    size: int | None = Field(default=None, ge=0, description="Its width in pixels; None for the default")
+    open: bool = True
+
+
+class AppLayout(BaseModel):
+    """The app's side panes at one of its widths."""
+
+    models: PaneLayout = Field(default_factory=PaneLayout)
+    activity: PaneLayout = Field(default_factory=PaneLayout)
+
+
+class AppSettings(BaseModel):
+    """app-settings.json in the user's config directory: how the person set up the app, the same in every directory."""
+
+    theme: ThemePreference = Field(default="system", description="`system` follows the host's theme")
+    grid: bool = True
+    wireframe: bool = False
+    dimensions: bool = False
+    wide: AppLayout = Field(default_factory=AppLayout, description="The panes from 1100 pixels wide")
+    medium: AppLayout = Field(default_factory=AppLayout, description="The panes from 640 to 1100 pixels wide")
+    steps: dict[str, dict[str, bool]] = Field(
+        default_factory=dict,
+        description="By model id, the groups of steps in its activity the person opened or closed, and which",
+    )
+
+
+class AppFolders(BaseModel):
+    """Where the app keeps what it remembers."""
+
+    settings: Path = Field(description="The person's settings, the same in every directory")
+    models: Path = Field(description="The models the app shows, with what the person last picked and viewed there")
 
 
 # endregion

@@ -155,7 +155,7 @@ def create_3d_model(
     ] = None,
     references: Annotated[
         list[Path] | None,
-        typer.Option("--reference", help="A file to work from, such as an image or a model; repeatable."),
+        typer.Option("--reference", help="A file or folder to work from, such as an image or a model; repeatable."),
     ] = None,
     resume_session: Annotated[
         str,
@@ -246,6 +246,21 @@ def read_3d_model_activity(
 ) -> None:
     """Print a model's summary and its activity across every run as JSON. Deterministic."""
     typer.echo(lib.read_3d_model_activity(name=name, directory=directory, after=after).model_dump_json(indent=2))
+
+
+@app.command()
+def read_3d_model_tool_call(
+    name: Annotated[str, typer.Option("--name", help="The model whose agent made the call.")],
+    run: Annotated[str, typer.Option("--run", help="The run_id of the call's tool entry in the model's activity.")],
+    call: Annotated[str, typer.Option("--id", help="The id in that entry's data.")],
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """Print one tool call of a model's agent in full, its arguments and output, as JSON. Deterministic."""
+    typer.echo(
+        lib.read_3d_model_tool_call(name=name, run_id=run, call_id=call, directory=directory).model_dump_json(indent=2)
+    )
 
 
 @app.command()

@@ -12,9 +12,11 @@ export type FailureReason =
   | "agent-unavailable"
   | "start-failed"
   | "bad-cursor"
+  | "no-such-tool-call"
   | "bad-upload"
   | "no-such-intelligence-model"
-  | "bad-reasoning-effort";
+  | "bad-reasoning-effort"
+  | "bad-settings";
 
 /** A failure from the server, with which one it was when the library named it. */
 export class AppError extends Error {
@@ -61,12 +63,16 @@ function worded(error: AppError): string | null {
       return `The agent couldn't start on this machine. ${error.message}`;
     case "start-failed":
       return "The run couldn't start. Try again; if it keeps failing, run the same request from a terminal to see why.";
+    case "no-such-tool-call":
+      return `That step isn't in ${model}'s activity anymore.`;
     case "bad-upload":
       return "A file didn't arrive whole. Remove it and add it again.";
     case "no-such-intelligence-model":
       return "That AI model can't be picked here anymore. Pick another.";
     case "bad-reasoning-effort":
       return "That reasoning effort isn't one the agent knows. Pick another.";
+    case "bad-settings":
+      return "Those settings couldn't be saved. Reset the layout, or reload the app and try again.";
     default:
       return null;
   }

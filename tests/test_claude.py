@@ -4,6 +4,7 @@ import asyncio
 import base64
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Coroutine
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -17,6 +18,7 @@ from claude_agent_sdk import (
     Message,
     ResultMessage,
     SessionKey,
+    StreamEvent,
     SystemMessage,
     TextBlock,
     UserMessage,
@@ -195,6 +197,7 @@ async def test_a_workspace_run_gets_the_tools_its_access_allows_without_permissi
     assert options.model == "claude-sonnet-5-5"
     assert options.permission_mode == "bypassPermissions"
     assert options.effort == "max"
+    assert options.thinking == {"type": "adaptive", "display": "summarized"}
     assert options.resume is None
     assert options.setting_sources is None
     assert options.session_store is None
@@ -221,6 +224,54 @@ async def test_every_message_is_an_event_as_given_and_the_result_comes_last_once
     assert events[2].data["content"] == [{"text": "working"}]
     assert events[-1].data["text"] == "done"
     assert await collect(run.events()) == events
+
+
+async def test_of_the_stream_only_how_far_a_tool_call_being_written_has_got_is_kept_about_once_a_second(
+    world: Callable[..., FakeWorld], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # When the call starts, then as each piece of its arguments arrives.
+    times = iter([0.0, 0.4, 1.2, 1.5, 2.3])
+    monkeypatch.setattr(adapter, "time", SimpleNamespace(monotonic=lambda: next(times)))
+    pieces = ['{"file_path": "model.py", ', '"content": "import bpy\\n', "x" * 600, '"}']
+    tool = {"type": "tool_use", "id": "toolu_write", "name": "Write", "input": {}}
+
+    def streamed(event: dict[str, Any], parent: str | None = None) -> StreamEvent:
+        return StreamEvent(uuid="u", session_id=SESSION, event=event, parent_tool_use_id=parent)
+
+    def written(index: int, piece: str) -> StreamEvent:
+        return streamed(
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "input_json_delta", "partial_json": piece},
+            }
+        )
+
+    async def script(client: FakeClient) -> None:
+        client.echo(0)
+        for message in (
+            streamed({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            streamed({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hi"}}),
+            streamed({"type": "content_block_start", "index": 1, "content_block": tool}),
+            *(written(1, piece) for piece in pieces),
+            streamed({"type": "content_block_stop", "index": 1}),
+            written(1, "late"),
+            streamed({"type": "content_block_start", "index": 0, "content_block": tool}, parent="toolu_task"),
+            finished(),
+        ):
+            client.messages.put_nowait(message)
+
+    fake = world(script)
+    run = await ClaudeIntelligence().start(request(tmp_path))
+    events = await collect(run.events())
+
+    kinds = [event.type for event in events]
+    assert kinds == ["SystemMessage", "UserMessage", "composing", "composing", "ResultMessage", "terminal"]
+    first, second = (event.data for event in events if event.type == "composing")
+    assert first == {"id": "toolu_write", "name": "Write", "head": "".join(pieces[:2]), "characters": 50}
+    assert (second["characters"], second["head"]) == (652, "".join(pieces)[: adapter.COMPOSING_HEAD_CHARACTERS])
+    assert fake.clients[0].options.include_partial_messages
+    assert fake.clients[0].options.env == {"CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING": "1"}
 
 
 async def test_a_plain_completion_has_no_tools_and_runs_in_one_stable_scratch_directory_never_the_callers(

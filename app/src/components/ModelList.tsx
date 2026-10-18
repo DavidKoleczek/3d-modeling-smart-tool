@@ -1,193 +1,173 @@
-import { Box, Plus, TriangleAlert } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState, type RefObject } from "react";
 
-import { StatusBadge } from "@/components/StatusBadge";
+import { ModelThumb } from "@/components/ModelThumb";
 import { Button } from "@/components/ui/button";
-import {
-  firstRender,
-  readModelFile,
-  type ModelListing,
-  type ModelSummary,
-} from "@/lib/api";
+import { Icon } from "@/components/ui/icon";
+import { Kbd } from "@/components/ui/kbd";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { Notice } from "@/components/ui/notice";
+import { StatusMark } from "@/components/ui/status-mark";
+import { Tooltip } from "@/components/ui/tooltip";
+import type { ModelListing } from "@/lib/api";
+import { referable } from "@/lib/references";
+import { matching, shortDirectory } from "@/lib/models";
 import { ago } from "@/lib/time";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 
-type Picker = {
+export type Picker = {
   listing: ModelListing | null;
   selected: string | null;
   onSelect: (name: string) => void;
   onNew: () => void;
-  creating: boolean;
-  className?: string;
 };
 
-/** A model's first render, read again each time the model is rebuilt. */
-function Thumbnail({ model }: { model: ModelSummary }) {
-  const render = firstRender(model);
-  const [source, setSource] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!render) {
-      return;
-    }
-    let current = true;
-    readModelFile(model.name, render).then(
-      (file) => {
-        if (current) {
-          setSource(`data:${file.mimeType};base64,${file.base64}`);
-        }
-      },
-      () => {
-        if (current) {
-          setSource(null);
-        }
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [model.name, model.built, render]);
-
-  return (
-    <span className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg border bg-muted">
-      {source && render ? (
-        <img src={source} alt="" className="size-full object-cover" />
-      ) : (
-        <Box className="size-5 text-muted-foreground" />
-      )}
-    </span>
-  );
-}
-
-/** Every model in the app's directory, newest first; picking one shows it. */
+/** Your models: every model in the app's directory, newest first, to search and pick from. */
 export function ModelList({
   listing,
   selected,
   onSelect,
   onNew,
-  creating,
   error,
-  className,
-}: Picker & { error: string | null }) {
+  search,
+  onWorkFrom,
+}: Picker & {
+  error: string | null;
+  search?: RefObject<HTMLInputElement | null>;
+  /** Starts a new model from the one named. */
+  onWorkFrom: (name: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const models = matching(listing, query);
+  const workable = new Set(
+    referable(listing?.models ?? []).map((model) => model.name),
+  );
+  const problems = [...(error ? [error] : []), ...(listing?.unreadable ?? [])];
+
   return (
-    <section
-      className={cn(
-        "flex min-h-0 flex-col rounded-xl border bg-card",
-        className,
-      )}
+    <nav
+      aria-label="Your models"
+      className="flex h-full min-h-0 flex-col bg-panel"
     >
-      <header className="border-b px-4 py-3">
-        <h2 className="text-sm font-medium">Models</h2>
-        <p
-          className="truncate text-xs text-muted-foreground"
-          title={listing?.directory}
-        >
-          {listing?.directory ?? "Looking for models..."}
-        </p>
+      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-line pr-1.5 pl-3 text-label">
+        <h2>Your models</h2>
+        {listing && (
+          <span className="mono-annotation text-ink-muted">
+            {listing.models.length}
+          </span>
+        )}
+        <Tooltip content="New model" keys="N">
+          <Button
+            size="sm"
+            icon
+            aria-label="New model"
+            onClick={onNew}
+            className="ml-auto"
+          >
+            <Icon name="add" />
+          </Button>
+        </Tooltip>
       </header>
-      {(error || (listing?.unreadable.length ?? 0) > 0) && (
-        <ul className="flex flex-col gap-1 border-b p-3 text-xs text-destructive">
-          {[...(error ? [error] : []), ...(listing?.unreadable ?? [])].map(
-            (problem) => (
-              <li key={problem} className="flex gap-1.5">
-                <TriangleAlert className="mt-px size-3.5 shrink-0" />
-                <span className="min-w-0 wrap-break-word">{problem}</span>
-              </li>
-            ),
-          )}
+      <label className="m-2 flex h-6 shrink-0 items-center gap-1.5 rounded-sm border border-line-control bg-field pr-1 pl-2 text-ink-muted focus-within:border-ink focus-within:bg-panel">
+        <Icon name="search" />
+        <input
+          ref={search}
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              setQuery("");
+              event.currentTarget.blur();
+            }
+          }}
+          placeholder="Search models"
+          aria-label="Search models"
+          className="min-w-0 flex-1 bg-transparent text-label font-normal text-ink outline-none placeholder:text-ink-muted [&::-webkit-search-cancel-button]:hidden"
+        />
+        {!query && <Kbd>/</Kbd>}
+      </label>
+      {problems.length > 0 && (
+        <ul className="flex shrink-0 flex-col gap-1 px-2 pb-2">
+          {problems.map((problem) => (
+            <li key={problem}>
+              <Notice>{problem}</Notice>
+            </li>
+          ))}
         </ul>
       )}
-      <ol className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
-        <li>
-          <button
-            type="button"
-            onClick={onNew}
-            aria-current={creating}
-            className={cn(
-              "flex w-full items-center gap-3 rounded-lg p-2 text-left text-sm font-medium text-primary outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
-              creating && "bg-muted",
-            )}
-          >
-            <span className="flex size-12 shrink-0 items-center justify-center rounded-lg border border-dashed border-primary/40">
-              <Plus className="size-5" />
-            </span>
-            New model
-          </button>
-        </li>
-        {listing?.models.length === 0 && (
-          <li className="m-auto p-2 text-center text-sm text-muted-foreground">
-            No models here yet. Start one with New model, or ask your agent.
+      <ol className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-1 pb-1">
+        {listing && listing.models.length > 0 && models.length === 0 && (
+          <li className="px-3 py-2 text-ink-muted">
+            No models match {query.trim()}.
           </li>
         )}
-        {listing?.models.map((model) => (
-          <li key={model.name}>
+        {models.map((model) => (
+          <li key={model.name} className="group/row relative">
             <button
               type="button"
               onClick={() => onSelect(model.name)}
-              aria-current={model.name === selected}
+              aria-current={model.name === selected ? "true" : undefined}
               className={cn(
-                "flex w-full items-center gap-3 rounded-lg p-2 text-left outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
-                model.name === selected && "bg-muted",
+                "flex w-full min-w-0 items-center gap-2.5 rounded-sm py-1.5 pr-9 pl-2 text-left -outline-offset-2",
+                model.name === selected ? "bg-accent-soft" : "hover:bg-hover",
               )}
             >
-              <Thumbnail model={model} />
-              <span className="flex min-w-0 flex-1 flex-col gap-1">
-                <span className="truncate text-sm font-medium">
-                  {model.name}
-                </span>
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <StatusBadge status={model.status} />
-                  <span className="truncate">{ago(model.updated)}</span>
+              <ModelThumb model={model} />
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate font-medium">{model.name}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {model.status !== "done" && (
+                    <StatusMark
+                      status={model.status}
+                      since={model.last_run?.started}
+                    />
+                  )}
+                  {model.status !== "running" && (
+                    <span className="truncate mono-annotation text-ink-muted">
+                      {ago(model.updated)}
+                    </span>
+                  )}
                 </span>
               </span>
             </button>
+            <div className="absolute top-1/2 right-1.5 -translate-y-1/2 opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 has-data-popup-open:opacity-100">
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      size="sm"
+                      icon
+                      aria-label={`More for ${model.name}`}
+                    />
+                  }
+                >
+                  <Icon name="more" />
+                </MenuTrigger>
+                <MenuContent align="end">
+                  <MenuItem onClick={() => void copyText(model.name)}>
+                    <Icon name="copy" className="text-ink-muted" />
+                    Copy name
+                  </MenuItem>
+                  {workable.has(model.name) && (
+                    <MenuItem onClick={() => onWorkFrom(model.name)}>
+                      <Icon name="model" className="text-ink-muted" />
+                      Use in a new model
+                    </MenuItem>
+                  )}
+                </MenuContent>
+              </Menu>
+            </div>
           </li>
         ))}
       </ol>
-    </section>
-  );
-}
-
-/** The model list as a menu, where there is no room for the list. */
-export function ModelMenu({
-  listing,
-  selected,
-  onSelect,
-  onNew,
-  creating,
-  className,
-}: Picker) {
-  return (
-    <span className={cn("flex min-w-0 items-center gap-1.5", className)}>
-      <Button
-        type="button"
-        variant={creating ? "secondary" : "outline"}
-        size="sm"
-        onClick={onNew}
-      >
-        <Plus />
-        New model
-      </Button>
-      {listing && listing.models.length > 0 && (
-        <select
-          aria-label="Model"
+      {listing && (
+        <footer
           title={listing.directory}
-          value={selected ?? ""}
-          onChange={(event) => onSelect(event.target.value)}
-          className="h-8 max-w-48 min-w-0 rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="shrink-0 truncate border-t border-line px-3 py-2 mono-annotation text-ink-muted"
         >
-          {selected === null && (
-            <option value="" disabled>
-              Pick a model
-            </option>
-          )}
-          {listing.models.map((model) => (
-            <option key={model.name} value={model.name}>
-              {model.name}
-            </option>
-          ))}
-        </select>
+          {shortDirectory(listing.directory)}
+        </footer>
       )}
-    </span>
+    </nav>
   );
 }

@@ -9,6 +9,7 @@ from importlib.metadata import version
 import json
 from pathlib import Path
 import shutil
+import time
 from typing import Any
 import uuid
 
@@ -23,6 +24,7 @@ from claude_agent_sdk import (
     SessionStoreEntry,
     SessionStoreListEntry,
     SessionSummaryEntry,
+    StreamEvent,
     SystemMessage,
     UserMessage,
     fold_session_summary,
@@ -40,6 +42,22 @@ INTERRUPT_SECONDS = 5
 # Claude Code sends an image the agent reads back as one base64 JSON line, and a render runs to megabytes, well past
 # the SDK's 1 MB default for a line.
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+# How often a tool call the agent is still writing out says how far it has got, from when it has taken that long, so
+# a quick call says nothing and a long file keeps showing progress.
+COMPOSING_SECONDS = 1.0
+# Enough of the arguments written so far to find what the call works on, which comes first.
+COMPOSING_HEAD_CHARACTERS = 500
+
+
+@dataclasses.dataclass
+class Composing:
+    """A tool call the agent is still writing the arguments of, as far as it has got."""
+
+    id: str
+    name: str
+    reported: float
+    head: str = ""
+    characters: int = 0
 
 
 class ClaudeRun:
@@ -55,6 +73,7 @@ class ClaudeRun:
         # User messages sent and not yet echoed back by Claude Code. A result ends the run only when there are
         # none, since a steering message that arrives late in a turn starts another one.
         self._unechoed: set[str] = set()
+        self._composing: dict[int, Composing] = {}
         self._answered = False
         self._began = asyncio.Event()
         self._stopping = asyncio.Event()
@@ -157,7 +176,46 @@ class ClaudeRun:
         )
         if isinstance(session_id, str):
             self._session_id = session_id
-        self._emit(type(message).__name__, as_data(message))
+        if isinstance(message, StreamEvent):
+            self._stream(message)
+        else:
+            self._emit(type(message).__name__, as_data(message))
+
+    def _stream(self, message: StreamEvent) -> None:
+        """Keep of the stream only `composing`, how far each tool call the agent is writing out has got.
+
+        The rest comes whole in the messages that follow, so it is not kept twice.
+        """
+        if message.parent_tool_use_id is not None:
+            return
+        event = message.event
+        index = event.get("index")
+        block = event.get("content_block") or {}
+        delta = event.get("delta") or {}
+        if not isinstance(index, int):
+            return
+        if event.get("type") == "content_block_start" and block.get("type") == "tool_use":
+            self._composing[index] = Composing(
+                id=str(block.get("id", "")), name=str(block.get("name", "")), reported=time.monotonic()
+            )
+        elif event.get("type") == "content_block_stop":
+            self._composing.pop(index, None)
+        elif (composing := self._composing.get(index)) is not None and delta.get("type") == "input_json_delta":
+            written = str(delta.get("partial_json", ""))
+            composing.head = (composing.head + written)[:COMPOSING_HEAD_CHARACTERS]
+            composing.characters += len(written)
+            now = time.monotonic()
+            if now - composing.reported >= COMPOSING_SECONDS:
+                composing.reported = now
+                self._emit(
+                    "composing",
+                    {
+                        "id": composing.id,
+                        "name": composing.name,
+                        "head": composing.head,
+                        "characters": composing.characters,
+                    },
+                )
 
     def _emit(self, kind: str, data: dict[str, Any]) -> None:
         self._events.append(AgentEvent(type=kind, data=data))
@@ -280,8 +338,13 @@ def options(request: AgentRequest) -> ClaudeAgentOptions:
         tools=tools,
         permission_mode="bypassPermissions",
         effort=request.reasoning_effort,
+        # Newer models leave their reasoning out unless asked; its summary is what the activity shows of it.
+        thinking={"type": "adaptive", "display": "summarized"},
         resume=request.resume,
         extra_args={"replay-user-messages": None},
+        include_partial_messages=True,
+        # Otherwise the API holds each argument back until it is whole, so a long file shows nothing until written.
+        env={"CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING": "1"},
         max_buffer_size=MAX_MESSAGE_BYTES,
         session_store=None if request.session_directory is None else FolderSessionStore(request.session_directory),
         session_store_flush="eager",

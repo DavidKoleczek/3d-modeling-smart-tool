@@ -1,260 +1,40 @@
-import {
-  Check,
-  FilePen,
-  FileText,
-  FolderSearch,
-  LoaderCircle,
-  SquareTerminal,
-  TriangleAlert,
-  Wrench,
-  X,
-  type LucideIcon,
-} from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
+import { LiveStrip } from "@/components/activity/LiveStrip";
+import { Message } from "@/components/activity/Message";
+import { RunDivider } from "@/components/activity/RunDivider";
+import { RunResult } from "@/components/activity/RunResult";
+import { StepBlock } from "@/components/activity/StepBlock";
 import { Composer } from "@/components/Composer";
-import { StatusBadge } from "@/components/StatusBadge";
-import { useActivity, type Step } from "@/lib/activity";
-import {
-  readModelFile,
-  type ActivityEntry,
-  type ModelStatus,
-  type ModelSummary,
-  type ReasoningEffort,
-} from "@/lib/api";
-import {
-  effortLabel,
-  useIntelligence,
-  type Intelligence,
-} from "@/lib/intelligence";
-import { duration } from "@/lib/time";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+import { Markdown } from "@/components/ui/markdown";
+import { Notice } from "@/components/ui/notice";
+import { useActivity } from "@/lib/activity";
+import { cancelModel, type ModelSummary } from "@/lib/api";
+import { AppError, describe } from "@/lib/errors";
+import { useIntelligence } from "@/lib/intelligence";
+import { currentCall, runsOf, totalCost } from "@/lib/runs";
+import { statusLabel } from "@/lib/status";
+import { updateSettings, useSettings } from "@/lib/settings";
+import { timeOfDay } from "@/lib/time";
 
-const IMAGE = /\.(png|jpe?g|webp)$/i;
-const TOOL_ICONS: Record<string, LucideIcon> = {
-  Bash: SquareTerminal,
-  Read: FileText,
-  Edit: FilePen,
-  Write: FilePen,
-  Glob: FolderSearch,
-  Grep: FolderSearch,
-};
+// How close to the bottom still counts as at it, so new entries keep it scrolled down.
+const PINNED_PX = 48;
 
-/** Who sent a request or steering message, as the activity names them. */
-function sender(origin: string | null): string {
-  if (origin === "app") {
-    return "You";
-  }
-  if (origin?.startsWith("claude-code:")) {
-    return "Claude Code";
-  }
-  return origin ?? "Command line";
-}
-
-/** A reference image the request gave, read through the host. */
-function ReferenceImage({ model, path }: { model: string; path: string }) {
-  const [source, setSource] = useState<string | null>(null);
-
-  useEffect(() => {
-    let current = true;
-    readModelFile(model, path).then(
-      (file) => {
-        if (current) {
-          setSource(`data:${file.mimeType};base64,${file.base64}`);
-        }
-      },
-      () => {},
-    );
-    return () => {
-      current = false;
-    };
-  }, [model, path]);
-
-  return source ? (
-    <img
-      src={source}
-      alt={path}
-      title={path}
-      className="size-14 rounded-lg border object-cover"
-    />
-  ) : (
-    <span className="size-14 rounded-lg border bg-muted" title={path} />
-  );
-}
-
-function References({ model, paths }: { model: string; paths: string[] }) {
-  const files = paths.filter((path) => !IMAGE.test(path));
-  return (
-    <div className="flex flex-wrap items-end justify-end gap-1.5">
-      {paths
-        .filter((path) => IMAGE.test(path))
-        .map((path) => (
-          <ReferenceImage key={path} model={model} path={path} />
-        ))}
-      {files.map((path) => (
-        <span
-          key={path}
-          className="rounded-md border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-        >
-          {path.replace(/^references\//, "")}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/** What someone asked of the model, or told its agent while it worked. */
-function Message({
-  entry,
-  model,
-  intelligence,
-}: {
-  entry: ActivityEntry;
-  model: string;
-  intelligence: Intelligence;
-}) {
-  const steering = entry.kind === "steered";
-  const references = (entry.data.references as string[] | undefined) ?? [];
-  const error = typeof entry.data.error === "string" ? entry.data.error : null;
-  let label = sender(entry.origin);
-  if (steering) {
-    label += ", steering";
-  } else if (entry.data.resumed) {
-    label += ", continuing its session";
-  }
-  const ranOn = typeof entry.data.model === "string" ? entry.data.model : null;
-  const effort = entry.data.reasoning_effort as ReasoningEffort | undefined;
-  if (!steering && ranOn) {
-    label += ` (${intelligence.label(ranOn)}${effort ? `, ${effortLabel(effort).toLowerCase()}` : ""})`;
-  }
-  return (
-    <li className="flex max-w-[85%] flex-col items-end gap-1 self-end">
-      <span
-        className="text-xs text-muted-foreground"
-        title={entry.origin ?? undefined}
-      >
-        {label}
-      </span>
-      <p
-        className={cn(
-          "rounded-xl px-3 py-2 text-sm wrap-break-word whitespace-pre-wrap",
-          entry.origin === "app"
-            ? "bg-primary text-primary-foreground"
-            : "bg-secondary text-secondary-foreground",
-          steering && "border border-primary/30",
-        )}
-      >
-        {entry.text}
-      </p>
-      {references.length > 0 && <References model={model} paths={references} />}
-      {error && (
-        <span className="text-xs text-destructive">Not delivered: {error}</span>
-      )}
-    </li>
-  );
-}
-
-function Elapsed({ since }: { since: string }) {
-  const [now, setNow] = useState(Date.now);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const seconds = Math.max(0, Math.round((now - Date.parse(since)) / 1000));
-  return (
-    <span className="flex items-center gap-1 text-primary">
-      <LoaderCircle className="size-3.5 animate-spin" />
-      {duration(seconds)}
-    </span>
-  );
-}
-
-/** A tool call the agent made: what it works on, and whether it is running, done, or failed. */
-function Tool({ step, working }: { step: Step; working: boolean }) {
-  const name = String(step.entry.data.name ?? "");
-  const Icon = TOOL_ICONS[name] ?? Wrench;
-  const failed = step.result?.data.failed === true;
-  let state = null;
-  if (working) {
-    state = <Elapsed since={step.entry.time} />;
-  } else if (failed) {
-    state = <X className="size-3.5 text-destructive" />;
-  } else if (step.result) {
-    state = <Check className="size-3.5" />;
-  }
-  return (
-    <li className="flex flex-col gap-0.5 px-1 text-xs text-muted-foreground">
-      <span className="flex min-w-0 items-center gap-1.5">
-        <Icon className="size-3.5 shrink-0" />
-        <span className="shrink-0 font-medium text-foreground">{name}</span>
-        <span className="min-w-0 truncate font-mono" title={step.entry.text}>
-          {step.entry.text}
-        </span>
-        <span className="ml-auto shrink-0">{state}</span>
-      </span>
-      {failed && step.result?.text && (
-        <span className="pl-5 wrap-break-word text-destructive">
-          {step.result.text}
-        </span>
-      )}
-    </li>
-  );
-}
-
-/** How a run ended; its final words are already in what the agent said. */
-function Ended({ entry }: { entry: ActivityEntry }) {
-  const error = typeof entry.data.error === "string" ? entry.data.error : null;
-  return (
-    <li className="flex flex-col items-center gap-1 py-1 text-center text-xs">
-      <StatusBadge status={entry.data.status as ModelStatus} />
-      {error && (
-        <span className="wrap-break-word text-destructive">{error}</span>
-      )}
-    </li>
-  );
-}
-
-function Entry({
-  step,
-  model,
-  working,
-  intelligence,
-}: {
-  step: Step;
-  model: string;
-  working: boolean;
-  intelligence: Intelligence;
-}) {
-  switch (step.entry.kind) {
-    case "request":
-    case "steered":
-      return (
-        <Message entry={step.entry} model={model} intelligence={intelligence} />
-      );
-    case "said":
-      return (
-        <li className="max-w-[85%] self-start rounded-xl bg-muted px-3 py-2 text-sm wrap-break-word whitespace-pre-wrap">
-          {step.entry.text}
-        </li>
-      );
-    case "tool":
-      return <Tool step={step} working={working} />;
-    case "ended":
-      return <Ended entry={step.entry} />;
-    default:
-      return null;
-  }
-}
-
-/** The model in view's activity: what was asked of it and by whom, what its agent did, and where to talk to it. */
+/**
+ * The model in view's activity, run by run: what was asked of it and by whom, what its agent said and did, and how
+ * each run ended. While it works, the live strip keeps the current step and Stop in view.
+ */
 export function ActivityPanel({
   model,
   models,
+  liveOnly = false,
 }: {
   model: ModelSummary | null;
   models: ModelSummary[];
+  /** Only the live strip, under the model where there is room for one pane alone. */
+  liveOnly?: boolean;
 }) {
   const {
     steps,
@@ -263,16 +43,63 @@ export function ActivityPanel({
     error,
   } = useActivity(model?.name ?? null);
   const intelligence = useIntelligence();
+  const { settings } = useSettings();
   const shown = read ?? model;
+  const runs = runsOf(
+    steps,
+    working,
+    shown?.status === "running",
+    shown?.built ?? null,
+  );
+  const latest = runs.at(-1);
+  // Blocks the person opened or closed themselves in this model's activity, which keep that until they change it again.
+  const toggled = (shown && settings.steps[shown.id]) || {};
+  const toggle = (key: string, open: boolean) => {
+    if (shown) {
+      updateSettings((current) => ({
+        ...current,
+        steps: {
+          ...current.steps,
+          [shown.id]: { ...current.steps[shown.id], [key]: open },
+        },
+      }));
+    }
+  };
+  const [stopError, setStopError] = useState<string | null>(null);
   const list = useRef<HTMLOListElement>(null);
-  // Follows what comes in while the person is at the bottom, and stays put while they read further up.
   const pinned = useRef(true);
+  // How many steps there were when the person scrolled up, so what came after shows Jump to latest.
+  const [readUpTo, setReadUpTo] = useState<number | null>(null);
 
   useEffect(() => {
     if (pinned.current && list.current) {
       list.current.scrollTop = list.current.scrollHeight;
     }
-  }, [steps.length, shown?.name]);
+  }, [steps.length, shown?.name, working.length]);
+
+  const stop = async () => {
+    if (!shown) {
+      return;
+    }
+    setStopError(null);
+    try {
+      await cancelModel(shown.name);
+    } catch (cause) {
+      // Stopped already, which is what was asked for.
+      if (!(cause instanceof AppError && cause.reason === "not-running")) {
+        setStopError(describe(cause));
+      }
+    }
+  };
+
+  const jumpToLatest = () => {
+    if (list.current) {
+      list.current.scrollTo({
+        top: list.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
+  };
 
   let empty: string | null = null;
   if (shown === null) {
@@ -282,56 +109,157 @@ export function ActivityPanel({
   } else if (steps.length === 0 && error === null) {
     empty = "Nothing has been asked of it yet.";
   }
+  const crashed =
+    shown?.status === "crashed" && latest !== undefined && !latest.ended;
+  const unseen = readUpTo !== null && steps.length > readUpTo;
+  const live = shown?.status === "running" && (
+    <LiveStrip
+      since={latest?.started ?? shown.last_run?.started ?? shown.updated}
+      current={currentCall(latest)}
+      onStop={() => void stop()}
+    />
+  );
+
+  if (liveOnly) {
+    return live || null;
+  }
 
   return (
-    <section className="flex min-h-0 flex-col rounded-xl border bg-card">
-      <header className="flex items-center gap-2 border-b px-4 py-3">
-        <h2 className="min-w-0 truncate text-sm font-medium">
-          {shown?.name ?? "Activity"}
-        </h2>
-        {shown && <StatusBadge status={shown.status} />}
+    <aside
+      aria-label="Activity"
+      className="flex h-full min-h-0 flex-col bg-panel"
+    >
+      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-line px-3 text-label">
+        <h2>Activity</h2>
+        {runs.length > 0 && (
+          <span className="mono-annotation text-ink-muted">
+            {runs.length} {runs.length === 1 ? "run" : "runs"}
+          </span>
+        )}
       </header>
-      <ol
-        ref={list}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          pinned.current =
-            element.scrollHeight - element.scrollTop - element.clientHeight <
-            48;
-        }}
-        className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3"
-      >
-        {error && (
-          <li className="flex gap-1.5 text-xs text-destructive">
-            <TriangleAlert className="mt-px size-3.5 shrink-0" />
-            <span className="min-w-0 wrap-break-word">{error}</span>
-          </li>
-        )}
-        {empty && (
-          <li className="m-auto text-center text-sm text-muted-foreground">
-            {empty}
-          </li>
-        )}
-        {shown &&
-          // Only ever appended to, and read again from the start for another model, so a step keeps its index.
-          steps.map((step, index) => (
-            <Entry
-              key={index}
-              step={step}
-              model={shown.name}
-              working={working.includes(step)}
-              intelligence={intelligence}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <ol
+          ref={list}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            pinned.current =
+              element.scrollHeight - element.scrollTop - element.clientHeight <
+              PINNED_PX;
+            setReadUpTo(pinned.current ? null : (readUpTo ?? steps.length));
+          }}
+          className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3"
+        >
+          {error && (
+            <li className="shrink-0">
+              <Notice>{error}</Notice>
+            </li>
+          )}
+          {empty && (
+            <li className="m-auto text-center text-ink-muted">{empty}</li>
+          )}
+          {shown &&
+            runs.map((run) => (
+              <Fragment key={run.id}>
+                <RunDivider run={run} intelligence={intelligence} />
+                {run.blocks.map((block, index) => {
+                  switch (block.kind) {
+                    case "message":
+                      return (
+                        <Message
+                          key={index}
+                          entry={block.entry}
+                          model={shown.name}
+                        />
+                      );
+                    case "said":
+                      return (
+                        <li key={index} className="shrink-0">
+                          <Markdown>{block.entry.text}</Markdown>
+                        </li>
+                      );
+                    case "steps": {
+                      const open = toggled[block.key] ?? block.latest;
+                      return (
+                        <StepBlock
+                          key={block.key}
+                          model={shown}
+                          calls={block.calls}
+                          started={block.started}
+                          finished={block.finished}
+                          state={block.state}
+                          open={open}
+                          onToggle={() => toggle(block.key, !open)}
+                        />
+                      );
+                    }
+                    case "rebuilt":
+                      return (
+                        <li
+                          key={`rebuilt-${index}`}
+                          className="flex shrink-0 items-center gap-1.5 mono-annotation text-ink-muted"
+                        >
+                          <Icon name="check" />
+                          Rebuilt {timeOfDay(block.time, true)}
+                        </li>
+                      );
+                    case "ended":
+                      return (
+                        <RunResult
+                          key={index}
+                          status={block.status}
+                          started={run.started}
+                          ended={block.entry.time}
+                          error={
+                            typeof block.entry.data.error === "string"
+                              ? block.entry.data.error
+                              : null
+                          }
+                          files={
+                            (block.entry.data.files as string[] | undefined) ??
+                            []
+                          }
+                        />
+                      );
+                  }
+                })}
+              </Fragment>
+            ))}
+          {crashed && latest && (
+            <RunResult
+              status="crashed"
+              started={latest.started}
+              ended={null}
+              error={null}
+              files={[]}
             />
-          ))}
-      </ol>
+          )}
+        </ol>
+        {unseen && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={jumpToLatest}
+            className="absolute bottom-2.5 left-1/2 -translate-x-1/2 shadow-popover"
+          >
+            <Icon name="arrow-down" />
+            Jump to latest
+          </Button>
+        )}
+      </div>
+      {live}
+      {stopError && <Notice className="mx-3 mt-2 shrink-0">{stopError}</Notice>}
       {shown && (
         <Composer
           key={shown.name}
           model={shown}
           models={models}
           intelligence={intelligence}
+          cost={totalCost(steps)}
         />
       )}
-    </section>
+      <p role="status" className="sr-only">
+        {shown ? `${shown.name}: ${statusLabel(shown.status)}` : ""}
+      </p>
+    </aside>
   );
 }

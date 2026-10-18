@@ -90,6 +90,14 @@ modeling-3d read-3d-model-activity --name <name> [--after <cursor>] [--directory
 
 `lib.read_3d_model_activity()`, printed as JSON. Exits 1 when there is no model by that name, or `--after` is not a cursor into its activity.
 
+## modeling-3d read-3d-model-tool-call
+
+```bash
+modeling-3d read-3d-model-tool-call --name <name> --run <run_id> --id <id> [--directory <dir>]
+```
+
+`lib.read_3d_model_tool_call()`, printed as JSON. Exits 1 when there is no model by that name, or its run has no call with that id.
+
 ## modeling-3d view-3d-model
 
 ```bash

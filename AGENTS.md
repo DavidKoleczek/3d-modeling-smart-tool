@@ -25,6 +25,7 @@ This is a Smart Tool that must conform to Microsoft's [Amplifier Smart Tool Spec
   - Avoid using bolding or italics.
 - Prefer to use characters that can be typed on a standard keyboard (limit use of fancy arrows, etc unless required or asked for)
 - Never do any git operations (staging, commiting, pushing, branches, etc.) without the user explictly asking.
+- Commit messages are short, like the existing history. Never credit yourself in a commit, as a co-author or in the message.
 - Do not read into too much what files I have open or what lines I am highlighting.
 
 ## Python Development Instructions

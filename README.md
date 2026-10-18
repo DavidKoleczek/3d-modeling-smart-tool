@@ -2,9 +2,6 @@
 
 Creates and edits 3D models from a description of what to build.
 
-This is a [Smart Tool](https://github.com/microsoft/amplifier-smart-tools) which is a library with a thin CLI over it and model-backed capabilities sit behind an interface so many providers can be used.
-We support the [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/python) and the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python).
-
 ## Installation
 
 Prerequisites:
@@ -46,8 +43,15 @@ uv tool uninstall modeling-3d
 ## Interface
 
 ```bash
-# Print the tool's manifest as JSON
-modeling-3d manifest
+# Run the app in background at http://127.0.0.1:8788 (runs even if the shell closes)
+# bash
+nohup modeling-3d app --port 8788 > /dev/null 2>&1 &
+# Stop it on bash
+pkill -f "modeling-3d app --port 8788"
+# PowerShell
+Start-Process modeling-3d -ArgumentList "app", "--port", "8788" -WindowStyle Hidden
+# Stop it on PowerShell
+Stop-Process -Id (Get-NetTCPConnection -LocalPort 8788 -State Listen).OwningProcess
 
 # Create a 3D model in .modeling-3d/bear
 modeling-3d create-3d-model "A low poly brown bear like the image" --name bear --reference bear.png
@@ -69,6 +73,9 @@ modeling-3d cancel-3d-model --name bear
 # What was asked of a model, by whom, and what its agent did, in the app or anywhere else
 modeling-3d read-3d-model-activity --name bear
 
+# One of its agent's tool calls in full, by the run_id and id of its entry in the activity
+modeling-3d read-3d-model-tool-call --name bear --run 20261017-100000-ab12cd --id toolu_01
+
 # List the models in .modeling-3d, newest first, with their state, and record one as viewed last
 modeling-3d list-3d-models
 modeling-3d view-3d-model --name bear
@@ -76,7 +83,7 @@ modeling-3d view-3d-model --name bear
 # Optionally, make `blender` run your installed Blender, for opening models in it
 modeling-3d add-blender-to-path
 
-# Serve the app in a browser page, where you create, change, and steer the models in .modeling-3d
+# Serve the app in the browser
 modeling-3d app
 modeling-3d app --directory path/to/models
 
@@ -84,7 +91,7 @@ modeling-3d app --directory path/to/models
 modeling-3d mcp
 ```
 
-To use the app beside Claude Code, start `claude` from this directory, where `.mcp.json` loads the server, and ask it to open the app.
+The app is called 3D Modeling Smart Tool. To use it beside Claude Code, start `claude` from this directory, where `.mcp.json` loads the server, and ask it to open the app.
 Hosts that render MCP Apps, such as VS Code, show it inline instead.
 What you do in the app is not sent to the session. Any session in the directory sees it by reading a model's activity, and what a session does shows in the app.
 

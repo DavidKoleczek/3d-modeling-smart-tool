@@ -103,3 +103,61 @@ export function useModels(): {
     listing?.models.find((entry) => entry.name === selected) ?? null;
   return { listing, model, error, pick };
 }
+
+/** A directory as the app shows it, by its last two folders, such as `toys\.modeling-3d`. */
+export function shortDirectory(path: string): string {
+  const separator = path.includes("\\") ? "\\" : "/";
+  return path.split(separator).filter(Boolean).slice(-2).join(separator);
+}
+
+/** The models whose names hold `query`, ignoring case. */
+export function matching(listing: ModelListing | null, query: string) {
+  const needle = query.trim().toLowerCase();
+  return (listing?.models ?? []).filter((model) =>
+    model.name.toLowerCase().includes(needle),
+  );
+}
+
+const PASTELS = [
+  "bg-pastel-blue",
+  "bg-pastel-lilac",
+  "bg-pastel-rose",
+  "bg-pastel-peach",
+  "bg-pastel-butter",
+  "bg-pastel-mint",
+  "bg-pastel-sage",
+  "bg-pastel-stone",
+];
+
+/** The same pastel for a name every time, so a model without a render keeps its color. */
+export function pastelFor(name: string): string {
+  let hash = 0;
+  for (const character of name) {
+    hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  }
+  return PASTELS[hash % PASTELS.length];
+}
+
+// `NAME_PATTERN` in create.py.
+export const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const FILLER = new Set(
+  "a an and the of with like in on for to from make me create build model 3d please this that it".split(
+    " ",
+  ),
+);
+
+/** A name for what `prompt` describes, from its first words, that no model in the directory has yet. */
+export function suggestName(prompt: string, models: ModelSummary[]): string {
+  const words = prompt.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const telling = words.filter((word) => !FILLER.has(word));
+  const base =
+    (telling.length > 0 ? telling : words).slice(0, 3).join("-").slice(0, 40) ||
+    "model";
+  // Ignoring case, as the directory does on Windows and macOS.
+  const taken = new Set(models.map((model) => model.name.toLowerCase()));
+  let name = base;
+  for (let suffix = 2; taken.has(name); suffix += 1) {
+    name = `${base}-${suffix}`;
+  }
+  return name;
+}

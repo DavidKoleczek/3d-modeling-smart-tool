@@ -1,8 +1,8 @@
 `read-3d-model-activity` reads everything about how a model is being made: its summary, as
 `list-3d-models` gives it, and its activity across every run. The activity is each request and
-steering message with who sent it, what the agent said, the tools it ran and which failed, and how
-each run ended. It is what the app shows beside the model, so it includes what the person asked
-for there. It only reads, so it is safe while runs are working.
+steering message with who sent it, what the agent said and reasoned, the tools it ran and which
+failed, and how each run ended. It is what the app shows beside the model, so it includes what the
+person asked for there. It only reads, so it is safe while runs are working.
 
 Read a model's activity before acting on it, since the person may have changed or steered it in
 the app. Pass a read's `cursor` as `--after` to the next read for only what came since.
@@ -41,13 +41,21 @@ and `data`:
 {"kind": "ended", "text": "A low poly bear, with...", "origin": null, "data": {"status": "done", "error": null, "files": ["model.py", "model.glb"]}}
 ```
 
-- `request`: what a run was asked, in `text`, with the references it was given and the model and
-  reasoning effort it ran with.
+- `request`: what a run was asked, in `text`, with the references it was given, a folder's ending
+  in `/`, and the model and reasoning effort it ran with.
 - `said`: what the agent wrote for the person.
+- `reasoning`: the agent started reasoning, as soon as it did. Whatever comes next ends it.
+- `thought`: the summary of the reasoning just done, in `text`, when the agent gave one.
+- `composing`: a tool call the agent is still writing out, such as a long file, about once a
+  second: `id`, `name`, `target` once that much is written, and `characters` so far. The `tool`
+  entry with the same `id` follows once it is called.
 - `tool`: a tool call, with `target`, what it works on: a command's first line, or a file's path
-  relative to the model.
+  relative to the model. `read-3d-model-tool-call` gives the call in full.
 - `tool-result`: the end of the call with the same `id`; `failed` says whether it failed, with the
   first line of why in `text`. A call with no result yet is still running.
+- `usage`: at the end of each turn, what the agent's session has cost in all so far, `cost_usd`,
+  with its `session_id`. A resumed session's total includes its earlier runs, so the latest of each
+  session, summed across sessions, is what the model has cost.
 - `steered`: a steering message as delivered, or with `error` when it was not.
 - `ended`: how a run ended, with the agent's final message in `text`.
 

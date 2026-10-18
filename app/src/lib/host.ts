@@ -1,42 +1,47 @@
 import {
   App,
-  applyDocumentTheme,
-  applyHostFonts,
-  applyHostStyleVariables,
   type McpUiDisplayMode,
   type McpUiHostContext,
 } from "@modelcontextprotocol/ext-apps";
 
-export const app = new App({ name: "Modeling 3D", version: "1.0.0" });
+import { setHostTheme } from "@/lib/theme";
 
-const displayModeListeners = new Set<(mode: McpUiDisplayMode) => void>();
-let displayMode: McpUiDisplayMode = "inline";
+export const app = new App(
+  { name: "Modeling 3D", version: "1.0.0" },
+  { availableDisplayModes: ["inline", "fullscreen"] },
+);
 
-/** Calls `listener` with how the host shows the view now, then each time that changes. */
-export function onDisplayMode(
-  listener: (mode: McpUiDisplayMode) => void,
-): () => void {
-  listener(displayMode);
-  displayModeListeners.add(listener);
+type Display = { mode: McpUiDisplayMode; available: McpUiDisplayMode[] };
+
+const displayListeners = new Set<(display: Display) => void>();
+let display: Display = { mode: "inline", available: [] };
+
+/** Calls `listener` with how the host shows the view now and which modes it offers, then each time that changes. */
+export function onDisplay(listener: (display: Display) => void): () => void {
+  listener(display);
+  displayListeners.add(listener);
   return () => {
-    displayModeListeners.delete(listener);
+    displayListeners.delete(listener);
   };
 }
 
+/** Ask the host to show the view another way, such as fullscreen; it may refuse, and says which it chose. */
+export async function requestDisplayMode(mode: McpUiDisplayMode) {
+  await app.requestDisplayMode({ mode });
+}
+
+// Only the theme and display mode: the view keeps its own fonts and palette, so it looks the same in every host.
 function applyHostContext(context: McpUiHostContext) {
   if (context.theme) {
-    applyDocumentTheme(context.theme);
+    setHostTheme(context.theme);
   }
-  if (context.styles?.variables) {
-    applyHostStyleVariables(context.styles.variables);
-  }
-  if (context.styles?.css?.fonts) {
-    applyHostFonts(context.styles.css.fonts);
-  }
-  if (context.displayMode) {
-    displayMode = context.displayMode;
-    for (const listener of displayModeListeners) {
-      listener(displayMode);
+  if (context.displayMode || context.availableDisplayModes) {
+    display = {
+      mode: context.displayMode ?? display.mode,
+      available: context.availableDisplayModes ?? display.available,
+    };
+    for (const listener of displayListeners) {
+      listener(display);
     }
   }
 }

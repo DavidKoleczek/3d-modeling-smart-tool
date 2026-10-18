@@ -51,6 +51,12 @@ CAPABILITIES = (
         skill="capabilities/create_3d_model/skill_read_3d_model_activity.md",
     ),
     Capability(
+        "read-3d-model-tool-call",
+        "Print one tool call of a model's agent in full: the arguments it was called with and what came back.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skill_read_3d_model_tool_call.md",
+    ),
+    Capability(
         "view-3d-model",
         "Record a model as the one viewed last in its directory and print its summary as JSON.",
         model_backed=False,

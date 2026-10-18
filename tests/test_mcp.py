@@ -27,11 +27,17 @@ VIEW_TOOLS = (
     "list_3d_models",
     "view_3d_model",
     "create_3d_model",
+    "upload_reference",
     "steer_3d_model",
     "cancel_3d_model",
     "read_3d_model_activity",
+    "read_3d_model_tool_call",
     "list_intelligence_models",
     "choose_intelligence_model",
+    "read_app_settings",
+    "save_app_settings",
+    "read_app_folders",
+    "open_app_folder",
 )
 
 
@@ -132,7 +138,14 @@ def test_an_mcp_apps_host_gets_the_view_the_tools_it_calls_and_the_model_files(w
     assert all(tools[name]["_meta"]["ui"]["visibility"] == ["app"] for name in VIEW_TOOLS)
     assert [resource["uri"] for resource in resources] == [VIEW_URI]
     assert [template["uriTemplate"] for template in templates] == ["modeling-3d://models/{name}/{+path}"]
-    assert contents == [{"uri": VIEW_URI, "mimeType": APP_MIME_TYPE, "text": lib.app_view()}]
+    assert contents == [
+        {
+            "uri": VIEW_URI,
+            "mimeType": APP_MIME_TYPE,
+            "text": lib.app_view(),
+            "_meta": {"ui": {"permissions": {"clipboardWrite": {}}}},
+        }
+    ]
 
 
 def test_the_app_shows_the_directory_it_was_started_on_until_open_app_names_another(tmp_path: Path) -> None:

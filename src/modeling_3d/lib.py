@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+from modeling_3d.capabilities.app import folders as app_folders
 from modeling_3d.capabilities.app import mcp_server as app_server_module
 from modeling_3d.capabilities.app import server as app_module
+from modeling_3d.capabilities.app import settings as app_settings
 from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.capabilities.blender import blender
 from modeling_3d.capabilities.create_3d_model import activity, create, intelligence_models, models
@@ -22,6 +24,7 @@ from modeling_3d.schemas import (
     ModelListing,
     ModelSummary,
     ReasoningEffort,
+    ToolCall,
 )
 
 
@@ -52,6 +55,8 @@ def app_server(directory: Path | None = None) -> AppServer:
     the view for agents that cannot embed it and reaches the same server at its own `/mcp`. The view shows the models
     in `AppServer.directory`, and creates, changes, steers, and stops them through this library's capabilities, as
     from `app`. Nothing done in it is sent to an agent session; a session sees it with `read_3d_model_activity`.
+    How the person set up the app, such as its theme and pane sizes, is theirs in every directory, kept in
+    `app-settings.json` in their config directory.
 
     Args:
         directory: Where the models the app shows are kept; `.modeling-3d` in the working directory when omitted.
@@ -66,7 +71,10 @@ def app_server(directory: Path | None = None) -> AppServer:
         steer_model=create.steer_3d_model,
         cancel_model=create.cancel_3d_model,
         read_activity=activity.read_3d_model_activity,
+        read_tool_call=activity.read_3d_model_tool_call,
         list_intelligence=intelligence_models.list_intelligence_models,
+        settings_path=app_settings.settings_path(),
+        open_folder=app_folders.open_folder,
     )
 
 
@@ -99,8 +107,9 @@ async def create_3d_model(
         name: The model's name and directory under `directory`. When a model by that name exists there, ignoring
             case, the request changes it; otherwise it creates a new model.
         directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
-        references: Files to work from, such as images, models, or another model's model.py, model.glb, and renders.
-            Each is copied into the model's references/, and images are also shown to the agent with the prompt.
+        references: Files and folders to work from, such as images, models, or another model's model.py, model.glb,
+            and renders. Each is copied into the model's references/, a folder whole but for its hidden folders,
+            node_modules, and __pycache__, and images given as files are also shown to the agent with the prompt.
         resume_session: For a model that exists, which agent session to continue, so the agent keeps the
             conversation: True for its last session, or the id of one of its sessions. False, the default, starts a
             fresh session, which reads model.py, the whole model, and starts from a small context. A new model, or one
@@ -162,6 +171,21 @@ def read_3d_model_activity(name: str, directory: Path | None = None, after: str 
         after: The `cursor` of an earlier read, for only the activity since.
     """
     return activity.read_3d_model_activity(name=name, directory=directory, after=after)
+
+
+def read_3d_model_tool_call(name: str, run_id: str, call_id: str, directory: Path | None = None) -> ToolCall:
+    """One tool call of a model's agent in full: the arguments it was called with, and what came back as text.
+
+    The activity gives each call only by what it works on; this gives the whole command, edit, or file, and its
+    output. Reads only, so it is safe while runs write.
+
+    Args:
+        name: The model's name, exactly as its directory is named.
+        run_id: The `run_id` of the call's `tool` entry in the model's activity.
+        call_id: The `id` in that entry's `data`.
+        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+    """
+    return activity.read_3d_model_tool_call(name=name, run_id=run_id, call_id=call_id, directory=directory)
 
 
 def list_3d_models(directory: Path | None = None) -> ModelListing:

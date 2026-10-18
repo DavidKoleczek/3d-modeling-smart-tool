@@ -22,6 +22,16 @@ export function effortLabel(effort: ReasoningEffort): string {
   return EFFORT_LABELS[effort] ?? effort;
 }
 
+const PROVIDER_LABELS: Record<string, string> = {
+  claude: "Claude",
+  codex: "Codex",
+};
+
+/** An agent provider as the person reads it. */
+export function providerLabel(provider: string): string {
+  return PROVIDER_LABELS[provider] ?? provider;
+}
+
 export type Intelligence = {
   options: AppIntelligence | null;
   /** What the next request runs with: the person's last pick in the directory, else the default; null until read. */

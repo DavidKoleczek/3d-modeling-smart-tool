@@ -81,12 +81,13 @@ uv run pytest
 
 #### App Development
 
-`app/` holds the app's frontend, Vite, TypeScript, React, Tailwind, and shadcn, in two builds:
+`app/` holds the app's frontend, Vite, TypeScript, React, Tailwind, and Base UI, in two builds:
 
 - The MCP App view, entry `mcp_app.html`, compiled to the single file `src/modeling_3d/capabilities/app/static/view/mcp_app.html`, which hosts load as one resource.
 - The browser host page and its sandbox proxy, plain TS in `app/host/`, compiled to `src/modeling_3d/capabilities/app/static/host/`. They render the view the way any MCP Apps host does, for agents that can't embed it.
 
 Both are vendored, so the tool installs and runs with no Node present.
+The design tokens, light and dark, live in `app/src/theme.css`, and `app/src/index.css` maps them into Tailwind, so classes name only tokens.
 The `app-lint`, `app-format`, `app-typecheck`, and `app-build` precommit hooks each run one step through `uv run build-app.py` whenever `app/` changes: with pnpm present it installs and runs that step; without pnpm it says so and passes.
 
 Install dependencies (also done by `setup-for-dev.py` when pnpm is present):

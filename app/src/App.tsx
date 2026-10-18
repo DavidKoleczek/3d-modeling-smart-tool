@@ -1,21 +1,55 @@
-import { Box } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { usePanelRef } from "react-resizable-panels";
 
 import { ActivityPanel } from "@/components/ActivityPanel";
-import { ModelList, ModelMenu } from "@/components/ModelList";
-import { NewModel } from "@/components/NewModel";
-import { Viewport } from "@/components/Viewport";
-import { onDisplayMode } from "@/lib/host";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ModelList, type Picker } from "@/components/ModelList";
+import {
+  NewModelDialog,
+  type NewModelRequest,
+} from "@/components/NewModelDialog";
+import { ShortcutsDialog } from "@/components/ShortcutsDialog";
+import { StatusBar } from "@/components/StatusBar";
+import { TopBar, type NarrowPane, type Pane } from "@/components/TopBar";
+import { Segmented } from "@/components/ui/segmented";
+import { Viewport, type ViewMode } from "@/components/Viewport";
+import { Workspace } from "@/components/Workspace";
+import { onDisplay, requestDisplayMode } from "@/lib/host";
+import { paneLayout, useBreakpoint } from "@/lib/layout";
 import { useModels } from "@/lib/models";
+import { useShortcuts } from "@/lib/shortcuts";
+import { updateSettings, useSettings } from "@/lib/settings";
+import { counted, dimensions, type SceneStats } from "@/lib/stats";
 import { cn } from "@/lib/utils";
 
 function App() {
-  const [fullscreen, setFullscreen] = useState(false);
+  const [root, breakpoint, width] = useBreakpoint();
+  const [display, setDisplay] = useState({
+    fullscreen: false,
+    expandable: false,
+  });
   const [creating, setCreating] = useState(false);
+  const [request, setRequest] = useState<NewModelRequest>({ id: 0 });
+  const [narrowPane, setNarrowPane] = useState<NarrowPane>("model");
+  const [shortcuts, setShortcuts] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("3d");
+  const [fits, setFits] = useState(0);
+  const [stats, setStats] = useState<SceneStats | null>(null);
   const { listing, model, error, pick } = useModels();
+  const { settings, layouts } = useSettings();
+  const panes = { models: usePanelRef(), activity: usePanelRef() };
+  const search = useRef<HTMLInputElement>(null);
+  // A pane opened or closed from the top bar, which the next layout change saves like a drag.
+  const toggled = useRef(false);
 
   useEffect(
-    () => onDisplayMode((mode) => setFullscreen(mode === "fullscreen")),
+    () =>
+      onDisplay(({ mode, available }) =>
+        setDisplay({
+          fullscreen: mode === "fullscreen",
+          expandable: mode !== "fullscreen" && available.includes("fullscreen"),
+        }),
+      ),
     [],
   );
 
@@ -23,40 +57,189 @@ function App() {
     setCreating(false);
     void pick(name);
   };
-  const picker = {
+  const startNew = (from?: string) => {
+    setRequest((before) => ({ id: before.id + 1, model: from }));
+    setCreating(true);
+  };
+  const picker: Picker = {
     listing,
-    selected: creating ? null : (model?.name ?? null),
+    selected: model?.name ?? null,
     onSelect: select,
-    onNew: () => setCreating(true),
-    creating,
+    onNew: () => startNew(),
   };
   const models = listing?.models ?? [];
+  const layoutKey = breakpoint === "wide" ? "wide" : "medium";
+  const layout = settings[layoutKey];
+
+  const saveLayout = (
+    widths: Record<"models" | "activity", number>,
+    user: boolean,
+  ) => {
+    if (!user && !toggled.current) {
+      return;
+    }
+    toggled.current = false;
+    updateSettings((current) => ({
+      ...current,
+      [layoutKey]: {
+        models:
+          breakpoint === "wide"
+            ? paneLayout(widths.models, current[layoutKey].models)
+            : current[layoutKey].models,
+        activity: paneLayout(widths.activity, current[layoutKey].activity),
+      },
+    }));
+  };
+
+  const togglePane = (pane: Pane) => {
+    const panel = panes[pane].current;
+    if (!panel) {
+      return;
+    }
+    toggled.current = true;
+    if (panel.isCollapsed()) {
+      panel.expand();
+    } else {
+      panel.collapse();
+    }
+  };
+
+  const toggleTool = (tool: "grid" | "wireframe" | "dimensions") =>
+    updateSettings((current) => ({ ...current, [tool]: !current[tool] }));
+
+  useShortcuts({
+    f: () => setFits((count) => count + 1),
+    g: () => toggleTool("grid"),
+    w: () => toggleTool("wireframe"),
+    d: () => toggleTool("dimensions"),
+    "1": () => setViewMode("3d"),
+    "2": () => setViewMode("renders"),
+    "[": () => breakpoint === "wide" && togglePane("models"),
+    "]": () => breakpoint !== "narrow" && togglePane("activity"),
+    n: () => startNew(),
+    "/": () => {
+      if (breakpoint !== "wide") {
+        return;
+      }
+      if (!layout.models.open) {
+        togglePane("models");
+      }
+      requestAnimationFrame(() => search.current?.focus());
+    },
+    "?": () => setShortcuts(true),
+  });
+
+  const viewport = (
+    <Viewport
+      listing={listing}
+      model={model}
+      mode={viewMode}
+      onMode={setViewMode}
+      compact={breakpoint !== "wide"}
+      fit={fits}
+      onFit={() => setFits((count) => count + 1)}
+      onStats={setStats}
+      onNew={() => startNew()}
+    />
+  );
+  const side = <ActivityPanel model={model} models={models} />;
 
   return (
     <div
+      ref={root}
       className={cn(
-        "flex flex-col gap-3 bg-background p-3 font-sans text-foreground",
-        fullscreen ? "h-dvh" : "h-[560px]",
+        "flex flex-col overflow-hidden bg-canvas text-ink",
+        display.fullscreen ? "h-dvh" : "h-[560px]",
       )}
     >
-      <header className="flex items-center gap-2">
-        <Box className="size-5 text-primary" />
-        <h1 className="font-heading text-base font-semibold">Modeling 3D</h1>
-        <ModelMenu {...picker} className="ml-auto lg:hidden" />
-      </header>
-      <main className="grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-3 md:grid-cols-[minmax(0,1fr)_20rem] md:grid-rows-1 lg:grid-cols-[16rem_minmax(0,1fr)_20rem]">
-        <ModelList {...picker} error={error} className="hidden lg:flex" />
-        <Viewport listing={listing} model={model} />
-        {creating ? (
-          <NewModel
-            models={models}
-            onCreated={select}
-            onCancel={() => setCreating(false)}
-          />
-        ) : (
-          <ActivityPanel model={model} models={models} />
-        )}
+      <TopBar
+        breakpoint={breakpoint}
+        picker={picker}
+        model={model}
+        panes={{ models: layout.models.open, activity: layout.activity.open }}
+        onTogglePane={togglePane}
+        narrowPane={narrowPane}
+        onNarrowPane={setNarrowPane}
+        onExpand={
+          display.expandable
+            ? () => void requestDisplayMode("fullscreen")
+            : undefined
+        }
+        onShortcuts={() => setShortcuts(true)}
+        center={
+          model?.built && (
+            <Segmented
+              label="Show"
+              value={viewMode}
+              onChange={setViewMode}
+              options={[
+                { value: "3d", label: "3D", icon: "model" },
+                { value: "renders", label: "Renders", icon: "image" },
+              ]}
+            />
+          )
+        }
+      />
+      <main className="flex min-h-0 flex-1">
+        <ErrorBoundary what="The workspace" className="m-4 flex-1">
+          {breakpoint === "narrow" ? (
+            <div className="flex min-w-0 flex-1 flex-col">
+              {narrowPane === "model" ? (
+                <>
+                  <div className="flex min-h-0 flex-1">{viewport}</div>
+                  <ActivityPanel model={model} models={models} liveOnly />
+                </>
+              ) : (
+                side
+              )}
+            </div>
+          ) : (
+            <Workspace
+              key={`${layoutKey}-${layouts}`}
+              wide={breakpoint === "wide"}
+              layout={layout}
+              width={width}
+              panes={panes}
+              models={
+                <ModelList
+                  {...picker}
+                  error={error}
+                  search={search}
+                  onWorkFrom={startNew}
+                />
+              }
+              viewport={viewport}
+              activity={side}
+              onChanged={saveLayout}
+            />
+          )}
+        </ErrorBoundary>
       </main>
+      {breakpoint === "wide" && display.fullscreen && (
+        <StatusBar
+          listing={listing}
+          model={model}
+          stats={
+            stats && (
+              <>
+                <span>{counted(stats.triangles, "tri", "tris")}</span>
+                <span>{counted(stats.meshes, "mesh", "meshes")}</span>
+                <span>{counted(stats.materials, "material", "materials")}</span>
+                <span>{dimensions(stats.size)}</span>
+              </>
+            )
+          }
+        />
+      )}
+      <NewModelDialog
+        open={creating}
+        onOpenChange={setCreating}
+        request={request}
+        models={models}
+        directory={listing?.directory ?? null}
+        onCreated={select}
+      />
+      <ShortcutsDialog open={shortcuts} onOpenChange={setShortcuts} />
     </div>
   );
 }

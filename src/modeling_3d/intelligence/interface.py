@@ -1,6 +1,6 @@
 """The contract every model-backed capability runs through, so the implementation is swappable."""
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from importlib.util import find_spec
 import os
 from pathlib import Path
@@ -10,7 +10,7 @@ from typing import Protocol
 from modeling_3d.core.skill import DISTRIBUTION, repository_url
 from modeling_3d.intelligence import claude_steps
 from modeling_3d.intelligence.schemas import AgentEvent, AgentRequest, AgentResult, AgentStep, Steering
-from modeling_3d.schemas import AGENT_PROVIDERS, AgentProvider, Modeling3dError
+from modeling_3d.schemas import AGENT_PROVIDERS, AgentProvider, Modeling3dError, ToolCall
 
 # The import each agent provider's SDK answers to; its extra is named after the agent provider.
 SDK_MODULES: dict[AgentProvider, str] = {
@@ -133,6 +133,18 @@ def agent_steps(agent_provider: AgentProvider) -> Callable[[AgentEvent, Path], l
             return claude_steps.steps
         case "codex":
             return lambda event, workspace: []
+
+
+def agent_tool_call(agent_provider: AgentProvider) -> Callable[[Iterable[AgentEvent], str], ToolCall | None]:
+    """The agent provider's reader of one tool call in full from its events, as kept, given the call's id.
+
+    An agent provider without one yet finds no calls, as its activity shows none.
+    """
+    match agent_provider:
+        case "claude":
+            return claude_steps.tool_call
+        case "codex":
+            return lambda events, call_id: None
 
 
 def state_directory(agent_provider: AgentProvider) -> Path:

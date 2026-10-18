@@ -21,7 +21,7 @@ function hostOrigin(): string {
     !document.referrer ||
     new URL(document.referrer).origin !== expected
   ) {
-    const reason = `This page only runs inside the Modeling 3D app at ${expected}.`;
+    const reason = `This page only runs inside the 3D Modeling Smart Tool app at ${expected}.`;
     const notice = document.createElement("p");
     notice.textContent = reason;
     notice.style.cssText =
@@ -34,7 +34,7 @@ function hostOrigin(): string {
 
 const host = hostOrigin();
 const inner = document.createElement("iframe");
-inner.title = "Modeling 3D";
+inner.title = "3D Modeling Smart Tool";
 inner.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
 document.body.append(inner);
 
@@ -62,6 +62,9 @@ window.addEventListener("message", ({ source, origin, data }) => {
     window.parent.postMessage(data, host);
   }
 });
+
+// Focus given to this page belongs to the view inside it.
+window.addEventListener("focus", () => inner.focus());
 
 window.parent.postMessage(
   { jsonrpc: "2.0", method: PROXY_READY, params: {} },

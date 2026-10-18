@@ -1,5 +1,6 @@
 """Lists and views models whose model.json is written directly, so no agent is needed."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import os
 from pathlib import Path
@@ -158,6 +159,17 @@ def test_viewing_a_model_makes_it_the_one_viewed_last() -> None:
     assert summary == after_bear.models[1]
     assert after_bear.last_viewed == "bear"
     assert lib.list_3d_models().last_viewed == "fox"
+
+
+def test_viewing_models_at_once_never_fails() -> None:
+    make_model("bear")
+    make_model("fox", minutes=30)
+
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda index: lib.view_3d_model(("bear", "fox")[index % 2]), range(200)))
+
+    assert lib.list_3d_models().last_viewed in ("bear", "fox")
+    assert [path.name for path in Path(".modeling-3d").iterdir() if path.suffix == ".tmp"] == []
 
 
 def test_viewing_records_the_model_in_the_directory_it_names(working_directory: Path) -> None:

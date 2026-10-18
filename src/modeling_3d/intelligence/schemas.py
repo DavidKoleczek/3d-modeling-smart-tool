@@ -53,7 +53,10 @@ class AgentEvent(BaseModel):
     """One message from the agent provider, as it gave it; `terminal`, carrying the result, comes last, once."""
 
     time: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    type: str = Field(description="The agent provider's own name for the message, or `terminal`")
+    type: str = Field(
+        description="The agent provider's own name for the message; `composing`, how far a tool call the agent is "
+        "still writing has got; or `terminal`"
+    )
     data: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -69,8 +72,8 @@ class AgentResult(BaseModel):
 
 
 class AgentStep(BaseModel):
-    """What one agent event amounts to in a model's activity: words for the person, a tool call, or its result."""
+    """What one agent event amounts to in a model's activity: words for the person, reasoning, a tool call, or its result."""
 
-    kind: Literal["said", "tool", "tool-result"]
+    kind: Literal["said", "reasoning", "thought", "composing", "tool", "tool-result", "usage"]
     text: str = ""
     data: dict[str, Any] = Field(default_factory=dict)

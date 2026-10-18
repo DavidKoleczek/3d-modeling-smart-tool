@@ -11,9 +11,9 @@ from modeling_3d.capabilities.create_3d_model.record import (
     model_names,
     read_events,
 )
-from modeling_3d.intelligence.interface import agent_steps
+from modeling_3d.intelligence.interface import agent_steps, agent_tool_call
 from modeling_3d.intelligence.schemas import AgentEvent
-from modeling_3d.schemas import ActivityEntry, ModelActivity, ModelEvent, Modeling3dError, ModelRunRecord
+from modeling_3d.schemas import ActivityEntry, ModelActivity, ModelEvent, Modeling3dError, ModelRunRecord, ToolCall
 
 
 def read_3d_model_activity(name: str, directory: Path | None = None, after: str | None = None) -> ModelActivity:
@@ -43,6 +43,29 @@ def read_3d_model_activity(name: str, directory: Path | None = None, after: str 
         # Byte offsets, so a read takes only what was written since the last one.
         cursor = f"{run.id}:{end}"
     return ModelActivity(model=model_summary(target, record), entries=entries, cursor=cursor)
+
+
+def read_3d_model_tool_call(name: str, run_id: str, call_id: str, directory: Path | None = None) -> ToolCall:
+    """One tool call of the model's agent in full, by the `run_id` and `id` of its entry in the model's activity."""
+    root = (directory or DEFAULT_DIRECTORY).resolve()
+    if name not in model_names(root):
+        raise missing_model(root, name)
+    target = root / name
+    run = next((run for run in load_record(target).runs if run.id == run_id), None)
+    if run is not None:
+        events, _ = read_events(target / "runs" / run.id / EVENTS)
+        agent_events = (
+            AgentEvent(time=event.time, type=event.text, data=event.data) for event in events if event.kind == "agent"
+        )
+        call = agent_tool_call(run.agent_provider)(agent_events, call_id)
+        if call is not None:
+            return call
+    raise Modeling3dError(
+        f"Model {name} has no tool call {call_id!r} in a run {run_id!r}. Pass the `run_id` and the `id` in the `data` "
+        f"of a `tool` entry from `read-3d-model-activity --name {name}`.",
+        "no-such-tool-call",
+        name,
+    )
 
 
 def _position(name: str, runs: list[ModelRunRecord], after: str | None) -> tuple[int, int]:

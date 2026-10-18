@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from modeling_3d import lib
 from modeling_3d.cli import app
-from modeling_3d.schemas import ModelActivity, Modeling3dError, ModelRecord, ModelRunRecord
+from modeling_3d.schemas import ModelActivity, Modeling3dError, ModelRecord, ModelRunRecord, ToolCall
 
 START = datetime(2026, 10, 17, 10, tzinfo=UTC)
 # What Claude Code sends back for a render the agent reads: the image, as base64.
@@ -229,3 +229,122 @@ def test_the_cli_prints_the_activity_as_json_and_reads_on_from_a_cursor(bear: Pa
     assert printed.exit_code == since.exit_code == 0, printed.output + since.output
     assert activity == lib.read_3d_model_activity("bear")
     assert ModelActivity.model_validate_json(since.stdout).entries == []
+
+
+def test_a_tool_call_reads_in_full_with_its_output_as_text_and_none_while_it_runs(bear: Path) -> None:
+    events = bear / "runs" / "new" / "events.jsonl"
+    edit = {"file_path": str(bear / "model.py"), "old_string": "# the bear", "new_string": "# the polar bear"}
+    with events.open("a", encoding="utf-8") as appending:
+        for event in (
+            assistant({"id": "toolu_edit", "name": "Edit", "input": edit}),
+            user([{"tool_use_id": "toolu_edit", "content": [{"type": "text", "text": "Edited."}], "is_error": False}]),
+            assistant({"id": "toolu_glob", "name": "Glob", "input": {"pattern": "renders/*.png"}}),
+        ):
+            appending.write(json.dumps({"time": START.isoformat(), "run_id": "new", **event}) + "\n")
+
+    calls = {call_id: lib.read_3d_model_tool_call("bear", "new", call_id) for call_id in ("toolu_read", "toolu_bash")}
+    edited = lib.read_3d_model_tool_call("bear", "new", "toolu_edit")
+    running = lib.read_3d_model_tool_call("bear", "new", "toolu_glob")
+
+    assert calls["toolu_read"] == ToolCall(
+        name="Read", input={"file_path": str(bear / "model.py")}, output="", failed=False
+    )
+    assert calls["toolu_bash"].input["command"].endswith("uv run --script model.py\necho built")
+    assert (calls["toolu_bash"].output, calls["toolu_bash"].failed) == ("Exit code 1\nTraceback", True)
+    assert (edited.input, edited.output, edited.failed) == (edit, "Edited.", False)
+    assert (running.name, running.output) == ("Glob", None)
+
+
+@pytest.mark.parametrize(("run_id", "call_id"), [("new", "toolu_none"), ("gone", "toolu_read"), ("old", "toolu_read")])
+def test_a_tool_call_the_model_s_runs_do_not_have_names_the_fix(bear: Path, run_id: str, call_id: str) -> None:
+    with pytest.raises(Modeling3dError) as failure:
+        lib.read_3d_model_tool_call("bear", run_id, call_id)
+
+    assert f"Model bear has no tool call {call_id!r} in a run {run_id!r}" in str(failure.value)
+    assert failure.value.reason == "no-such-tool-call"
+    assert "read-3d-model-activity --name bear" in str(failure.value)
+
+
+def test_the_cli_prints_a_tool_call_as_json(bear: Path) -> None:
+    printed = runner.invoke(app, ["read-3d-model-tool-call", "--name", "bear", "--run", "new", "--id", "toolu_bash"])
+
+    assert printed.exit_code == 0, printed.output
+    assert ToolCall.model_validate_json(printed.stdout) == lib.read_3d_model_tool_call("bear", "new", "toolu_bash")
+
+
+def test_reasoning_shows_from_its_first_count_and_its_summary_once_done_with_left_out_reasoning_showing_nothing(
+    bear: Path,
+) -> None:
+    def counted(total: int, delta: int) -> dict[str, Any]:
+        count = {
+            "type": "system",
+            "subtype": "thinking_tokens",
+            "estimated_tokens": total,
+            "estimated_tokens_delta": delta,
+        }
+        return agent("SystemMessage", {"subtype": "thinking_tokens", "data": count})
+
+    write_run(
+        bear,
+        run_record("next", "Rounder ears."),
+        [
+            old_run()[0],
+            counted(50, 50),
+            counted(209, 159),
+            assistant({"thinking": "**Shaping the ears**\n\nI'll widen them.\n", "signature": "CAQS"}),
+            assistant({"thinking": "", "signature": "CAQS"}),
+            counted(40, 40),
+            assistant({"text": "Rounder now."}),
+        ],
+    )
+
+    entries = lib.read_3d_model_activity("bear").entries
+
+    assert [(entry.kind, entry.text) for entry in entries if entry.run_id == "next"] == [
+        ("request", "Rounder ears."),
+        ("reasoning", ""),
+        ("thought", "**Shaping the ears**\n\nI'll widen them."),
+        ("reasoning", ""),
+        ("said", "Rounder now."),
+    ]
+
+
+def test_a_tool_call_being_written_shows_what_it_works_on_once_that_much_is_written_and_how_far_it_has_got(
+    bear: Path,
+) -> None:
+    whole = json.dumps({"file_path": str(bear / "model.py"), "content": "import bpy"})
+    write_run(
+        bear,
+        run_record("next", "Rounder ears."),
+        [
+            old_run()[0],
+            agent("composing", {"id": "toolu_w", "name": "Write", "head": whole[:20], "characters": 20}),
+            agent("composing", {"id": "toolu_w", "name": "Write", "head": whole[:-3], "characters": 9000}),
+        ],
+    )
+
+    composing = [entry for entry in lib.read_3d_model_activity("bear").entries if entry.kind == "composing"]
+
+    assert [(entry.text, entry.data) for entry in composing] == [
+        ("", {"id": "toolu_w", "name": "Write", "target": "", "characters": 20}),
+        ("model.py", {"id": "toolu_w", "name": "Write", "target": "model.py", "characters": 9000}),
+    ]
+
+
+def test_each_turn_s_result_shows_what_its_session_has_cost_in_all(bear: Path) -> None:
+    def result(cost: float, session: str) -> dict[str, Any]:
+        return agent("ResultMessage", {"subtype": "success", "total_cost_usd": cost, "session_id": session})
+
+    write_run(bear, run_record("next", "Rounder ears."), [old_run()[0], result(0.25, "s1"), result(0.5, "s1")])
+    write_run(bear, run_record("last", "Again.", resumed=True), [old_run()[0], result(0.75, "s1"), result(0.1, "s2")])
+
+    usage = [
+        (entry.run_id, entry.data) for entry in lib.read_3d_model_activity("bear").entries if entry.kind == "usage"
+    ]
+
+    assert usage == [
+        ("next", {"cost_usd": 0.25, "session_id": "s1"}),
+        ("next", {"cost_usd": 0.5, "session_id": "s1"}),
+        ("last", {"cost_usd": 0.75, "session_id": "s1"}),
+        ("last", {"cost_usd": 0.1, "session_id": "s2"}),
+    ]

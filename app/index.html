@@ -7,15 +7,24 @@
     <meta name="color-scheme" content="light dark" />
     <!-- The app server fills this in when it serves the page. -->
     <meta name="modeling-3d-sandbox-port" content="{{sandbox_port}}" />
-    <title>Modeling 3D</title>
+    <title>3D Modeling Smart Tool</title>
     <style>
       html,
       body {
         margin: 0;
         height: 100%;
       }
+      /* The view's canvas color, so nothing flashes white before it paints. */
       body {
+        background-color: #e7ecf1;
+        color: #12161c;
         font-family: system-ui, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        body {
+          background-color: #0c0f13;
+          color: #eef2f6;
+        }
       }
       iframe {
         display: block;

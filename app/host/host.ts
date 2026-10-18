@@ -32,7 +32,7 @@ function sandboxUrl(): URL {
     ?.content.trim();
   if (!port || !/^\d+$/.test(port)) {
     throw new Error(
-      "This page was not served by the Modeling 3D app, so it has no sandbox to load the view in.",
+      "This page was not served by `modeling-3d app`, so it has no sandbox to load the view in.",
     );
   }
   // Same hostname as this page, other port: a different origin, as the MCP Apps spec requires of a web host.
@@ -63,7 +63,7 @@ function loadSandbox(
   permissions?: McpUiResourcePermissions,
 ): Promise<HTMLIFrameElement> {
   const iframe = document.createElement("iframe");
-  iframe.title = "Modeling 3D";
+  iframe.title = "3D Modeling Smart Tool";
   iframe.setAttribute("sandbox", SANDBOX_ATTRIBUTE);
   const allow = buildAllowAttribute(permissions);
   if (allow) {
@@ -142,6 +142,8 @@ async function main(): Promise<void> {
   );
   await bridge.sendSandboxResourceReady(view);
   await initialized;
+  // The app fills the page, so its keyboard shortcuts work without a click into it first.
+  iframe.focus();
 }
 
 main().catch((cause: unknown) => {

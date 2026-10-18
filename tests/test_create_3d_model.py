@@ -195,6 +195,29 @@ async def test_references_are_copied_shown_with_the_prompt_and_never_overwrite_a
     ]
 
 
+async def test_a_folder_is_copied_whole_but_for_hidden_folders_and_caches_and_never_overwrites_another(
+    working_directory: Path,
+) -> None:
+    kit = working_directory / "kit"
+    for path in ("parts/wheel.png", ".git/HEAD", "node_modules/a.js", "__pycache__/a.pyc", ".notes.txt"):
+        (kit / path).parent.mkdir(parents=True, exist_ok=True)
+        (kit / path).write_bytes(b"bytes")
+
+    _, run, intelligence, _ = await run_to_end(name="bear", references=[kit])
+    await run_to_end(name="bear", references=[kit])
+
+    copied = run.directory / "references" / "kit"
+    assert sorted(path.relative_to(copied).as_posix() for path in copied.rglob("*")) == [
+        ".notes.txt",
+        "parts",
+        "parts/wheel.png",
+    ]
+    assert (run.directory / "references" / "kit-2" / "parts" / "wheel.png").is_file()
+    assert "references/kit/ (a folder)" in intelligence.runs[0].request.prompt
+    assert intelligence.runs[0].request.images == []
+    assert [entry.references for entry in record_of(run.directory).runs] == [["references/kit/"], ["references/kit-2/"]]
+
+
 async def test_another_model_s_files_are_references_like_any_other() -> None:
     _, bear, _, _ = await run_to_end(name="bear")
     files = [bear.directory / "model.py", bear.directory / "model.glb", bear.directory / "renders" / "front.png"]

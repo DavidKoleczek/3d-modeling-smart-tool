@@ -21,15 +21,26 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
   `_meta.ui.resourceUri` names the view, so a host that renders MCP Apps shows it inline. A
   client that takes URL elicitation, such as Claude Code, is asked to open the URL in the
   browser. Calling it again returns the same URL. `directory` switches which models it shows.
-- `list_3d_models`, `view_3d_model`, and `read_3d_model_activity`: the library's, on the app's
-  directory, which the view polls and calls when the person picks a model.
+- `list_3d_models`, `view_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`: the
+  library's, on the app's directory, which the view polls and calls when the person picks a model
+  or opens a step.
 - `create_3d_model`, `steer_3d_model`, and `cancel_3d_model`: the library's, on the app's
   directory with origin `app`, which the view calls for the person. `create_3d_model` always
-  detaches, so its runs outlive the server, and takes the files to work from as `{name, data}`
-  with `data` in base64, and the agent provider, model, and reasoning effort the person picked.
+  detaches, so its runs outlive the server, and takes the agent provider, model, and reasoning
+  effort the person picked, the models in the directory to work from, and the uploads to work from.
+- `upload_reference`: a piece of a file or folder the person added, in base64 at an offset in a
+  path under an upload id of the view's, so a reference of any size arrives in requests the
+  transport takes. Uploads no request took are cleared when the server closes, or a day on by the
+  next server to start.
 - `list_intelligence_models` and `choose_intelligence_model`: what the view's picker offers, from
   the library's `list_intelligence_models`, and the person's last pick, which the app keeps in
   `.app.json` in its directory.
+- `read_app_settings` and `save_app_settings`: how the person set the app up, its theme, pane
+  sizes, viewport tools, and the groups of steps they opened or closed in each model's activity,
+  kept for them in every directory in `app-settings.json` in their config directory. A setting
+  that is not valid fails with reason `bad-settings`.
+- `read_app_folders` and `open_app_folder`: where the app keeps the person's settings and the
+  models it shows, and opening the folder of either, or of one model, in the person's file manager.
 
 All but `open_app` are listed only to hosts that render MCP Apps, with `visibility: ["app"]`, so
 no model sees them.

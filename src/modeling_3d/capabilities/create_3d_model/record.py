@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import sys
+import tempfile
 import time
 
 from pydantic import ValidationError
@@ -50,17 +51,24 @@ def read_atomically(path: Path) -> str:
 
 
 def write_atomically(path: Path, text: str) -> None:
-    # Written aside and renamed, because other processes read it while this one writes it.
-    partial = path.with_name(f"{path.name}.tmp")
-    partial.write_text(text, encoding="utf-8")
-    for attempt in range(REPLACE_ATTEMPTS):
-        try:
-            partial.replace(path)
-            return
-        except PermissionError:
-            if attempt == REPLACE_ATTEMPTS - 1:
-                raise
-            time.sleep(REPLACE_WAIT_SECONDS)
+    # Written aside and renamed, because other processes read it while this one writes it. Each write has a file of its
+    # own to rename, so two at once never take each other's.
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+    ) as file:
+        partial = Path(file.name)
+        file.write(text)
+    try:
+        for attempt in range(REPLACE_ATTEMPTS):
+            try:
+                partial.replace(path)
+                return
+            except PermissionError:
+                if attempt == REPLACE_ATTEMPTS - 1:
+                    raise
+                time.sleep(REPLACE_WAIT_SECONDS)
+    finally:
+        partial.unlink(missing_ok=True)
 
 
 def read_events(path: Path, offset: int = 0) -> tuple[list[ModelEvent], int]:

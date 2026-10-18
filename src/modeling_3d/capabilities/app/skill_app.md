@@ -1,20 +1,32 @@
-`app` serves the Modeling 3D app in a browser page on this machine, prints its URL, and keeps
-serving until interrupted. Only this machine can reach it.
+`app` serves the app, named 3D Modeling Smart Tool, in a browser page on this machine, prints its URL, and keeps serving until interrupted. Only this machine can reach it.
 
 The app shows the models in one directory: each with its first render, its state, and when it was
-last updated. It opens on the model viewed last and renders it in 3D, and reloads it each time a
-run rebuilds its GLB. `view-3d-model` from another shell brings a model up in it. Beside the model
-is its activity: each request and steering message with who sent it, what the agent said and did,
-and how each run ended.
+last updated. It opens on the model viewed last and renders it in 3D, with a grid, mesh edges, and
+dimension lines in meters to switch on, or shows the renders the agent made of it, in a strip with
+the one picked large below. It reloads the model each time a run rebuilds its GLB. `view-3d-model`
+from another shell brings a model up in it. Beside the model is its activity: each request and
+steering message with who sent it, what the agent said and did, and how each run ended. Each
+step opens to the call in full, as `read-3d-model-tool-call` gives it. The agent's reasoning and
+the calls it is still writing out, such as a long file, show as they happen, and reasoning opens
+to its summary once done. Reference images and the images the agent looked at open large. Under
+the composer is the model's folder, which opens in the person's file manager, and what its agents
+have cost in all, as of the end of each turn.
 
-The person works there without an agent session. New model starts one from a prompt, files, and
-models in the directory. With a model in view, what they write asks for a change, continuing the
-model's session unless they switch that off, or steers the run working on it, which Stop ends.
+The person works there without an agent session. New model starts one from a prompt and
+references: files, folders, and models in the directory. With a model in view, what they write
+asks for a change, continuing the model's session unless they switch that off, or steers the run
+working on it, which Stop ends.
 Both pick the AI model and reasoning effort the next run uses, from those
 `list-intelligence-models` offers. The app remembers the pick for the directory in `.app.json`
 beside the models; a pick made while a run works applies to the next one.
 Runs started there go on after the app stops. Nothing done in the app is sent to an agent
 session; a session sees it with `read-3d-model-activity`.
+
+How the person set the app up, its theme, pane sizes, viewport tools, and the steps they opened in
+each model's activity, is theirs in every directory, kept in `app-settings.json` in their config
+directory: `%APPDATA%\modeling-3d` on Windows, `~/Library/Application Support/modeling-3d` on
+macOS, and `$XDG_CONFIG_HOME/modeling-3d` or `~/.config/modeling-3d` on Linux. The app's
+Settings shows that folder and the models directory, and opens either in the file manager.
 
 The app's view is an MCP App. The page hosts it the way Claude or VS Code would inline, for
 agents that cannot. `mcp`'s `open_app` tool serves the same app from inside a session.

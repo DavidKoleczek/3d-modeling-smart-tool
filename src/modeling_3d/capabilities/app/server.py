@@ -1,5 +1,6 @@
 """App: a browser page that hosts the MCP App view, its sandbox proxy, and the MCP server it renders the view from."""
 
+from html import escape
 from pathlib import Path
 import socket
 import threading
@@ -9,6 +10,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from mcp.server import Server
 import uvicorn
 
+from modeling_3d.core.skill import repository_url, version
 from modeling_3d.schemas import Modeling3dError
 
 STATIC = Path(__file__).parent / "static"
@@ -17,9 +19,6 @@ HOST_STATIC = STATIC / "host"
 BUILD_COMMAND = "uv run build-app.py"
 HOST = "127.0.0.1"
 STOP_TIMEOUT_SECONDS = 5
-# The view sends the files a request works from inside the tool call, as base64: up to 20 MB of them, a third more
-# encoded. The SDK's own limit is 4 MB.
-MAX_REQUEST_BYTES = 32 * 1024 * 1024
 # The spec's restrictive default for a view that declares no `ui.csp`, plus `data:` fonts so the view's inlined font
 # renders. The view is written into a frame of the sandbox page, so it inherits this policy.
 VIEW_CSP = (
@@ -46,12 +45,13 @@ class App:
 
 
 def view() -> str:
-    """The view's HTML: the MCP App resource every host renders."""
+    """The view's HTML: the MCP App resource every host renders, with the tool's version and where its docs are."""
     if not VIEW.is_file():
         raise Modeling3dError(
             f"The app's view is not compiled: {VIEW} does not exist. Run `{BUILD_COMMAND}` from the repository root."
         )
-    return VIEW.read_text(encoding="utf-8")
+    html = VIEW.read_text(encoding="utf-8")
+    return html.replace("{{version}}", escape(version())).replace("{{repository}}", escape(repository_url() or ""))
 
 
 def serve_app(server: Server, port: int | None = None) -> App:
@@ -81,7 +81,7 @@ def serve_app(server: Server, port: int | None = None) -> App:
 
 def _create_host_api(server: Server, sandbox_port: int) -> FastAPI:
     # The SDK guards `/mcp` against DNS rebinding for a loopback host by default, so only this machine's pages reach it.
-    mcp_api = server.streamable_http_app(host=HOST, max_request_body_size=MAX_REQUEST_BYTES)
+    mcp_api = server.streamable_http_app(host=HOST)
     # FastAPI runs only its own lifespan, never a mounted app's, and the session manager must be running to serve.
     api = FastAPI(lifespan=lambda _: server.session_manager.run(), docs_url=None, redoc_url=None, openapi_url=None)
     api.router.routes.extend(mcp_api.routes)

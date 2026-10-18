@@ -39,6 +39,7 @@ wrapper over it, so anything you can do from the shell you can also do from Pyth
   - Use `list-3d-models` to find the models already made in a directory, and how their runs went.
   - Use `read-3d-model-activity` before acting on a model: it shows what was asked of it and by whom, what its
     agent did, and how its runs ended, including what the person did in the app.
+  - Use `read-3d-model-tool-call` for one of its agent's tool calls in full, such as why a command failed.
 
 ## Before writing code
 

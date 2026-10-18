@@ -52,6 +52,8 @@ HERE = Path(__file__).parent
 # Blender as a Python module from PyPI, so building a model needs only uv.
 BPY_REQUIREMENT = "bpy==5.2.*"
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+# Folders a folder reference leaves out, beside hidden ones.
+SKIPPED_FOLDERS = ("node_modules", "__pycache__")
 # How often the process running a model looks for steering messages and a cancel from other processes.
 POLL_SECONDS = 1.0
 # The agent's own timeout outlasts the run's, so the run is what stops it and can say it timed out.
@@ -472,7 +474,7 @@ async def create_3d_model(
     request = AgentRequest(
         prompt=_prompt(prompt, target, copied, resumed=resumed is not None, created=created),
         model=model,
-        images=[target / path for path in copied if Path(path).suffix.lower() in IMAGE_MEDIA_TYPES],
+        images=[target / path for path in copied if _attached(path)],
         workspace=HostWorkspace(path=target),
         writable=True,
         reasoning_effort=reasoning_effort,
@@ -639,17 +641,26 @@ def _resumed(name: str, existing: ModelRecord | None, resume_session: bool | str
 def _references(paths: list[Path]) -> list[Path]:
     resolved = [path.resolve() for path in paths]
     for path in resolved:
-        if not path.is_file():
+        if not path.is_file() and not path.is_dir():
             raise Modeling3dError(
-                f"The reference {path} is not a file. Name each reference image or model by its path, relative to "
-                "the working directory or absolute.",
+                f"The reference {path} is not a file or a folder. Name each reference image, model, or folder by its "
+                "path, relative to the working directory or absolute.",
                 "missing-reference",
             )
     return resolved
 
 
+def _skipped(folder: str, names: list[str]) -> list[str]:
+    """What a folder reference leaves out: hidden folders and tool caches, which are rarely what was meant."""
+    return [name for name in names if (name.startswith(".") or name in SKIPPED_FOLDERS) and Path(folder, name).is_dir()]
+
+
 def _copy_references(target: Path, sources: list[Path]) -> list[str]:
-    """Copy each reference into the model's references/, keeping its name unless another file holds it already."""
+    """Copy each reference into the model's references/, keeping its name unless another holds it already.
+
+    A file the same as the one there already is not copied again. A folder is copied whole, and recorded with a
+    trailing slash.
+    """
     if not sources:
         return []
     folder = target / "references"
@@ -658,9 +669,15 @@ def _copy_references(target: Path, sources: list[Path]) -> list[str]:
     for source in sources:
         destination = folder / source.name
         suffix = 2
-        while destination.exists() and (destination.is_dir() or destination.read_bytes() != source.read_bytes()):
+        while destination.exists() and (
+            source.is_dir() or destination.is_dir() or destination.read_bytes() != source.read_bytes()
+        ):
             destination = folder / f"{source.stem}-{suffix}{source.suffix}"
             suffix += 1
+        if source.is_dir():
+            shutil.copytree(source, destination, ignore=_skipped)
+            copied.append(f"{destination.relative_to(target).as_posix()}/")
+            continue
         if not destination.exists():
             shutil.copy2(source, destination)
         copied.append(destination.relative_to(target).as_posix())
@@ -670,10 +687,7 @@ def _copy_references(target: Path, sources: list[Path]) -> list[str]:
 def _prompt(request: str, target: Path, references: list[str], resumed: bool, created: bool) -> str:
     listed = ""
     if references:
-        lines = [
-            f"- {path}{' (also attached)' if Path(path).suffix.lower() in IMAGE_MEDIA_TYPES else ''}"
-            for path in references
-        ]
+        lines = [f"- {path}{_noted(path)}" for path in references]
         listed = "\nReferences for this request, copied into the model's directory:\n" + "\n".join(lines) + "\n"
     if resumed:
         return (HERE / "resume_prompt.md").read_text(encoding="utf-8").format(request=request, references=listed)
@@ -688,6 +702,17 @@ def _prompt(request: str, target: Path, references: list[str], resumed: bool, cr
         .read_text(encoding="utf-8")
         .format(request=request, directory=target, bpy=BPY_REQUIREMENT, references=listed, existing=existing)
     )
+
+
+def _attached(reference: str) -> bool:
+    """Whether a reference is an image shown to the agent with the prompt; a folder's images are left for it to open."""
+    return not reference.endswith("/") and Path(reference).suffix.lower() in IMAGE_MEDIA_TYPES
+
+
+def _noted(reference: str) -> str:
+    if reference.endswith("/"):
+        return " (a folder)"
+    return " (also attached)" if _attached(reference) else ""
 
 
 def _next_command(name: str, directory: Path | None) -> str:
