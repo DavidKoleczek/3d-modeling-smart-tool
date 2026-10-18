@@ -2,6 +2,8 @@
 name: dependency-update
 description: Run this to update the Python and app dependencies to the newest versions the cooldown allows.
 disable-model-invocation: true
+metadata:
+  internal: true
 ---
 
 # Dependency update
