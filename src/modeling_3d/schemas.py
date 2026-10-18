@@ -4,7 +4,7 @@ from typing import Any, Literal, NamedTuple, get_args
 
 from pydantic import BaseModel, Field
 
-ReasoningEffort = Literal["low", "medium", "high", "xhigh", "max"]
+ReasoningEffort = Literal["low", "medium", "high", "xhigh", "max", "ultra"]
 AgentProvider = Literal["claude", "codex"]
 # Also the order an agent provider is picked in when none is named.
 AGENT_PROVIDERS: tuple[AgentProvider, ...] = ("claude", "codex")
@@ -15,6 +15,11 @@ DEFAULT_INTELLIGENCE_MODELS: dict[AgentProvider, str] = {
 }
 DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium"
 REASONING_EFFORTS: tuple[ReasoningEffort, ...] = get_args(ReasoningEffort)
+# What a model the tool does not list may be asked for, by its agent provider.
+PROVIDER_REASONING_EFFORTS: dict[AgentProvider, tuple[ReasoningEffort, ...]] = {
+    "claude": ("low", "medium", "high", "xhigh", "max"),
+    "codex": REASONING_EFFORTS,
+}
 
 SEMVER_PATTERN = r"^\d+\.\d+\.\d+$"
 SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
@@ -101,17 +106,40 @@ class Capability(NamedTuple):
 
 
 class IntelligenceModel(BaseModel):
-    """One AI model a person can pick to run a model's agent."""
+    """One AI model a person can pick to run a model's agent, and the reasoning efforts it takes."""
 
     agent_provider: AgentProvider
     id: str
     label: str
+    reasoning_efforts: list[ReasoningEffort]
 
 
-# What a picker offers, in its order. Codex has none, since it cannot run agents yet.
+# What a picker offers, in its order.
 INTELLIGENCE_MODELS: tuple[IntelligenceModel, ...] = (
-    IntelligenceModel(agent_provider="claude", id="claude-sonnet-5-5", label="Sonnet 5.5"),
-    IntelligenceModel(agent_provider="claude", id="claude-opus-5-5", label="Opus 5.5"),
+    IntelligenceModel(
+        agent_provider="claude",
+        id="claude-sonnet-5-5",
+        label="Sonnet 5.5",
+        reasoning_efforts=list(PROVIDER_REASONING_EFFORTS["claude"]),
+    ),
+    IntelligenceModel(
+        agent_provider="claude",
+        id="claude-opus-5-5",
+        label="Opus 5.5",
+        reasoning_efforts=list(PROVIDER_REASONING_EFFORTS["claude"]),
+    ),
+    IntelligenceModel(
+        agent_provider="codex",
+        id="gpt-6.1-sol",
+        label="Sol 6.1",
+        reasoning_efforts=list(PROVIDER_REASONING_EFFORTS["codex"]),
+    ),
+    IntelligenceModel(
+        agent_provider="codex",
+        id="gpt-6-astra",
+        label="Astra 6",
+        reasoning_efforts=list(PROVIDER_REASONING_EFFORTS["codex"]),
+    ),
 )
 
 
@@ -124,10 +152,9 @@ class IntelligenceChoice(BaseModel):
 
 
 class IntelligenceModels(BaseModel):
-    """The AI models and reasoning efforts to pick from."""
+    """The AI models to pick from, each with its reasoning efforts."""
 
     models: list[IntelligenceModel] = Field(description="Those of the agent providers that are installed")
-    reasoning_efforts: list[ReasoningEffort]
     default: IntelligenceChoice = Field(description="What `create_3d_model` runs with when given neither")
 
 

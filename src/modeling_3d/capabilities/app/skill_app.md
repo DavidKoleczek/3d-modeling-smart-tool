@@ -10,12 +10,12 @@ step opens to the call in full, as `read-3d-model-tool-call` gives it. The agent
 the calls it is still writing out, such as a long file, show as they happen, and reasoning opens
 to its summary once done. Reference images and the images the agent looked at open large. Under
 the composer is the model's folder, which opens in the person's file manager, and what its agents
-have cost in all, as of the end of each turn.
+have cost or used in tokens in all, as of the end of each turn.
 
 The person works there without an agent session. New model starts one from a prompt and
 references: files, folders, and models in the directory. With a model in view, what they write
-asks for a change, continuing the model's session unless they switch that off, or steers the run
-working on it, which Stop ends.
+asks for a change, continuing the model's session unless they switch that off or pick a model of
+another agent provider, or steers the run working on it, which Stop ends.
 Both pick the AI model and reasoning effort the next run uses, from those
 `list-intelligence-models` offers. The app remembers the pick for the directory in `.app.json`
 beside the models; a pick made while a run works applies to the next one.

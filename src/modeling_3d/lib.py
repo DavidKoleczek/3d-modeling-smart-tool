@@ -100,7 +100,9 @@ async def create_3d_model(
     """Create a 3D model, or change it when it exists, returning its handle as soon as the agent runs. Model-backed.
 
     An agent writes the model as a Blender script, model.py, in the model's own directory, builds model.glb with it,
-    and renders and looks at the result until it matches the request.
+    and renders and looks at the result until it matches the request. Unless asked otherwise, it makes the model
+    ready to rig and animate. It runs in the working directory, usually the project the model is for, which it may
+    explore; it writes only in the model's directory.
 
     Args:
         prompt: What to build, or what to change.
@@ -117,7 +119,7 @@ async def create_3d_model(
             model.json; `read_3d_model_activity` gives each request's, and `list_3d_models` gives the last run's.
         agent_provider: The first installed when omitted; the session's own when continuing one.
         model: The agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS` when omitted.
-        reasoning_effort: How hard the model thinks.
+        reasoning_effort: How hard the model thinks; one the model takes, as `list_intelligence_models` lists.
         timeout_seconds: How long the run may take before it is stopped; its session can still be resumed.
         origin: Who is asking, shown with the request in the model's activity: `app`, `claude-code:<session id>`, or
             a name of the caller's own.
@@ -210,9 +212,11 @@ def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary:
 
 
 def list_intelligence_models() -> IntelligenceModels:
-    """The AI models and reasoning efforts to pick from for `create_3d_model`, and what it runs with given neither.
+    """The AI models to pick from for `create_3d_model`, each with its reasoning efforts, and what it runs with given
+    neither.
 
-    The models are those of the installed agent providers; `create_3d_model` also takes any other model by name.
+    The models are those of the installed agent providers; `create_3d_model` also takes any other model by name, with
+    any reasoning effort its agent provider has.
     """
     return intelligence_models.list_intelligence_models()
 

@@ -443,6 +443,7 @@ async def create_3d_model(
         agent_provider = resolve_agent_provider(agent_provider)
     provider: AgentProvider = agent_provider or AGENT_PROVIDERS[0]
     intelligence, model = select_intelligence(intelligence, provider, model, DEFAULT_INTELLIGENCE_MODELS)
+    require_reasoning_effort(reasoning_effort, provider, model)
     await asyncio.to_thread(intelligence.preflight)
 
     created = existing is None
@@ -475,7 +476,9 @@ async def create_3d_model(
         prompt=_prompt(prompt, target, copied, resumed=resumed is not None, created=created),
         model=model,
         images=[target / path for path in copied if _attached(path)],
-        workspace=HostWorkspace(path=target),
+        # Where the tool was launched, usually the project the model is for, so the agent finds its context and
+        # instructions there; the prompt keeps what it writes in the model's directory.
+        workspace=HostWorkspace(path=Path.cwd()),
         writable=True,
         reasoning_effort=reasoning_effort,
         timeout_seconds=timeout_seconds + AGENT_TIMEOUT_GRACE_SECONDS,
@@ -688,7 +691,8 @@ def _prompt(request: str, target: Path, references: list[str], resumed: bool, cr
     listed = ""
     if references:
         lines = [f"- {path}{_noted(path)}" for path in references]
-        listed = "\nReferences for this request, copied into the model's directory:\n" + "\n".join(lines) + "\n"
+        heading = "References for this request, copied into the model's directory, with paths from there:"
+        listed = f"\n{heading}\n" + "\n".join(lines) + "\n"
     if resumed:
         return (HERE / "resume_prompt.md").read_text(encoding="utf-8").format(request=request, references=listed)
     existing = (

@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from modeling_3d import lib
 from modeling_3d.cli import app
-from modeling_3d.schemas import ModelActivity, Modeling3dError, ModelRecord, ModelRunRecord, ToolCall
+from modeling_3d.schemas import AgentProvider, ModelActivity, Modeling3dError, ModelRecord, ModelRunRecord, ToolCall
 
 START = datetime(2026, 10, 17, 10, tzinfo=UTC)
 # What Claude Code sends back for a render the agent reads: the image, as base64.
@@ -42,15 +42,20 @@ def bear(working_directory: Path) -> Path:
 
 
 def run_record(
-    run_id: str, prompt: str, references: list[str] | None = None, resumed: bool = False, origin: str | None = None
+    run_id: str,
+    prompt: str,
+    references: list[str] | None = None,
+    resumed: bool = False,
+    origin: str | None = None,
+    agent_provider: AgentProvider = "claude",
 ) -> ModelRunRecord:
     return ModelRunRecord(
         id=run_id,
         prompt=prompt,
         references=references or [],
         resumed=resumed,
-        agent_provider="claude",
-        model="claude-sonnet-5-5",
+        agent_provider=agent_provider,
+        model="claude-sonnet-5-5" if agent_provider == "claude" else "gpt-6.1-sol",
         reasoning_effort="medium",
         session_id="session",
         origin=origin,
@@ -348,3 +353,89 @@ def test_each_turn_s_result_shows_what_its_session_has_cost_in_all(bear: Path) -
         ("last", {"cost_usd": 0.75, "session_id": "s1"}),
         ("last", {"cost_usd": 0.1, "session_id": "s2"}),
     ]
+
+
+def codex_item(method: str, item: dict[str, Any]) -> dict[str, Any]:
+    return agent(method, {"item": item, "threadId": "thread", "turnId": "turn"})
+
+
+def codex_command(call_id: str, command: str, target: Path, **completed: Any) -> dict[str, Any]:
+    """A command as Codex reports it on Windows: wrapped in the shell it runs in, with the agent's own command beside."""
+    wrapped = f"\"pwsh.exe\" -Command '{command}'"
+    item = {"id": call_id, "type": "commandExecution", "command": wrapped, "cwd": str(target)}
+    return {**item, "commandActions": [{"command": command, "type": "unknown"}], **completed}
+
+
+def codex_run(target: Path) -> list[dict[str, Any]]:
+    """Codex's notifications, trimmed from a real run's, as the Codex implementation keeps them."""
+    build = codex_command("exec-build", "uv run --script model.py", target)
+    patch = {
+        "id": "exec-edit",
+        "type": "fileChange",
+        "changes": [{"path": str(target / "model.py"), "kind": {"type": "update"}, "diff": "-a\n+b\n"}],
+    }
+    look = {"id": "exec-look", "type": "imageView", "path": str(target / "renders" / "front.png")}
+    tokens = {"totalTokens": 45310, "inputTokens": 45087, "outputTokens": 223}
+    return [
+        old_run()[0],
+        codex_item("item/started", {"id": "user", "type": "userMessage", "content": []}),
+        codex_item("item/started", {"id": "rs_1", "type": "reasoning", "summary": [], "content": []}),
+        codex_item("item/completed", {"id": "rs_1", "type": "reasoning", "summary": ["**Ears**", "Widen them."]}),
+        codex_item(
+            "item/completed", {"id": "msg_1", "type": "agentMessage", "text": "Building.", "phase": "commentary"}
+        ),
+        codex_item("item/started", patch),
+        codex_item("item/completed", {**patch, "status": "completed"}),
+        codex_item("item/started", build),
+        codex_item(
+            "item/completed",
+            {**build, "status": "failed", "exitCode": 1, "aggregatedOutput": "Traceback\nNameError: bpy\n"},
+        ),
+        codex_item("item/started", look),
+        codex_item("item/completed", look),
+        agent("thread/tokenUsage/updated", {"threadId": "thread", "tokenUsage": {"total": tokens, "last": tokens}}),
+        agent("turn/completed", {"threadId": "thread", "turn": {"id": "turn", "status": "completed"}}),
+    ]
+
+
+def test_a_codex_run_shows_its_reasoning_words_tool_calls_and_tokens(bear: Path) -> None:
+    write_run(bear, run_record("next", "Rounder ears.", agent_provider="codex"), codex_run(bear))
+
+    entries = [entry for entry in lib.read_3d_model_activity("bear").entries if entry.run_id == "next"]
+
+    assert [(entry.kind, entry.text, entry.data) for entry in entries[1:]] == [
+        ("reasoning", "", {}),
+        ("thought", "**Ears**\n\nWiden them.", {}),
+        ("said", "Building.", {}),
+        ("tool", "model.py", {"id": "exec-edit", "name": "fileChange", "target": "model.py"}),
+        ("tool-result", "", {"id": "exec-edit", "failed": False}),
+        (
+            "tool",
+            "uv run --script model.py",
+            {"id": "exec-build", "name": "commandExecution", "target": "uv run --script model.py"},
+        ),
+        ("tool-result", "NameError: bpy", {"id": "exec-build", "failed": True}),
+        ("tool", "renders/front.png", {"id": "exec-look", "name": "imageView", "target": "renders/front.png"}),
+        ("tool-result", "", {"id": "exec-look", "failed": False}),
+        ("usage", "", {"tokens": 45310, "session_id": "thread"}),
+    ]
+
+
+def test_a_codex_tool_call_reads_in_full_with_the_agent_s_own_command(bear: Path) -> None:
+    events = codex_run(bear)
+    events.append(codex_item("item/started", codex_command("exec-wait", "Start-Sleep 1", bear)))
+    write_run(bear, run_record("next", "Rounder ears.", agent_provider="codex"), events)
+
+    build = lib.read_3d_model_tool_call("bear", "next", "exec-build")
+    edit = lib.read_3d_model_tool_call("bear", "next", "exec-edit")
+    running = lib.read_3d_model_tool_call("bear", "next", "exec-wait")
+
+    assert build == ToolCall(
+        name="commandExecution",
+        input={"command": "uv run --script model.py", "cwd": str(bear)},
+        output="Traceback\nNameError: bpy\n",
+        failed=True,
+    )
+    assert edit.input["changes"][0]["diff"] == "-a\n+b\n"
+    assert (edit.output, edit.failed) == ("", False)
+    assert (running.name, running.output) == ("commandExecution", None)

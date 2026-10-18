@@ -13,6 +13,9 @@ const TOOLS: Record<string, { done: string; doing: string; icon: IconName }> = {
   Write: { done: "Wrote", doing: "Writing", icon: "file-edit" },
   Glob: { done: "Searched", doing: "Searching", icon: "search" },
   Grep: { done: "Searched", doing: "Searching", icon: "search" },
+  commandExecution: { done: "Ran", doing: "Running", icon: "terminal" },
+  fileChange: { done: "Edited", doing: "Editing", icon: "file-edit" },
+  webSearch: { done: "Searched", doing: "Searching", icon: "search" },
 };
 const LOOK = { done: "Looked at", doing: "Looking at", icon: "image" as const };
 
@@ -71,7 +74,7 @@ function call(step: Step, working: Set<Step>, ended: boolean): Call {
   const name = String(step.entry.data.name ?? "");
   const target = step.entry.text;
   const words =
-    name === "Read" && IMAGE.test(target)
+    (name === "Read" && IMAGE.test(target)) || name === "imageView"
       ? LOOK
       : (TOOLS[name] ?? { done: name, doing: name, icon: "terminal" });
   const failed = step.result?.data.failed === true;
@@ -363,18 +366,29 @@ export function currentCall(
 }
 
 /**
- * What every session the agents worked in has cost, in US dollars, as reported at the end of each turn; null before
- * any reported it. Each report is its session's total so far, a resumed session's earlier runs and all, so the latest
- * of each session counts.
+ * What every session the agents worked in has used of `measure`, as reported at the end of each turn; null before any
+ * reported it. Each report is its session's total so far, a resumed session's earlier runs and all, so the latest of
+ * each session counts.
  */
-export function totalCost(steps: Step[]): number | null {
+function totalUsage(steps: Step[], measure: string): number | null {
   const sessions = new Map<string, number>();
   for (const { entry } of steps) {
-    if (entry.kind === "usage" && typeof entry.data.cost_usd === "number") {
-      sessions.set(String(entry.data.session_id), entry.data.cost_usd);
+    const amount = entry.data[measure];
+    if (entry.kind === "usage" && typeof amount === "number") {
+      sessions.set(String(entry.data.session_id), amount);
     }
   }
   return sessions.size === 0
     ? null
-    : [...sessions.values()].reduce((total, cost) => total + cost, 0);
+    : [...sessions.values()].reduce((total, each) => total + each, 0);
+}
+
+/** What the sessions have cost, in US dollars, of the agent providers that report it. */
+export function totalCost(steps: Step[]): number | null {
+  return totalUsage(steps, "cost_usd");
+}
+
+/** What the sessions have used in tokens, of the agent providers that report tokens rather than cost. */
+export function totalTokens(steps: Step[]): number | null {
+  return totalUsage(steps, "tokens");
 }

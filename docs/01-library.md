@@ -30,12 +30,12 @@ class AgentRun(Protocol):
 `events` replays every event from the start, then live ones, ending with `terminal`. Each `AgentEvent` is one message from the agent provider as it gave it: its own name for the message in `type`, and its fields in `data`. No vocabulary is shared across agent providers.
 `steer` sends a message while the agent works. `steering` says how it lands: `mid-turn`, `queued` until the agent next reads input, or `restart`.
 `cancel` stops the run at once, along with every command the agent started.
-Setting `AgentRequest.resume` to an earlier `session_id` continues that session instead of starting a fresh one, so the agent keeps what it learned, even after a cancel. `AgentRequest.session_directory` also keeps a copy of the session there, and a resume can start from that copy alone.
+Setting `AgentRequest.resume` to an earlier `session_id` continues that session instead of starting a fresh one, so the agent keeps what it learned, even after a cancel. `AgentRequest.session_directory` also keeps a copy of the session there. On `claude` a resume can start from that copy alone; on `codex` the copy is for reading, and a resume needs the session where Codex keeps it.
 
 `resolve_intelligence(agent_provider)` returns a shipped implementation, one per agent provider, each installed through the extra of the same name:
 
 - `claude`: `ClaudeIntelligence`, built on the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) and run with the user's Claude Code settings and  any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart). Steering is `queued`. Sessions are kept where Claude Code keeps them; a plain completion runs in the platform's per-user state directory, in `modeling-3d/claude`.
-- `codex`: `CodexIntelligence`, built on the [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/python). It checks the user's Codex sign-in, but does not run agents yet: `start` raises `Modeling3dError` naming `claude`.
+- `codex`: `CodexIntelligence`, built on the [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/python) and run with the user's Codex sign-in and configuration. Steering is `mid-turn`. A writable workspace runs without a sandbox and without approval prompts, as the agent runs tools such as Blender that write elsewhere. Sessions are kept where Codex keeps them, and copied into `session_directory` after each turn; a plain completion runs read-only in the platform's per-user state directory, in `modeling-3d/codex`.
 
 Without an agent provider named, the first installed in that order is used; one that is not installed raises `Modeling3dError` with the command that installs it.
 `select_intelligence(intelligence, agent_provider, model, DEFAULT_INTELLIGENCE_MODELS)` is what a capability calls: an injected `intelligence` wins, and `model` falls back to the agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS`.
@@ -43,6 +43,8 @@ Without an agent provider named, the first installed in that order is used; one 
 ## Create a 3D model
 
 Model-backed. An agent creates a 3D model, or changes one, as a Blender script in the model's own directory: it writes `model.py`, builds `model.glb` with it, renders the result, looks at the renders, and fixes what does not match the request.
+Unless the request says otherwise, the model is made ready to rig and animate: a skeleton for what bends, separate parts with their origins at their pivots for what moves rigidly, and renders of it posed.
+The agent runs in the working directory the tool was started in, usually the project the model is for, so it finds the project's docs, conventions, assets, and agent instructions. It may explore there, but writes only in the model's directory and runs commands from it, unless the work needs an exception, which it reports.
 `model.py` gets Blender from PyPI as an inline dependency and runs with `uv run --script`, so no Blender install is needed. Building runs on Windows, Linux x64, and macOS on Apple silicon.
 
 ```python
@@ -76,11 +78,11 @@ async def create_3d_model(
   To find a session ID, look at the runs of the model. Each run keeps its session ID in `session_id` in `model.json`.
   `read_3d_model_activity` gives the session ID of each request, and `list_3d_models` gives the session ID of the last run.
   If the model does not have the session ID, the request stops before the agent starts.
-- `agent_provider`: The service that runs the agent: `claude` or `codex`. At this time, only `claude` can run agents.
+- `agent_provider`: The service that runs the agent: `claude` or `codex`.
   If you do not give an agent provider, the tool uses the first one that is installed.
-  When the agent continues a session, the tool uses the agent provider of that session.
+  When the agent continues a session, the tool uses the agent provider of that session, and another one raises `Modeling3dError`. Another model of the same agent provider can continue it.
 - `model`: The AI model that the agent uses. If you do not give a model, the tool uses the default for the agent provider, from `DEFAULT_INTELLIGENCE_MODELS`.
-- `reasoning_effort`: How much the AI model thinks before it acts: `low`, `medium`, `high`, `xhigh`, or `max`. The default is `medium`.
+- `reasoning_effort`: How much the AI model thinks before it acts: `low`, `medium`, `high`, `xhigh`, or `max`, and also `ultra` on `codex` models. The default is `medium`. `list_intelligence_models` gives the efforts each model takes; one the model does not take raises `Modeling3dError`.
 - `timeout_seconds`: The maximum time for the run, in seconds. After this time, the tool stops the run.
   You can continue the session of a stopped run later. The default is 3600, one hour.
 - `origin`: A label that tells who sent the request. The tool keeps the label with the run. The activity of the model shows the label with the request.
@@ -141,8 +143,8 @@ def read_3d_model_activity(name: str, directory: Path | None = None, after: str 
   A cursor that is not from this model raises `Modeling3dError`.
 
 `ModelActivity` has `model`, the model's summary as `list_3d_models` gives it, its activity across every run in `entries`, and a `cursor`. It only reads, so it is safe while runs write, and a read past a cursor takes only what was written since.
-Each `ActivityEntry` has `time`, `run_id`, `kind`, `text`, `origin`, and `data`. `kind` is `request` (a run's prompt, with `references`, `resumed`, `agent_provider`, `model`, and `session_id`), `said` (the agent's words), `reasoning` (the agent started reasoning, as soon as it did), `thought` (the summary of that reasoning, when the agent gave one), `composing` (a call the agent is still writing out, with `id`, `name`, `target` once that much is written, and `characters` so far), `tool` (a call, with `id`, `name`, and `target`, what it works on), `tool-result` (the end of the call with that `id`, and whether it `failed`), `usage` (at the end of each turn, what the session has cost in all so far, `cost_usd`, with its `session_id`; a resumed session's total includes its earlier runs), `steered`, or `ended` (`status`, `error`, and `files`). `origin` is who sent a request or steering message.
-The activity is the one view of a run that every agent provider shares. Each provider's events stay in `events.jsonl` as it gave them, and `interface.agent_steps(agent_provider)` reads them into `said`, `reasoning`, `thought`, `composing`, `tool`, `tool-result`, and `usage`; Codex has no reader yet.
+Each `ActivityEntry` has `time`, `run_id`, `kind`, `text`, `origin`, and `data`. `kind` is `request` (a run's prompt, with `references`, `resumed`, `agent_provider`, `model`, and `session_id`), `said` (the agent's words), `reasoning` (the agent started reasoning, as soon as it did), `thought` (the summary of that reasoning, when the agent gave one), `composing` (a call the agent is still writing out, with `id`, `name`, `target` once that much is written, and `characters` so far; only `claude` reports these), `tool` (a call, with `id`, `name`, and `target`, what it works on), `tool-result` (the end of the call with that `id`, and whether it `failed`), `usage` (at the end of each turn, what the session has used in all so far, with its `session_id`: `cost_usd` on `claude`, `tokens` on `codex`, which reports no cost; a resumed session's total includes its earlier runs), `steered`, or `ended` (`status`, `error`, and `files`). `origin` is who sent a request or steering message.
+The activity is the one view of a run that every agent provider shares. Each provider's events stay in `events.jsonl` as it gave them, and `interface.agent_steps(agent_provider)` reads them into `said`, `reasoning`, `thought`, `composing`, `tool`, `tool-result`, and `usage`.
 
 ```python
 def read_3d_model_tool_call(name: str, run_id: str, call_id: str, directory: Path | None = None) -> ToolCall
@@ -178,7 +180,7 @@ def app_view() -> str
 The view's HTML, compiled from `app/` and offered as the `ui://modeling-3d/app` resource in the MCP server. Raises `Modeling3dError` naming the build command when the view is not compiled.
 It shows the models in the server's directory: it polls `list_3d_models`, opens on `last_viewed`, and renders the model in view in 3D, reading its GLB again whenever `built` changes. Picking a model calls `view_3d_model`. It switches models on its own when `last_viewed` changes to one it did not pick, so `view_3d_model` from anywhere brings a model up, and when a new model appears.
 It can also show the renders the agent made, in a strip with the one picked large below, and the model's size and makeup, computed from the loaded GLB for display only.
-Beside the model it shows the model's activity, polled from `read_3d_model_activity`. The person creates a model there from a prompt, files, and models in the directory; asks for a change, continuing the model's session unless they switch that off; and steers or stops a run. Each step opens to the call in full from `read_3d_model_tool_call`, a few lines at first and all of it on request. Reference images and the images the agent looked at open large, and the model's folder opens in the person's file manager. Under the composer it totals what the agents' sessions on the model have cost, from `usage`. The view calls the capabilities for each, as from `app`, and sends nothing to any session.
+Beside the model it shows the model's activity, polled from `read_3d_model_activity`. The person creates a model there from a prompt, files, and models in the directory; asks for a change, continuing the model's session unless they switch that off or pick a model of another agent provider; and steers or stops a run. Each step opens to the call in full from `read_3d_model_tool_call`, a few lines at first and all of it on request. Reference images and the images the agent looked at open large, and the model's folder opens in the person's file manager. Under the composer it totals what the agents' sessions on the model have cost, or used in tokens, from `usage`. The view calls the capabilities for each, as from `app`, and sends nothing to any session.
 
 ```python
 def app_server(directory: Path | None = None) -> AppServer

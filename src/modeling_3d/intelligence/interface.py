@@ -8,7 +8,7 @@ import sys
 from typing import Protocol
 
 from modeling_3d.core.skill import DISTRIBUTION, repository_url
-from modeling_3d.intelligence import claude_steps
+from modeling_3d.intelligence import claude_steps, codex_steps
 from modeling_3d.intelligence.schemas import AgentEvent, AgentRequest, AgentResult, AgentStep, Steering
 from modeling_3d.schemas import AGENT_PROVIDERS, AgentProvider, Modeling3dError, ToolCall
 
@@ -124,27 +124,21 @@ def select_intelligence(
 
 
 def agent_steps(agent_provider: AgentProvider) -> Callable[[AgentEvent, Path], list[AgentStep]]:
-    """The agent provider's reader of its events, as kept, into what they show of a run; given the run's workspace.
-
-    An agent provider without one yet shows nothing of what its agent did.
-    """
+    """The agent provider's reader of its events, as kept, into what they show of a run; given the run's workspace."""
     match agent_provider:
         case "claude":
             return claude_steps.steps
         case "codex":
-            return lambda event, workspace: []
+            return codex_steps.steps
 
 
 def agent_tool_call(agent_provider: AgentProvider) -> Callable[[Iterable[AgentEvent], str], ToolCall | None]:
-    """The agent provider's reader of one tool call in full from its events, as kept, given the call's id.
-
-    An agent provider without one yet finds no calls, as its activity shows none.
-    """
+    """The agent provider's reader of one tool call in full from its events, as kept, given the call's id."""
     match agent_provider:
         case "claude":
             return claude_steps.tool_call
         case "codex":
-            return lambda events, call_id: None
+            return codex_steps.tool_call
 
 
 def state_directory(agent_provider: AgentProvider) -> Path:

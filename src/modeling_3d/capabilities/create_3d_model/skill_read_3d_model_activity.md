@@ -48,14 +48,15 @@ and `data`:
 - `thought`: the summary of the reasoning just done, in `text`, when the agent gave one.
 - `composing`: a tool call the agent is still writing out, such as a long file, about once a
   second: `id`, `name`, `target` once that much is written, and `characters` so far. The `tool`
-  entry with the same `id` follows once it is called.
+  entry with the same `id` follows once it is called. Only claude reports these.
 - `tool`: a tool call, with `target`, what it works on: a command's first line, or a file's path
   relative to the model. `read-3d-model-tool-call` gives the call in full.
 - `tool-result`: the end of the call with the same `id`; `failed` says whether it failed, with the
   first line of why in `text`. A call with no result yet is still running.
-- `usage`: at the end of each turn, what the agent's session has cost in all so far, `cost_usd`,
-  with its `session_id`. A resumed session's total includes its earlier runs, so the latest of each
-  session, summed across sessions, is what the model has cost.
+- `usage`: at the end of each turn, what the agent's session has used in all so far, with its
+  `session_id`: `cost_usd` on claude, `tokens` on codex, which reports no cost. A resumed
+  session's total includes its earlier runs, so the latest of each session, summed across
+  sessions, is what the model has used.
 - `steered`: a steering message as delivered, or with `error` when it was not.
 - `ended`: how a run ended, with the agent's final message in `text`.
 

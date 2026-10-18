@@ -45,7 +45,7 @@ export function ModelFields({ intelligence }: { intelligence: Intelligence }) {
         onChange={(effort: ReasoningEffort) =>
           intelligence.choose(choice.model, effort)
         }
-        items={options.reasoning_efforts.map((effort) => ({
+        items={intelligence.efforts.map((effort) => ({
           value: effort,
           label: effortLabel(effort),
         }))}
@@ -111,7 +111,7 @@ export function ModelMenu({
         >
           <MenuGroup>
             <MenuGroupLabel>Reasoning effort</MenuGroupLabel>
-            {options.reasoning_efforts.map((effort) => (
+            {intelligence.efforts.map((effort) => (
               <MenuRadioItem key={effort} value={effort}>
                 {effortLabel(effort)}
               </MenuRadioItem>

@@ -549,10 +549,11 @@ class AppServer:
     def _intelligence(self) -> AppIntelligence:
         options = self._list_intelligence()
         chosen = self._app_state().intelligence
-        offered = chosen is not None and any(model.id == chosen.model for model in options.models)
+        offered = chosen is not None and any(
+            model.id == chosen.model and chosen.reasoning_effort in model.reasoning_efforts for model in options.models
+        )
         return AppIntelligence(
             models=options.models,
-            reasoning_efforts=options.reasoning_efforts,
             default=options.default,
             chosen=chosen if offered else None,
         )
@@ -565,10 +566,11 @@ class AppServer:
             raise Modeling3dError(
                 f"{model!r} is not a model the app offers. It offers: {known}.", "no-such-intelligence-model"
             )
-        effort = next((candidate for candidate in options.reasoning_efforts if candidate == reasoning_effort), None)
+        effort = next((candidate for candidate in picked.reasoning_efforts if candidate == reasoning_effort), None)
         if effort is None:
             raise Modeling3dError(
-                f"{reasoning_effort!r} is not a reasoning effort. Pass one of: {', '.join(options.reasoning_efforts)}.",
+                f"{reasoning_effort!r} is not a reasoning effort {picked.id} takes. Pass one of: "
+                f"{', '.join(picked.reasoning_efforts)}.",
                 "bad-reasoning-effort",
             )
         choice = IntelligenceChoice(agent_provider=picked.agent_provider, model=picked.id, reasoning_effort=effort)

@@ -100,7 +100,7 @@ async def test_a_new_model_is_built_and_recorded_in_its_own_directory(working_di
     assert last.data["status"] == "done"
     request = intelligence.runs[0].request
     assert request.workspace is not None
-    assert request.workspace.path == directory
+    assert request.workspace.path == working_directory
     assert request.writable
     assert request.session_directory == directory / "sessions"
     assert request.resume is None
@@ -110,6 +110,8 @@ async def test_a_new_model_is_built_and_recorded_in_its_own_directory(working_di
     assert "A low poly bear" in request.prompt
     assert create.BPY_REQUIREMENT in request.prompt
     assert str(directory) in request.prompt
+    assert "Write files only in the model's directory" in request.prompt
+    assert "ready to rig and animate" in request.prompt
     assert "already holds" not in request.prompt
     record = record_of(directory)
     assert (record.tool, record.name) == ("modeling-3d", "bear")
@@ -142,6 +144,11 @@ async def test_another_directory_holds_the_models_when_named(working_directory: 
             {"name": "elsewhere", "agent_provider": "claude", "resume_session": True},
             "ran on codex, and claude was asked for",
             "provider-mismatch",
+        ),
+        (
+            {"name": "fox", "agent_provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "ultra"},
+            "'ultra' is not a reasoning effort claude-opus-5-5 takes. Pass one of: low, medium, high, xhigh, max.",
+            "bad-reasoning-effort",
         ),
         ({"name": "bear", "resume_session": "gone"}, "has no session 'gone'. Its sessions", "no-such-session"),
         ({"name": "fox", "resume_session": "gone"}, "Model fox has no session 'gone'", "no-such-session"),
@@ -260,6 +267,18 @@ async def test_a_name_a_model_has_changes_it_in_a_fresh_session_unless_told_to_r
     assert resume.resume == SESSION
     assert resume.prompt.strip() == "And the ears rounder"
     assert [entry.resumed for entry in record_of(first.directory).runs] == [False, False, True]
+
+
+async def test_a_session_goes_on_with_another_model_of_its_agent_provider() -> None:
+    await run_to_end(name="bear", agent_provider="codex", model="gpt-6.1-sol")
+
+    _, _, resuming, _ = await run_to_end(
+        prompt="Rounder ears", name="bear", resume_session=True, model="gpt-6-astra", reasoning_effort="ultra"
+    )
+
+    request = resuming.runs[0].request
+    assert (request.resume, request.model, request.reasoning_effort) == (SESSION, "gpt-6-astra", "ultra")
+    assert record_of(Path(".modeling-3d/bear")).runs[-1].agent_provider == "codex"
 
 
 async def test_a_session_named_by_its_id_is_the_one_continued() -> None:

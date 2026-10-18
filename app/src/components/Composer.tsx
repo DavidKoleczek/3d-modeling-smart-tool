@@ -15,7 +15,7 @@ import {
   type ModelSummary,
 } from "@/lib/api";
 import { describe } from "@/lib/errors";
-import type { Intelligence } from "@/lib/intelligence";
+import { providerLabel, type Intelligence } from "@/lib/intelligence";
 import { shortDirectory } from "@/lib/models";
 import { takesReferences, useReferences } from "@/lib/references";
 import { submitsOnEnter } from "@/lib/utils";
@@ -23,6 +23,11 @@ import { submitsOnEnter } from "@/lib/utils";
 const DOLLARS = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
+});
+
+const TOKENS = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
 });
 
 function dollars(amount: number): string {
@@ -43,12 +48,15 @@ export function Composer({
   models,
   intelligence,
   cost,
+  tokens,
 }: {
   model: ModelSummary;
   models: ModelSummary[];
   intelligence: Intelligence;
   /** What the agents' sessions on the model have cost, in US dollars, once any reported it. */
   cost: number | null;
+  /** What the sessions of agent providers that report no cost have used in tokens, once any reported it. */
+  tokens: number | null;
 }) {
   const [draft, setDraft] = useState("");
   const [resume, setResume] = useState(true);
@@ -57,6 +65,13 @@ export function Composer({
   const [error, setError] = useState<string | null>(null);
   const references = useReferences();
   const running = model.status === "running";
+  // A session goes on only with the agent provider it ran on.
+  const sessionProvider = model.last_run?.agent_provider;
+  const continuable =
+    !sessionProvider ||
+    !intelligence.choice ||
+    intelligence.choice.agent_provider === sessionProvider;
+  const continuing = resume && continuable;
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -73,7 +88,7 @@ export function Composer({
         await createModel({
           prompt: text,
           name: model.name,
-          resume_session: resume,
+          resume_session: continuing,
           ...(await references.ready()),
           ...intelligence.choice,
         });
@@ -157,12 +172,15 @@ export function Composer({
               </AddReferences>
               <span aria-hidden className="mx-1 h-4 w-px bg-line" />
               <Switch
-                checked={resume}
+                checked={continuing}
                 onChange={setResume}
+                disabled={!continuable}
                 title={
-                  resume
-                    ? "Continues the agent session that last worked on it, which remembers the conversation"
-                    : "Starts a fresh agent session, which reads the model's script"
+                  !continuable && sessionProvider
+                    ? `Its last session ran on ${providerLabel(sessionProvider)}, which this AI model can't continue, so this starts a fresh session that reads the model's script. Pick a ${providerLabel(sessionProvider)} model to continue it.`
+                    : continuing
+                      ? "Continues the agent session that last worked on it, which remembers the conversation"
+                      : "Starts a fresh agent session, which reads the model's script"
                 }
               >
                 Continue session
@@ -203,12 +221,17 @@ export function Composer({
           <span className="truncate">{shortDirectory(model.directory)}</span>
           <Icon name="link-out" className="shrink-0" />
         </button>
-        {cost !== null && (
+        {(cost !== null || tokens !== null) && (
           <span
-            title={`What the agents' sessions on ${model.name} have cost in all, as reported at the end of each turn${running ? ". The turn under way counts once it ends." : "."}`}
+            title={`What the agents' sessions on ${model.name} have used in all, as reported at the end of each turn${running ? ". The turn under way counts once it ends." : "."}`}
             className="ml-auto shrink-0 pl-3 mono-annotation text-ink-muted"
           >
-            {dollars(cost)}
+            {[
+              cost !== null && dollars(cost),
+              tokens !== null && `${TOKENS.format(tokens)} tokens`,
+            ]
+              .filter(Boolean)
+              .join(" + ")}
             {running && " so far"}
           </span>
         )}

@@ -93,8 +93,8 @@ class Refusing(FakeIntelligence):
 
 
 def build(run: FakeRun) -> None:
-    assert run.request.workspace is not None
-    model = run.request.workspace.path
+    assert run.request.session_directory is not None
+    model = run.request.session_directory.parent
     (model / "model.py").write_text("# the bear", encoding="utf-8")
     (model / "model.glb").write_bytes(b"glTF")
     (model / "renders").mkdir(exist_ok=True)

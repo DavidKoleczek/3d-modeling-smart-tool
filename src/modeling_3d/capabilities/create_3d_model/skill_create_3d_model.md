@@ -1,7 +1,12 @@
 `create-3d-model` has an agent create a 3D model, or change one, as a Blender script. The agent
 writes `model.py`, builds `model.glb` with it, renders the result, looks at the renders, and fixes
-what does not match, until it is done. Every model has a name, unique in its directory. Naming a
-model that exists changes it; any other name creates a new model.
+what does not match, until it is done. Unless the request says otherwise, it makes the model
+ready to rig and animate: a skeleton for what bends, separate pivoted parts for what moves
+rigidly. Every model has a name, unique in its directory. Naming a model that exists changes it;
+any other name creates a new model.
+
+The agent runs in the working directory, so run from the project the model is for: the agent
+reads its docs, conventions, and assets for context, and writes only in the model's directory.
 
 Blender comes from PyPI through uv, so no Blender install is needed. The first build downloads it,
 about 340 MB, into uv's cache. Building runs on Windows, Linux x64, and macOS on Apple silicon.
@@ -68,7 +73,8 @@ earlier renders.
   gives it on each request, beside that request's prompt, and `list-3d-models` gives the last
   run's.
 
-A continued session runs on the agent provider that made it; a fresh one can use any.
+A continued session runs on the agent provider that made it, with any of its models; a fresh
+one can use any.
 
 ## Arguments
 
@@ -82,10 +88,12 @@ A continued session runs on the agent provider that made it; a fresh one can use
   images are also shown to the agent with the prompt.
 - `--resume-session S`: for a model that exists, `false` (the default) for a fresh session, `true`
   to continue its last one, or the id of one of its sessions. See Changing a model.
-- `--agent-provider claude`: only `claude` runs agents for now.
+- `--agent-provider P`: `claude` or `codex`; the first installed when omitted, and the session's
+  own when continuing one.
 - `--model M`: the agent provider's default when omitted. `list-intelligence-models` lists the
   ones to pick from.
-- `--reasoning-effort E`: `low`, `medium` (the default), `high`, `xhigh`, or `max`.
+- `--reasoning-effort E`: `low`, `medium` (the default), `high`, `xhigh`, or `max`; codex
+  models also take `ultra`. `list-intelligence-models` lists each model's.
 - `--timeout-seconds N`: how long the run may take before it is stopped; 3600 by default. A
   stopped run's session can still be resumed.
 - `--detach`: run in a process of its own, which outlives this command, and exit once the agent

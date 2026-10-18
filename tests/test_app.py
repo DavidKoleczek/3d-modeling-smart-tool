@@ -457,6 +457,9 @@ async def test_the_view_remembers_the_ai_model_picked_in_the_app_directory_until
         extreme = await client.call_tool(
             "choose_intelligence_model", {"model": "claude-opus-5-5", "reasoning_effort": "extreme"}
         )
+        ultra = await client.call_tool(
+            "choose_intelligence_model", {"model": "claude-opus-5-5", "reasoning_effort": "ultra"}
+        )
         monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: False)
         gone = await client.call_tool("list_intelligence_models", {})
 
@@ -469,6 +472,8 @@ async def test_the_view_remembers_the_ai_model_picked_in_the_app_directory_until
     assert unknown.structured_content == {"reason": "no-such-intelligence-model", "model": None}
     assert "It offers: claude-sonnet-5-5, claude-opus-5-5." in text_of(unknown)
     assert extreme.structured_content == {"reason": "bad-reasoning-effort", "model": None}
+    assert ultra.structured_content == {"reason": "bad-reasoning-effort", "model": None}
+    assert "Pass one of: low, medium, high, xhigh, max." in text_of(ultra)
     assert AppIntelligence.model_validate(gone.structured_content).chosen is None
 
 

@@ -320,6 +320,13 @@ class ClaudeIntelligence:
 
 
 def options(request: AgentRequest) -> ClaudeAgentOptions:
+    effort = request.reasoning_effort
+    if effort == "ultra":
+        raise Modeling3dError(
+            "Claude models take no 'ultra' reasoning effort; their highest is 'max'. Pass --reasoning-effort max "
+            "(reasoning_effort='max'), or pick a codex model, which takes 'ultra'.",
+            "bad-reasoning-effort",
+        )
     tools: list[str]
     if request.workspace is not None:
         cwd = request.workspace.path.resolve()
@@ -337,7 +344,7 @@ def options(request: AgentRequest) -> ClaudeAgentOptions:
         model=request.model,
         tools=tools,
         permission_mode="bypassPermissions",
-        effort=request.reasoning_effort,
+        effort=effort,
         # Newer models leave their reasoning out unless asked; its summary is what the activity shows of it.
         thinking={"type": "adaptive", "display": "summarized"},
         resume=request.resume,

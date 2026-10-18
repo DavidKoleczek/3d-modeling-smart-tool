@@ -8,7 +8,7 @@ Prerequisites:
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - For the model-backed capabilities:
   - The `claude` agent provider: `ANTHROPIC_API_KEY`, or any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart). 
-  - The `codex` agent provider cannot run agents yet.
+  - The `codex` agent provider: the [Codex CLI](https://github.com/openai/codex) signed in with ChatGPT or an API key, see [authentication](https://developers.openai.com/codex/auth).
 - (Optional) Install the Smart Tools skill so your agent knows about Smart Tools: `npx skills add microsoft/amplifier-smart-tools`
 
 ```bash

@@ -14,7 +14,7 @@ import { useActivity } from "@/lib/activity";
 import { cancelModel, type ModelSummary } from "@/lib/api";
 import { AppError, describe } from "@/lib/errors";
 import { useIntelligence } from "@/lib/intelligence";
-import { currentCall, runsOf, totalCost } from "@/lib/runs";
+import { currentCall, runsOf, totalCost, totalTokens } from "@/lib/runs";
 import { statusLabel } from "@/lib/status";
 import { updateSettings, useSettings } from "@/lib/settings";
 import { timeOfDay } from "@/lib/time";
@@ -255,6 +255,7 @@ export function ActivityPanel({
           models={models}
           intelligence={intelligence}
           cost={totalCost(steps)}
+          tokens={totalTokens(steps)}
         />
       )}
       <p role="status" className="sr-only">

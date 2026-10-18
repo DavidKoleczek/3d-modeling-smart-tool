@@ -26,7 +26,8 @@ export type ModelStatus =
   "running" | "crashed" | "done" | "failed" | "cancelled" | "timed-out";
 
 /** `ReasoningEffort` in schemas.py. */
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort =
+  "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 
 /** The fields of `ModelRunRecord` in schemas.py that the view reads. */
 export type ModelRun = {
@@ -107,6 +108,7 @@ export type IntelligenceModel = {
   agent_provider: string;
   id: string;
   label: string;
+  reasoning_efforts: ReasoningEffort[];
 };
 
 /** `IntelligenceChoice` in schemas.py. */
@@ -119,7 +121,6 @@ export type IntelligenceChoice = {
 /** `AppIntelligence` in schemas.py. */
 export type AppIntelligence = {
   models: IntelligenceModel[];
-  reasoning_efforts: ReasoningEffort[];
   default: IntelligenceChoice;
   chosen: IntelligenceChoice | null;
 };

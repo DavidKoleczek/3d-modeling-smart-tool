@@ -80,7 +80,9 @@ provider, the first installed of `claude` and `codex`:
   user's Claude Code settings. Needs `ANTHROPIC_API_KEY`, or Amazon Bedrock, Claude Platform on AWS,
   Google Cloud's Agent Platform, or Microsoft Foundry credentials, see
   [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart).
-- `codex`: [OpenAI Codex](https://github.com/openai/codex). It cannot run agents yet.
+- `codex`: the [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/python), with the
+  user's Codex configuration. Needs the Codex CLI signed in with ChatGPT or an API key, see
+  [authentication](https://developers.openai.com/codex/auth).
 
 Building a model needs no Blender install: its script gets Blender from PyPI through uv, about
 340 MB on the first build. Building runs on Windows, Linux x64, and macOS on Apple silicon. To
