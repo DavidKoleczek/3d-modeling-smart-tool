@@ -1,4 +1,4 @@
-"""Top level entry point for the Modeling 3D library."""
+"""Top level entry point for the 3D Modeling library."""
 
 from pathlib import Path
 

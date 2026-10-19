@@ -12,8 +12,7 @@ Creates and edits 3D models from a description of what to build.
 
 ## Install
 
-The tool installs from its repository, https://github.com/DavidKoleczek/3d-modeling-smart-tool. While the repository is private, git
-needs access to it.
+The tool installs from its repository, https://github.com/DavidKoleczek/3d-modeling-smart-tool.
 
 ```bash
 # as a CLI, choosing the agent provider(s) you want: [all], [claude], or [codex]

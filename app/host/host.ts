@@ -13,7 +13,7 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 
-const HOST = { name: "Modeling 3D browser host", version: "1.0.0" };
+const HOST = { name: "3D Modeling browser host", version: "1.0.0" };
 const VIEW_URI = "ui://modeling-3d/app";
 const SANDBOX_ATTRIBUTE = "allow-scripts allow-same-origin allow-forms";
 const PROXY_READY: McpUiSandboxProxyReadyNotification["method"] =

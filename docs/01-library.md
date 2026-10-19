@@ -1,6 +1,6 @@
 # Library Reference
 
-Every capability of Modeling 3D is reachable from `modeling_3d.lib`.
+Every capability of 3D Modeling is reachable from `modeling_3d.lib`.
 All other surfaces, including the CLI, are thin wrappers over the library and add no capability of their own.
 
 ## Intelligence
@@ -34,7 +34,7 @@ Setting `AgentRequest.resume` to an earlier `session_id` continues that session 
 
 `resolve_intelligence(agent_provider)` returns a shipped implementation, one per agent provider, each installed through the extra of the same name:
 
-- `claude`: `ClaudeIntelligence`, built on the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) and run with the user's Claude Code settings and  any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart). Steering is `queued`. Sessions are kept where Claude Code keeps them; a plain completion runs in the platform's per-user state directory, in `modeling-3d/claude`.
+- `claude`: `ClaudeIntelligence`, built on the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) and run with the user's Claude Code settings and any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart). Steering is `queued`. Sessions are kept where Claude Code keeps them; a plain completion runs in the platform's per-user state directory, in `modeling-3d/claude`.
 - `codex`: `CodexIntelligence`, built on the [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/python) and run with the user's Codex sign-in and configuration. Steering is `mid-turn`. A writable workspace runs without a sandbox and without approval prompts, as the agent runs tools such as Blender that write elsewhere. Sessions are kept where Codex keeps them, and copied into `session_directory` after each turn; a plain completion runs read-only in the platform's per-user state directory, in `modeling-3d/codex`.
 
 Without an agent provider named, the first installed in that order is used; one that is not installed raises `Modeling3dError` with the command that installs it.

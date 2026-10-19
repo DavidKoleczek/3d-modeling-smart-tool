@@ -1,46 +1,52 @@
-# Modeling 3D Smart Tool
+<h1 align="center">3D Modeling Smart Tool</h1>
 
-Creates and edits 3D models from a description of what to build.
+<p align="center">Describe a 3D model. Watch it get built. Point at what to change.</p>
 
-## Installation
+<p align="center">
+  <img src="docs/screenshots/tour.svg" alt="A tour of the app: a model being built, the 3D viewer, renders beside the activity, and a new model" width="800">
+</p>
+
+3D Modeling is a [Smart Tool](https://github.com/microsoft/amplifier-smart-tools) that creates and edits 3D models.
+Drive it from an agent like Codex or Claude Code and steer and monitor the work from the app.
+
+## Quickstart
 
 Prerequisites:
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- For the model-backed capabilities:
-  - The `claude` agent provider: `ANTHROPIC_API_KEY`, or any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart). 
-  - The `codex` agent provider: the [Codex CLI](https://github.com/openai/codex) signed in with ChatGPT or an API key, see [authentication](https://developers.openai.com/codex/auth).
-- (Optional) Install the Smart Tools skill so your agent knows about Smart Tools: `npx skills add microsoft/amplifier-smart-tools`
+- At least one agent provider for building models:
+  - `claude`: `ANTHROPIC_API_KEY`, or any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart).
+  - `codex`: the [Codex CLI](https://github.com/openai/codex) signed in with ChatGPT or an API key, see [authentication](https://developers.openai.com/codex/auth).
+
+### With an agent
+
+1. Install the tool and the skill that teaches your agent to use it:
+
+   ```bash
+   # Choose the provider(s) you want: [all], [claude], or [codex]
+   uv tool install "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
+   npx skills add DavidKoleczek/3d-modeling-smart-tool
+   ```
+
+1. Start your agent in the directory where the models should live and ask for one:
+
+   > Open the 3D modeling app and make a brown bear like bear.png
+
+The agent opens the app, in your browser or inline in hosts that render [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) and builds the model in `.modeling-3d/bear`.
+Keep going from either side:
+
+> Make the snout longer, and give it a cub that works from the bear
+
+> What did I change in the app? Pick up from there.
+
+### Without an agent
 
 ```bash
-# Install the Agent Skill so your agent knows about it.
-npx skills add DavidKoleczek/3d-modeling-smart-tool
-# Install the tool, choosing the provider(s) you want: [all], [claude], or [codex].
-uv tool install "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
-# Check the install; needs no credentials
-modeling-3d manifest
+modeling-3d app
 ```
 
-To use it as a library, from another project:
+This serves the app at the printed URL for the models in `.modeling-3d`. Everything an agent can do, you can do from there.
 
-```bash
-uv add "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
-```
-
-To update:
-
-```bash
-npx skills update   # add -g for global installs
-uv tool upgrade modeling-3d
-```
-
-To uninstall:
-
-```bash
-npx skills remove modeling-3d   # add -g for global installs
-uv tool uninstall modeling-3d
-```
-
-## Interface
+## Command line
 
 ```bash
 # Run the app in background at http://127.0.0.1:8788 (runs even if the shell closes)
@@ -91,11 +97,32 @@ modeling-3d app --directory path/to/models
 modeling-3d mcp
 ```
 
-The app is called 3D Modeling Smart Tool. To use it beside Claude Code, start `claude` from this directory, where `.mcp.json` loads the server, and ask it to open the app.
-Hosts that render MCP Apps, such as VS Code, show it inline instead.
-What you do in the app is not sent to the session. Any session in the directory sees it by reading a model's activity, and what a session does shows in the app.
-
 See the [CLI reference](docs/02-cli.md) for every flag and the [library reference](docs/01-library.md) for the Python surface.
+
+## Installation
+
+(Optional) Install the Smart Tools skill so your agent knows about Smart Tools: `npx skills add microsoft/amplifier-smart-tools`
+
+To use it as a library, from another project:
+
+```bash
+uv add "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
+```
+
+To update:
+
+```bash
+npx skills update   # add -g for global installs
+uv tool upgrade modeling-3d
+```
+
+To uninstall:
+
+```bash
+npx skills remove modeling-3d   # add -g for global installs
+uv tool uninstall modeling-3d
+claude mcp remove modeling-3d   # or: codex mcp remove modeling-3d
+```
 
 ## Contributing
 

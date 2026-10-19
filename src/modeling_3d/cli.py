@@ -1,4 +1,4 @@
-"""Command line entry point for Modeling 3D"""
+"""Command line entry point for 3D Modeling"""
 
 import asyncio
 from collections.abc import Callable, Coroutine, Generator

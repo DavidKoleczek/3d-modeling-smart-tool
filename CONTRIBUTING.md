@@ -1,4 +1,4 @@
-# Contributing to Modeling 3D
+# Contributing to 3D Modeling
 
 ## Development Setup
 

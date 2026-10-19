@@ -50,8 +50,7 @@ repository's `docs/01-library.md` and `docs/02-cli.md` carry the rest.
 
 ## Install
 
-The tool installs from its repository, https://github.com/DavidKoleczek/3d-modeling-smart-tool. While the repository is private, git
-needs access to it.
+The tool installs from its repository, https://github.com/DavidKoleczek/3d-modeling-smart-tool.
 
 ```bash
 # as a CLI

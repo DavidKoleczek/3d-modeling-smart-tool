@@ -7,7 +7,7 @@ import {
 import { setHostTheme } from "@/lib/theme";
 
 export const app = new App(
-  { name: "Modeling 3D", version: "1.0.0" },
+  { name: "3D Modeling", version: "1.0.0" },
   { availableDisplayModes: ["inline", "fullscreen"] },
 );
 

@@ -217,7 +217,7 @@ async function structuredFrom(
   const result = await call(name, args, timeout);
   if (!result.structuredContent) {
     throw new AppError(
-      `\`${name}\` returned nothing. Check that the server is Modeling 3D.`,
+      `\`${name}\` returned nothing. Check that the server is 3D Modeling.`,
     );
   }
   return result.structuredContent as Record<string, unknown>;
@@ -228,7 +228,7 @@ export async function listModels(): Promise<ModelListing> {
   const structured = await structuredFrom(LIST_TOOL, {});
   if (!Array.isArray(structured.models)) {
     throw new AppError(
-      `\`${LIST_TOOL}\` returned no models. Check that the server is this version of Modeling 3D.`,
+      `\`${LIST_TOOL}\` returned no models. Check that the server is this version of 3D Modeling.`,
     );
   }
   return structured as ModelListing;
@@ -296,7 +296,7 @@ export async function readActivity(
   );
   if (!Array.isArray(structured.entries)) {
     throw new AppError(
-      `\`${ACTIVITY_TOOL}\` returned no entries. Check that the server is this version of Modeling 3D.`,
+      `\`${ACTIVITY_TOOL}\` returned no entries. Check that the server is this version of 3D Modeling.`,
     );
   }
   return structured as ModelActivity;

@@ -11,7 +11,7 @@ This is a Smart Tool that must conform to Microsoft's [Amplifier Smart Tool Spec
 - A capability is its code, a row in `CAPABILITIES`, and a `skill_<capability>.md` beside that code carrying its arguments, a worked invocation, and its expected result. `<command> --help` renders that skill, `<command> -h` stays the terse generated summary, and the tool's own skill stays a router pointing at both.
 - Failures name what went wrong and how to fix it. These should be surfaced when the library or other surface is used. Listing all possible failures in skills or docs is not appropriate. The caller is usually an agent.
 - The `Repository` URL under `[project.urls]` in `pyproject.toml` is the tool's canonical source: `--help` carries it, so an agent that can run the tool but not read its files still finds the docs, and every install instruction in `README.md`, `SMART_TOOL.md`, and the skill is built on it. If it is still the `<owner>` placeholder, replace it everywhere it appears once the remote exists.
-- Never modify this file unless explictly told.
+- Never modify this file unless explicitly told.
 
 ## General Development Practices
 
@@ -24,7 +24,7 @@ This is a Smart Tool that must conform to Microsoft's [Amplifier Smart Tool Spec
   - Don't use tables unless asked for.
   - Avoid using bolding or italics.
 - Prefer to use characters that can be typed on a standard keyboard (limit use of fancy arrows, etc unless required or asked for)
-- Never do any git operations (staging, commiting, pushing, branches, etc.) without the user explictly asking.
+- Never do any git operations (staging, committing, pushing, branches, etc.) without the user explicitly asking.
 - Commit messages are short, like the existing history. Never credit yourself in a commit, as a co-author or in the message.
 - Do not read into too much what files I have open or what lines I am highlighting.
 
@@ -70,7 +70,7 @@ The repositories are (add to the list as more are needed, the one exception to m
 - https://github.com/modelcontextprotocol/typescript-sdk
 - https://github.com/modelcontextprotocol/python-sdk
 - https://github.com/agentclientprotocol/agent-client-protocol
-- https://github.com/modelcontextprotocol/ext-apps - MCP extentions including MCP Apps
+- https://github.com/modelcontextprotocol/ext-apps - MCP extensions including MCP Apps
 - https://github.com/microsoft/amplifier-smart-tool-creator
 - https://github.com/microsoft/amplifier-smart-tool-digital-twin-universe
 - https://github.com/microsoft/amplifier-smart-tool-reality-check

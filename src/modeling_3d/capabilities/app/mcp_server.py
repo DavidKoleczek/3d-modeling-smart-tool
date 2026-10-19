@@ -89,7 +89,7 @@ SEES_THE_APP = (
     "was asked of one and what its agent did with `modeling-3d read-3d-model-activity --name <name>`."
 )
 INSTRUCTIONS = f"""\
-Modeling 3D has an app where the user watches the models in one directory being made, and creates, changes, steers, \
+3D Modeling has an app where the user watches the models in one directory being made, and creates, changes, steers, \
 and stops them. Call `open_app` when they ask for it. `modeling-3d view-3d-model --name <name>` brings a model up in it.
 
 {SEES_THE_APP} Read a model's activity before acting on it, since they may have changed or steered it in the app."""
@@ -99,7 +99,7 @@ APP_ONLY = {"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}}
 VIEW_META = {"ui": {"permissions": {"clipboardWrite": {}}}}
 OPEN_APP = Tool(
     name="open_app",
-    description="Show the Modeling 3D app, where the user watches the models in a directory being made, and creates, "
+    description="Show the 3D Modeling app, where the user watches the models in a directory being made, and creates, "
     "changes, and steers them, and return its browser URL. Hosts that render MCP Apps show it inline. Opening it "
     "again returns the same URL.",
     input_schema={
@@ -286,7 +286,7 @@ VIEW_TOOLS = [
     READ_FOLDERS,
     OPEN_FOLDER,
 ]
-VIEW = Resource(uri=VIEW_URI, name="Modeling 3D app", mime_type=APP_MIME_TYPE)
+VIEW = Resource(uri=VIEW_URI, name="3D Modeling app", mime_type=APP_MIME_TYPE)
 MODEL_FILE = ResourceTemplate(
     name="Model file",
     uri_template=f"{MODEL_FILE_PREFIX}{{name}}/{{+path}}",
