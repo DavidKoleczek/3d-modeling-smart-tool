@@ -308,6 +308,25 @@ async def test_a_model_without_a_session_changes_in_a_fresh_one() -> None:
     assert record_of(first.directory).runs[-1].resumed is False
 
 
+async def test_a_session_goes_on_only_where_its_agent_provider_still_keeps_it(
+    monkeypatch: pytest.MonkeyPatch, codex_home: Path
+) -> None:
+    monkeypatch.setattr(interface, "resolve_intelligence", lambda *arguments: FakeIntelligence(builds))
+    _, first, _, _ = await run_to_end(name="bear", agent_provider="codex", model="gpt-6.1-sol")
+
+    with pytest.raises(Modeling3dError) as elsewhere:
+        await lib.create_3d_model("Rounder ears", name="bear", resume_session=True)
+    sessions = codex_home / "sessions" / "2026" / "10" / "21"
+    sessions.mkdir(parents=True)
+    (sessions / f"rollout-2026-10-21T10-00-00-{SESSION}.jsonl").write_text("", encoding="utf-8")
+    await (await lib.create_3d_model("Rounder ears", name="bear", resume_session=True)).result()
+
+    assert "not among the sessions codex keeps on this machine" in str(elsewhere.value)
+    assert "--resume-session false" in str(elsewhere.value)
+    assert (elsewhere.value.reason, elsewhere.value.model) == ("session-unavailable", "bear")
+    assert [run.resumed for run in record_of(first.directory).runs] == [False, True]
+
+
 async def test_a_model_already_being_worked_on_is_not_started_twice() -> None:
     run = await lib.create_3d_model("A bear", name="bear", intelligence=FakeIntelligence(works_forever))
 
@@ -371,6 +390,29 @@ async def test_steering_reaches_the_agent_and_shows_as_an_event_from_its_sender(
     steered = [(event.kind, event.text, event.data.get("origin")) async for event in run.events()]
     assert ("steered", "Rounder ears.", origin) in steered
     assert not list((run.directory / "runs" / run.run_id / "steer").iterdir())
+
+
+@pytest.mark.parametrize("sender", ["handle", "another-process"])
+async def test_references_sent_with_steering_are_copied_in_named_and_shown(
+    working_directory: Path, sender: str
+) -> None:
+    (working_directory / "ears.png").write_bytes(b"png")
+    intelligence = FakeIntelligence(waits_for_steering)
+    run = await lib.create_3d_model("A bear", name="bear", intelligence=intelligence)
+
+    if sender == "handle":
+        await run.steer("Like this.", [Path("ears.png")])
+    else:
+        await asyncio.to_thread(lib.steer_3d_model, "bear", "Like this.", None, "app", [Path("ears.png")])
+    await asyncio.wait_for(run.result(), TIMEOUT_SECONDS)
+
+    agent = intelligence.runs[0]
+    assert agent.steered[0].startswith("Like this.\n")
+    assert "- references/ears.png (also attached)" in agent.steered[0]
+    assert agent.steered_images == [[run.directory / "references" / "ears.png"]]
+    assert (run.directory / "references" / "ears.png").read_bytes() == b"png"
+    steered = [event async for event in run.events() if event.kind == "steered"]
+    assert [(event.text, event.data["references"]) for event in steered] == [("Like this.", ["references/ears.png"])]
 
 
 async def test_cancel_from_another_process_stops_the_run_and_keeps_the_session() -> None:

@@ -179,7 +179,15 @@ STEER_MODEL = Tool(
     description="Send a message to the agent working on a model in the app's directory. Called by the view.",
     input_schema={
         "type": "object",
-        "properties": {"name": {"type": "string"}, "message": {"type": "string"}},
+        "properties": {
+            "name": {"type": "string"},
+            "message": {"type": "string"},
+            "uploads": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Uploads from `upload_reference`, each a file or a folder to send with the message",
+            },
+        },
         "required": ["name", "message"],
     },
     _meta=APP_ONLY,
@@ -315,7 +323,7 @@ class AppServer:
         list_models: Callable[[Path], ModelListing],
         view_model: Callable[[str, Path], ModelSummary],
         create_model: Callable[..., Awaitable[Started]],
-        steer_model: Callable[[str, str, Path, str], None],
+        steer_model: Callable[[str, str, Path, str, list[Path]], None],
         cancel_model: Callable[[str, Path], None],
         read_activity: Callable[[str, Path, str | None], ModelActivity],
         read_tool_call: Callable[[str, str, str, Path], ToolCall],
@@ -451,8 +459,7 @@ class AppServer:
             )
             return _structured({"received": received})
         if params.name == STEER_MODEL.name:
-            await asyncio.to_thread(self._steer_model, arguments["name"], arguments["message"], self.directory, ORIGIN)
-            return _text("Sent; the model's activity shows it once its agent has it.")
+            return await self._steer(arguments)
         if params.name == CANCEL_MODEL.name:
             await asyncio.to_thread(self._cancel_model, arguments["name"], self.directory)
             return _text("Stopping; the model's activity shows the run end.")
@@ -506,12 +513,25 @@ class AppServer:
         )
         # Cleared only once the run has started, having copied them into the model: a request that is refused is
         # usually sent again, with the same references.
+        await self._clear(uploads)
+        summary = await asyncio.to_thread(self._view_model, run.name, self.directory)
+        return _structured(summary.model_dump(mode="json"))
+
+    async def _steer(self, arguments: dict[str, Any]) -> CallToolResult:
+        uploads: list[str] = arguments.get("uploads") or []
+        references = [await asyncio.to_thread(_staged, upload) for upload in uploads]
+        await asyncio.to_thread(
+            self._steer_model, arguments["name"], arguments["message"], self.directory, ORIGIN, references
+        )
+        # As for a request: kept until the message has them, since one that is refused is usually sent again.
+        await self._clear(uploads)
+        return _text("Sent; the model's activity shows it once its agent has it.")
+
+    async def _clear(self, uploads: list[str]) -> None:
         for upload in uploads:
             await asyncio.to_thread(shutil.rmtree, UPLOADS / upload, True)
             with self._lock:
                 self._uploads.discard(upload)
-        summary = await asyncio.to_thread(self._view_model, run.name, self.directory)
-        return _structured(summary.model_dump(mode="json"))
 
     def _receive(self, upload: str, path: str, offset: int, data: str) -> int:
         """Write a piece of an upload's file at `offset`, and return how much of the file has arrived."""

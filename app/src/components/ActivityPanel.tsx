@@ -13,7 +13,7 @@ import { Notice } from "@/components/ui/notice";
 import { useActivity } from "@/lib/activity";
 import { cancelModel, type ModelSummary } from "@/lib/api";
 import { AppError, describe } from "@/lib/errors";
-import { useIntelligence } from "@/lib/intelligence";
+import type { Handoff, NextRequest } from "@/lib/requests";
 import { currentCall, runsOf, totalCost, totalTokens } from "@/lib/runs";
 import { statusLabel } from "@/lib/status";
 import { updateSettings, useSettings } from "@/lib/settings";
@@ -29,10 +29,17 @@ const PINNED_PX = 48;
 export function ActivityPanel({
   model,
   models,
+  next,
+  handoff = null,
+  onTaken = () => {},
   liveOnly = false,
 }: {
   model: ModelSummary | null;
   models: ModelSummary[];
+  next: NextRequest;
+  /** What to put in the composer from elsewhere in the app, such as marked views. */
+  handoff?: Handoff | null;
+  onTaken?: (id: number) => void;
   /** Only the live strip, under the model where there is room for one pane alone. */
   liveOnly?: boolean;
 }) {
@@ -42,7 +49,6 @@ export function ActivityPanel({
     working,
     error,
   } = useActivity(model?.name ?? null);
-  const intelligence = useIntelligence();
   const { settings } = useSettings();
   const shown = read ?? model;
   const runs = runsOf(
@@ -160,7 +166,7 @@ export function ActivityPanel({
           {shown &&
             runs.map((run) => (
               <Fragment key={run.id}>
-                <RunDivider run={run} intelligence={intelligence} />
+                <RunDivider run={run} intelligence={next.intelligence} />
                 {run.blocks.map((block, index) => {
                   switch (block.kind) {
                     case "message":
@@ -253,7 +259,9 @@ export function ActivityPanel({
           key={shown.name}
           model={shown}
           models={models}
-          intelligence={intelligence}
+          next={next}
+          handoff={handoff}
+          onTaken={onTaken}
           cost={totalCost(steps)}
           tokens={totalTokens(steps)}
         />

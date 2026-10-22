@@ -24,4 +24,5 @@ names the models there.
 ## Result
 
 The model's summary as JSON on stdout, the same as one entry of `list-3d-models`' `models`:
-`name`, `id`, `directory`, `created`, `updated`, `built`, `status`, `last_run`, and `files`.
+`name`, `id`, `directory`, `created`, `updated`, `built`, `status`, `last_run`, `last_session`,
+`resumable`, and `files`.

@@ -208,9 +208,13 @@ def steer_3d_model(
     directory: Annotated[
         Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
     ] = None,
+    references: Annotated[
+        list[Path] | None,
+        typer.Option("--reference", help="A file or folder to send with it, such as an image; repeatable."),
+    ] = None,
 ) -> None:
     """Send a message to the agent working on a model. Deterministic."""
-    lib.steer_3d_model(name=name, message=message, directory=directory, origin=_origin())
+    lib.steer_3d_model(name=name, message=message, directory=directory, origin=_origin(), references=references)
 
 
 @app.command()

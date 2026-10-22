@@ -31,6 +31,7 @@ FailureReason = Literal[
     "name-in-use",
     "no-such-model",
     "no-such-session",
+    "session-unavailable",
     "missing-reference",
     "no-reference-model",
     "already-running",
@@ -236,6 +237,13 @@ class ModelSummary(BaseModel):
         description="Its last run's; `crashed` when that run is `running` but its process is gone; None if never run"
     )
     last_run: ModelRunRecord | None = Field(description="Its prompt, agent provider, and session, for a follow-up")
+    last_session: ModelRunRecord | None = Field(
+        description="The latest run with a session, the one `resume_session=True` continues; None when none has one"
+    )
+    resumable: bool = Field(
+        description="Whether a run on this machine can continue `last_session`; false without one, or when its agent "
+        "provider no longer has it here"
+    )
     files: list[str] = Field(description="The model's files, relative to its directory")
     references: list[str] = Field(
         default_factory=list, description="What its runs were given to work from, as copied into its directory"

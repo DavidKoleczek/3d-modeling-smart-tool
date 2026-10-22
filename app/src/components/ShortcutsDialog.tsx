@@ -6,6 +6,7 @@ const SHORTCUTS: [string[], string][] = [
   [["G"], "Grid"],
   [["W"], "Wireframe"],
   [["D"], "Dimensions"],
+  [["M"], "Mark up what to change"],
   [["1", "2"], "3D or Renders"],
   [["Left", "Right"], "The render before or after"],
   [["["], "Your models"],
@@ -13,7 +14,7 @@ const SHORTCUTS: [string[], string][] = [
   [["N"], "New model"],
   [["/"], "Search models"],
   [["?"], "This list"],
-  [["Esc"], "Close"],
+  [["Esc"], "Close, or stop marking"],
 ];
 
 /** Every key the app answers to. */

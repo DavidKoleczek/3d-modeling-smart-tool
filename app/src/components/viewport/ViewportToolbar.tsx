@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { Tooltip } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 
 export type ViewTool = "grid" | "wireframe" | "dimensions";
 
@@ -17,19 +16,22 @@ function Divider() {
 }
 
 /**
- * The viewport's tools: Fit, then the toggles for the grid, mesh edges, and dimension lines. Compact, where there is
- * no room in the top bar, it also switches to the renders.
+ * The viewport's tools: Fit, then the toggles for the grid, mesh edges, and dimension lines, which work on the live
+ * view and so wait while a marked view is held still. Compact, where there is no room in the top bar, it also switches
+ * to the renders.
  */
 export function ViewportToolbar({
   on,
   onToggle,
   onFit,
+  locked,
   compact,
   onRenders,
 }: {
   on: Record<ViewTool, boolean>;
   onToggle: (tool: ViewTool) => void;
   onFit: () => void;
+  locked: boolean;
   compact: boolean;
   onRenders?: () => void;
 }) {
@@ -39,12 +41,16 @@ export function ViewportToolbar({
     <div
       role="toolbar"
       aria-label="Viewport"
-      className={cn(
-        "absolute top-3 left-3 z-10 flex items-center gap-0.5 rounded-md border border-line bg-panel p-0.75",
-      )}
+      className="flex items-center gap-0.5 rounded-md border border-line bg-panel p-0.75"
     >
       <Tooltip content="Fit the model" keys="F">
-        <Button size={size} icon aria-label="Fit the model" onClick={onFit}>
+        <Button
+          size={size}
+          icon
+          aria-label="Fit the model"
+          disabled={locked}
+          onClick={onFit}
+        >
           <Icon name="fit" size={iconSize} />
         </Button>
       </Tooltip>
@@ -56,6 +62,7 @@ export function ViewportToolbar({
             icon
             aria-label={label}
             aria-pressed={on[tool]}
+            disabled={locked}
             onClick={() => onToggle(tool)}
           >
             <Icon name={icon} size={iconSize} />

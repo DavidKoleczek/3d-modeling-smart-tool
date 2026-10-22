@@ -1,5 +1,6 @@
-import { useRef, type ReactElement, type ReactNode } from "react";
+import { useRef, useState, type ReactElement, type ReactNode } from "react";
 
+import { HeldImageDialog, type HeldImage } from "@/components/ImageDialog";
 import { ModelThumb } from "@/components/ModelThumb";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -159,41 +160,66 @@ function ReferenceIcon({ reference }: { reference: Reference }) {
   return <Icon name={ICONS[reference.kind]} className="text-ink-muted" />;
 }
 
-/** What a request will work from, in a row of chips, each of which can be taken off again. */
+/** What a request will work from, in a row of chips, each of which can be taken off again; an image opens large. */
 export function ReferenceChips({ references }: { references: References }) {
+  const [opened, setOpened] = useState<HeldImage | null>(null);
   if (references.items.length === 0) {
     return null;
   }
   return (
-    <ul className="flex flex-wrap gap-1">
-      {references.items.map((reference) => (
-        <li
-          key={reference.key}
-          title={explanation(reference)}
-          className={cn(
-            "relative flex h-6 max-w-full items-center gap-1 overflow-hidden rounded-sm border bg-panel pr-0.5 pl-1 text-label",
-            reference.error ? "border-danger text-danger" : "border-line",
-          )}
-        >
-          <ReferenceIcon reference={reference} />
-          <span className="max-w-32 truncate">{reference.name}</span>
-          {detail(reference) && (
-            <span className="mono-annotation text-ink-muted">
-              {detail(reference)}
-            </span>
-          )}
-          <button
-            type="button"
-            aria-label={`Remove ${reference.name}`}
-            onClick={() => references.remove(reference.key)}
-            className="grid size-4.5 place-items-center rounded-sm text-ink-muted hover:bg-hover hover:text-ink"
-          >
-            <Icon name="close" />
-          </button>
-          <Progress reference={reference} />
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="flex flex-wrap gap-1">
+        {references.items.map((reference) => {
+          const preview = reference.preview;
+          const label = (
+            <>
+              <ReferenceIcon reference={reference} />
+              <span className="max-w-32 truncate">{reference.name}</span>
+            </>
+          );
+          return (
+            <li
+              key={reference.key}
+              title={explanation(reference)}
+              className={cn(
+                "relative flex h-6 max-w-full items-center gap-1 overflow-hidden rounded-sm border bg-panel pr-0.5 pl-1 text-label",
+                reference.error ? "border-danger text-danger" : "border-line",
+              )}
+            >
+              {preview ? (
+                <button
+                  type="button"
+                  aria-label={`See ${reference.name} large`}
+                  onClick={() =>
+                    setOpened({ name: reference.name, url: preview })
+                  }
+                  className="flex min-w-0 cursor-zoom-in items-center gap-1 rounded-sm"
+                >
+                  {label}
+                </button>
+              ) : (
+                label
+              )}
+              {detail(reference) && (
+                <span className="mono-annotation text-ink-muted">
+                  {detail(reference)}
+                </span>
+              )}
+              <button
+                type="button"
+                aria-label={`Remove ${reference.name}`}
+                onClick={() => references.remove(reference.key)}
+                className="grid size-4.5 place-items-center rounded-sm text-ink-muted hover:bg-hover hover:text-ink"
+              >
+                <Icon name="close" />
+              </button>
+              <Progress reference={reference} />
+            </li>
+          );
+        })}
+      </ul>
+      <HeldImageDialog image={opened} onClose={() => setOpened(null)} />
+    </>
   );
 }
 

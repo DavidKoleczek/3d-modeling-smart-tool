@@ -4,7 +4,9 @@ import {
   chooseIntelligenceModel,
   listIntelligenceModels,
   type IntelligenceChoice,
+  type IntelligenceModel,
   type AppIntelligence,
+  type ModelSummary,
   type ReasoningEffort,
 } from "@/lib/api";
 import { describe } from "@/lib/errors";
@@ -39,6 +41,30 @@ function nearestEffort(
   );
 }
 
+/**
+ * What `run` used, as the picker offers it: its own model, else the first of its agent provider's, which can go on in
+ * its session; null when the picker offers none of that agent provider's.
+ */
+function asOffered(
+  run: IntelligenceChoice,
+  models: IntelligenceModel[],
+): IntelligenceChoice | null {
+  const model =
+    models.find((candidate) => candidate.id === run.model) ??
+    models.find((candidate) => candidate.agent_provider === run.agent_provider);
+  if (!model) {
+    return null;
+  }
+  return {
+    agent_provider: model.agent_provider,
+    model: model.id,
+    reasoning_effort: nearestEffort(
+      run.reasoning_effort,
+      model.reasoning_efforts,
+    ),
+  };
+}
+
 const PROVIDER_LABELS: Record<string, string> = {
   claude: "Claude",
   codex: "Codex",
@@ -51,7 +77,10 @@ export function providerLabel(provider: string): string {
 
 export type Intelligence = {
   options: AppIntelligence | null;
-  /** What the next request runs with: the person's last pick in the directory, else the default; null until read. */
+  /**
+   * What the next request runs with: the person's pick, else what the model in view last ran with, else their last
+   * pick in the directory, else the default; null until read.
+   */
   choice: IntelligenceChoice | null;
   error: string | null;
   choose: (model: string, reasoningEffort: ReasoningEffort) => void;
@@ -61,10 +90,19 @@ export type Intelligence = {
   label: (model: string) => string;
 };
 
-/** The AI models and reasoning efforts to pick from, and the pick, remembered in the app's directory. */
-export function useIntelligence(): Intelligence {
+/**
+ * The AI models and reasoning efforts to pick from, and the pick, remembered in the app's directory. For a request on
+ * `shown`, the pick starts on what its last run used, so a request goes on in that session unless the person picks
+ * otherwise, and a pick they make lasts while that model is in view.
+ */
+export function useIntelligence(
+  shown: ModelSummary | null = null,
+): Intelligence {
   const [options, setOptions] = useState<AppIntelligence | null>(null);
-  const [picked, setPicked] = useState<IntelligenceChoice | null>(null);
+  const [picked, setPicked] = useState<{
+    model: string | null;
+    choice: IntelligenceChoice;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   // One pick recorded at a time, so the last one made is the one the directory keeps.
   const recording = useRef<Promise<unknown>>(Promise.resolve());
@@ -95,9 +133,12 @@ export function useIntelligence(): Intelligence {
     }
     const effort = nearestEffort(reasoningEffort, offered.reasoning_efforts);
     setPicked({
-      agent_provider: offered.agent_provider,
-      model,
-      reasoning_effort: effort,
+      model: shown?.name ?? null,
+      choice: {
+        agent_provider: offered.agent_provider,
+        model,
+        reasoning_effort: effort,
+      },
     });
     setError(null);
     recording.current = recording.current.then(() =>
@@ -108,7 +149,16 @@ export function useIntelligence(): Intelligence {
     );
   };
 
-  const choice = picked ?? options?.chosen ?? options?.default ?? null;
+  const last =
+    shown?.last_run && options
+      ? asOffered(shown.last_run, options.models)
+      : null;
+  const choice =
+    (picked?.model === (shown?.name ?? null) ? picked.choice : null) ??
+    last ??
+    options?.chosen ??
+    options?.default ??
+    null;
   return {
     options,
     choice,

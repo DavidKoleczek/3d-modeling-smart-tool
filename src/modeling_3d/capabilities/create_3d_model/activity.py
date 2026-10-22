@@ -99,7 +99,7 @@ def _entry(event: ModelEvent, run: ModelRunRecord) -> ActivityEntry:
             time=event.time, run_id=run.id, kind="request", text=run.prompt, origin=run.origin, data=data
         )
     if event.kind == "steered":
-        data = {key: event.data[key] for key in ("steering", "error") if key in event.data}
+        data = {key: event.data[key] for key in ("steering", "error", "references") if key in event.data}
         return ActivityEntry(
             time=event.time, run_id=run.id, kind="steered", text=event.text, origin=event.data.get("origin"), data=data
         )

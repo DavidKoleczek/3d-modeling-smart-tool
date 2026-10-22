@@ -53,6 +53,10 @@ export type ModelSummary = {
   built: string | null;
   status: ModelStatus | null;
   last_run: ModelRun | null;
+  /** The latest run with a session, the one a request continues when it resumes. */
+  last_session: ModelRun | null;
+  /** Whether a run on this machine can continue `last_session`. */
+  resumable: boolean;
   files: string[];
   references: string[];
 };
@@ -275,9 +279,16 @@ export async function uploadReference(
   await call(UPLOAD_TOOL, { upload, path, offset, data });
 }
 
-/** Tell the agent working on `name` something, as the person in the app. */
-export async function steerModel(name: string, message: string): Promise<void> {
-  await call(STEER_TOOL, { name, message });
+/** Tell the agent working on `name` something, as the person in the app, with any uploads to send with it. */
+export async function steerModel(
+  name: string,
+  message: string,
+  uploads: string[] = [],
+): Promise<void> {
+  await call(
+    STEER_TOOL,
+    uploads.length ? { name, message, uploads } : { name, message },
+  );
 }
 
 /** Stop the run working on `name`; its session can still be resumed. */

@@ -4,6 +4,8 @@ description: >-
   Creates and edits 3D models from a description of what to build. Drive it from the command line as `modeling-3d`, or from Python through
   `modeling_3d.lib`. Triggers on "modeling-3d".
 license: MIT
+metadata:
+  version: "0.2.0"
 ---
 
 # Using modeling-3d
@@ -24,6 +26,7 @@ uv add "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smar
 # once, without installing
 uvx --from "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool" modeling-3d --help
 ```
+
 ## Use it
 
 Run `modeling-3d --help`. It prints the tool's skill: when to use it, every capability, sharp

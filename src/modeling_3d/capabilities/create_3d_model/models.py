@@ -7,6 +7,7 @@ from modeling_3d.capabilities.create_3d_model.record import (
     DEFAULT_DIRECTORY,
     GLB,
     alive,
+    last_session,
     load_record,
     missing_model,
     model_files,
@@ -14,6 +15,7 @@ from modeling_3d.capabilities.create_3d_model.record import (
     read_atomically,
     write_atomically,
 )
+from modeling_3d.intelligence.interface import can_resume
 from modeling_3d.schemas import Modeling3dError, ModelListing, ModelRecord, ModelsState, ModelStatus, ModelSummary
 
 # A model's name starts with a letter or digit, so this can never be a model's directory.
@@ -65,6 +67,7 @@ def model_summary(target: Path, record: ModelRecord) -> ModelSummary:
         # Left as it is on disk: the next run on the model marks it failed, and a listing never races a writer.
         status = "crashed" if run.status == "running" and not alive(run.pid) else run.status
     times = [record.created] if run is None else [run.started, run.last_event, run.finished]
+    session = last_session(record)
     return ModelSummary(
         name=target.name,
         id=record.id,
@@ -74,6 +77,8 @@ def model_summary(target: Path, record: ModelRecord) -> ModelSummary:
         built=_built(target),
         status=status,
         last_run=run,
+        last_session=session,
+        resumable=session is not None and can_resume(session.agent_provider, session.session_id),
         files=model_files(target),
         references=list(dict.fromkeys(path for entry in record.runs for path in entry.references)),
     )

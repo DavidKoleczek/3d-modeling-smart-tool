@@ -167,6 +167,7 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
         sketch = await send(client, "sketch.png", b"sketch-bytes", piece=5)
         kit = await send(client, "kit/parts/wheel.png", b"wheel-bytes")
         await send(client, "kit/.git/HEAD", b"ref", upload=kit)
+        marked = await send(client, "marked-view-1.png", b"marked-bytes")
         monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command("waits_for_steering"))
         created = await client.call_tool(
             "create_3d_model",
@@ -181,7 +182,7 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
             },
         )
         listing = ModelListing.model_validate((await client.call_tool("list_3d_models", {})).structured_content)
-        await client.call_tool("steer_3d_model", {"name": "cub", "message": "Smaller."})
+        await client.call_tool("steer_3d_model", {"name": "cub", "message": "Smaller.", "uploads": [marked]})
         first = await activity_until(client, "cub", 1)
         monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command("works_forever"))
         await client.call_tool("create_3d_model", {"prompt": "Go on", "name": "cub", "resume_session": True})
@@ -196,6 +197,9 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
     assert not cancelled.is_error, text_of(cancelled)
     kinds = [(entry.kind, entry.origin, entry.text) for entry in second.entries if entry.kind != "ended"]
     assert kinds == [("request", "app", "A cub"), ("steered", "app", "Smaller."), ("request", "app", "Go on")]
+    assert [entry.data.get("references") for entry in second.entries if entry.kind == "steered"] == [
+        ["references/marked-view-1.png"]
+    ]
     assert first.entries[0].data["references"] == [
         "references/sketch.png",
         "references/kit/",
@@ -214,6 +218,7 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
     assert base64.b64decode(sketched.blob) == b"sketch-bytes"
     assert base64.b64decode(render.blob) == b"png-bytes"
     assert (tmp_path / "cub" / "references" / "kit" / "parts" / "wheel.png").read_bytes() == b"wheel-bytes"
+    assert (tmp_path / "cub" / "references" / "marked-view-1.png").read_bytes() == b"marked-bytes"
     assert not (tmp_path / "cub" / "references" / "kit" / ".git").exists()
     assert list(uploads_directory.iterdir()) == []
 

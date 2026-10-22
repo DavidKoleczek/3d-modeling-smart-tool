@@ -61,7 +61,7 @@ An agent harness with its own way to run a command in the background can use tha
 ## modeling-3d steer-3d-model
 
 ```bash
-modeling-3d steer-3d-model --name <name> --message <text> [--directory <dir>]
+modeling-3d steer-3d-model --name <name> --message <text> [--directory <dir>] [--reference <path> ...]
 ```
 
 `lib.steer_3d_model()`, with the origin from `CLAUDE_CODE_SESSION_ID` as for `create-3d-model`. Prints nothing; exits 1 when nothing is working on the model.

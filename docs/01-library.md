@@ -20,7 +20,7 @@ class AgentRun(Protocol):
     session_id: str | None
 
     def events(self) -> AsyncIterator[AgentEvent]: ...
-    async def steer(self, message: str) -> None: ...
+    async def steer(self, message: str, images: list[Path] | None = None) -> None: ...
     async def cancel(self) -> None: ...
     async def result(self) -> AgentResult: ...
 ```
@@ -28,7 +28,7 @@ class AgentRun(Protocol):
 `preflight` raises `Modeling3dError` naming what to configure when the implementation cannot run.
 `start` starts one agent and returns once it runs. `AgentRequest` holds the prompt, any images to show with it, the model, and an optional workspace. Failures after `start` end the run with `AgentResult.error` and never raise.
 `events` replays every event from the start, then live ones, ending with `terminal`. Each `AgentEvent` is one message from the agent provider as it gave it: its own name for the message in `type`, and its fields in `data`. No vocabulary is shared across agent providers.
-`steer` sends a message while the agent works. `steering` says how it lands: `mid-turn`, `queued` until the agent next reads input, or `restart`.
+`steer` sends a message, and any images with it, while the agent works. `steering` says how it lands: `mid-turn`, `queued` until the agent next reads input, or `restart`.
 `cancel` stops the run at once, along with every command the agent started.
 Setting `AgentRequest.resume` to an earlier `session_id` continues that session instead of starting a fresh one, so the agent keeps what it learned, even after a cancel. `AgentRequest.session_directory` also keeps a copy of the session there. On `claude` a resume can start from that copy alone; on `codex` the copy is for reading, and a resume needs the session where Codex keeps it.
 
@@ -101,7 +101,13 @@ A model's directory holds `model.json`, which marks it as a model made by this t
 From `model.json` and `events.jsonl` alone, a UX can tell a run that is working, one busy in a long command, one whose process is gone, and one that ended.
 
 ```python
-def steer_3d_model(name: str, message: str, directory: Path | None = None, origin: str | None = None) -> None
+def steer_3d_model(
+    name: str,
+    message: str,
+    directory: Path | None = None,
+    origin: str | None = None,
+    references: list[Path] | None = None,
+) -> None
 def cancel_3d_model(name: str, directory: Path | None = None) -> None
 ```
 
@@ -109,6 +115,7 @@ def cancel_3d_model(name: str, directory: Path | None = None) -> None
 - `message`: The text to send to the agent.
 - `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
 - `origin`: A label that tells who sent the message, as for `create_3d_model`. The activity of the model shows it with the message.
+- `references`: Files or folders to send with the message. They are copied into the model's `references/` as for `create_3d_model`, and named to the agent with the message. Images are also shown to it. The `steered` entry in the activity lists them as `references`.
 
 Steer or stop the run working on a model from any process. Each writes a file in the run's directory that the process running it acts on within a second. The `steered` event of a message carries its `origin`. Both raise `Modeling3dError` when nothing is working on the model.
 
@@ -125,7 +132,7 @@ def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary
 - `name`: For `view_3d_model`, the name of the model to record. It must be the same as the name of its directory, with the same upper case and lower case letters.
 
 `list_3d_models` only reads, so it is safe while runs write. `ModelListing` has the resolved `directory`, its `models` most recently updated first, `last_viewed`, and `unreadable`, one message for each `model.json` that could not be read, naming what is wrong. A file in place of the directory raises `Modeling3dError`.
-Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run last started, sent an event, or finished), `built` (when `model.glb` was last written, `None` before the first build), `status`, `last_run` (that run's entry in `model.json`), `files`, and `references`, every reference its runs were given. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. Both are `None` for a model that never ran.
+Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run last started, sent an event, or finished), `built` (when `model.glb` was last written, `None` before the first build), `status`, `last_run` (that run's entry in `model.json`), `last_session` (the entry of the latest run with a session, the one `resume_session=True` continues), `resumable` (whether a run on this machine can continue that session), `files`, and `references`, every reference its runs were given. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. `status`, `last_run`, and `last_session` are `None` for a model that never ran, and `resumable` is false.
 
 `view_3d_model` records the model as viewed last in `.state.json` in the models directory, and returns its summary. An unknown name raises `Modeling3dError` naming the models there. `last_viewed` is `None` when nothing was viewed, or that model is gone.
 
@@ -143,7 +150,7 @@ def read_3d_model_activity(name: str, directory: Path | None = None, after: str 
   A cursor that is not from this model raises `Modeling3dError`.
 
 `ModelActivity` has `model`, the model's summary as `list_3d_models` gives it, its activity across every run in `entries`, and a `cursor`. It only reads, so it is safe while runs write, and a read past a cursor takes only what was written since.
-Each `ActivityEntry` has `time`, `run_id`, `kind`, `text`, `origin`, and `data`. `kind` is `request` (a run's prompt, with `references`, `resumed`, `agent_provider`, `model`, and `session_id`), `said` (the agent's words), `reasoning` (the agent started reasoning, as soon as it did), `thought` (the summary of that reasoning, when the agent gave one), `composing` (a call the agent is still writing out, with `id`, `name`, `target` once that much is written, and `characters` so far; only `claude` reports these), `tool` (a call, with `id`, `name`, and `target`, what it works on), `tool-result` (the end of the call with that `id`, and whether it `failed`), `usage` (at the end of each turn, what the session has used in all so far, with its `session_id`: `cost_usd` on `claude`, `tokens` on `codex`, which reports no cost; a resumed session's total includes its earlier runs), `steered`, or `ended` (`status`, `error`, and `files`). `origin` is who sent a request or steering message.
+Each `ActivityEntry` has `time`, `run_id`, `kind`, `text`, `origin`, and `data`. `kind` is `request` (a run's prompt, with `references`, `resumed`, `agent_provider`, `model`, and `session_id`), `said` (the agent's words), `reasoning` (the agent started reasoning, as soon as it did), `thought` (the summary of that reasoning, when the agent gave one), `composing` (a call the agent is still writing out, with `id`, `name`, `target` once that much is written, and `characters` so far; only `claude` reports these), `tool` (a call, with `id`, `name`, and `target`, what it works on), `tool-result` (the end of the call with that `id`, and whether it `failed`), `usage` (at the end of each turn, what the session has used in all so far, with its `session_id`: `cost_usd` on `claude`, `tokens` on `codex`, which reports no cost; a resumed session's total includes its earlier runs), `steered` (with the `references` sent with it, if any), or `ended` (`status`, `error`, and `files`). `origin` is who sent a request or steering message.
 The activity is the one view of a run that every agent provider shares. Each provider's events stay in `events.jsonl` as it gave them, and `interface.agent_steps(agent_provider)` reads them into `said`, `reasoning`, `thought`, `composing`, `tool`, `tool-result`, and `usage`.
 
 ```python
@@ -180,7 +187,7 @@ def app_view() -> str
 The view's HTML, compiled from `app/` and offered as the `ui://modeling-3d/app` resource in the MCP server. Raises `Modeling3dError` naming the build command when the view is not compiled.
 It shows the models in the server's directory: it polls `list_3d_models`, opens on `last_viewed`, and renders the model in view in 3D, reading its GLB again whenever `built` changes. Picking a model calls `view_3d_model`. It switches models on its own when `last_viewed` changes to one it did not pick, so `view_3d_model` from anywhere brings a model up, and when a new model appears.
 It can also show the renders the agent made, in a strip with the one picked large below, and the model's size and makeup, computed from the loaded GLB for display only.
-Beside the model it shows the model's activity, polled from `read_3d_model_activity`. The person creates a model there from a prompt, files, and models in the directory; asks for a change, continuing the model's session unless they switch that off or pick a model of another agent provider; and steers or stops a run. Each step opens to the call in full from `read_3d_model_tool_call`, a few lines at first and all of it on request. Reference images and the images the agent looked at open large, and the model's folder opens in the person's file manager. Under the composer it totals what the agents' sessions on the model have cost, or used in tokens, from `usage`. The view calls the capabilities for each, as from `app`, and sends nothing to any session.
+Beside the model it shows the model's activity, polled from `read_3d_model_activity`. The person creates a model there from a prompt, files, and models in the directory; asks for a change, continuing the model's session unless they switch that off or pick a model of another agent provider; steers a run, with images too; and stops one. Boxes the person draws on the 3D view, with a note on each, go into the message as images with their notes, to send from there. Each step opens to the call in full from `read_3d_model_tool_call`, a few lines at first and all of it on request. Reference images and the images the agent looked at open large, and the model's folder opens in the person's file manager. Under the composer it totals what the agents' sessions on the model have cost, or used in tokens, from `usage`. The view calls the capabilities for each, as from `app`, and sends nothing to any session.
 
 ```python
 def app_server(directory: Path | None = None) -> AppServer
@@ -188,7 +195,7 @@ def app_server(directory: Path | None = None) -> AppServer
 
 - `directory`: The directory that holds the models that the app shows. If you do not give a directory, the tool uses `.modeling-3d` in the working directory. The `open_app` tool can change it.
 
-The app's MCP server: `open_app`; the app-only `list_3d_models`, `view_3d_model`, `create_3d_model`, `steer_3d_model`, `cancel_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`, each the library's on the app's directory with origin `app`; the app-only `list_intelligence_models` and `choose_intelligence_model`, the picker's options and the person's last pick, kept in `.app.json` in the app's directory; the app-only `read_app_settings` and `save_app_settings`, the person's theme, pane sizes, viewport tools, and the groups of steps they opened or closed in each model's activity, kept for every directory in `app-settings.json` in their config directory; the app-only `read_app_folders` and `open_app_folder`, which name where those are kept and open the settings folder, the app's directory, or a model's folder in the person's file manager; the view; and each model's GLB, renders, and reference images as base64 blob resources at `modeling-3d://models/{name}/{+path}`. Only the files a model's summary lists in `files` and `references`, and the files in the folders it lists there, and of those only the GLB and images, can be read. Its `create_3d_model` always detaches, so runs outlive the server. The app-only `upload_reference` takes each file or folder the person adds in pieces, under an upload id of the view's, and `create_3d_model` names the uploads to work from, so no request outgrows what the transport takes. Uploads no request took are cleared when the server closes, or a day on by the next to start.
+The app's MCP server: `open_app`; the app-only `list_3d_models`, `view_3d_model`, `create_3d_model`, `steer_3d_model`, `cancel_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`, each the library's on the app's directory with origin `app`; the app-only `list_intelligence_models` and `choose_intelligence_model`, the picker's options and the person's last pick, kept in `.app.json` in the app's directory; the app-only `read_app_settings` and `save_app_settings`, the person's theme, pane sizes, viewport tools, and the groups of steps they opened or closed in each model's activity, kept for every directory in `app-settings.json` in their config directory; the app-only `read_app_folders` and `open_app_folder`, which name where those are kept and open the settings folder, the app's directory, or a model's folder in the person's file manager; the view; and each model's GLB, renders, and reference images as base64 blob resources at `modeling-3d://models/{name}/{+path}`. Only the files a model's summary lists in `files` and `references`, and the files in the folders it lists there, and of those only the GLB and images, can be read. Its `create_3d_model` always detaches, so runs outlive the server. The app-only `upload_reference` takes each file or folder the person adds in pieces, under an upload id of the view's, and `create_3d_model` and `steer_3d_model` name the uploads to send, so no request outgrows what the transport takes. Uploads no request took are cleared when the server closes, or a day on by the next to start.
 
 ```python
 class AppServer:

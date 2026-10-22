@@ -90,14 +90,14 @@ class ClaudeRun:
         """Wait until the prompt is sent, or the run ended trying."""
         await self._began.wait()
 
-    async def steer(self, message: str) -> None:
+    async def steer(self, message: str, images: list[Path] | None = None) -> None:
         await self._began.wait()
         if self._answered or self._task.done():
             raise Modeling3dError(
                 "The agent run has ended, so the steering message was not delivered. Start a new run that resumes "
                 f"session {self._session_id} with the message as its prompt."
             )
-        await self._send(message, [])
+        await self._send(message, images or [])
 
     async def cancel(self) -> None:
         self._stopping.set()

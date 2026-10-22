@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
+from pathlib import Path
 from typing import Any
 
 from modeling_3d.intelligence.schemas import AgentEvent, AgentRequest, AgentResult, Steering
@@ -17,6 +18,7 @@ class FakeRun:
         self.request = request
         self.session_id: str | None = request.resume or SESSION
         self.steered: list[str] = []
+        self.steered_images: list[list[Path]] = []
         self.steer_arrived = asyncio.Event()
         self._events: list[AgentEvent] = []
         self._appended = asyncio.Event()
@@ -31,8 +33,9 @@ class FakeRun:
     def events(self) -> AsyncIterator[AgentEvent]:
         return self._replay()
 
-    async def steer(self, message: str) -> None:
+    async def steer(self, message: str, images: list[Path] | None = None) -> None:
         self.steered.append(message)
+        self.steered_images.append(images or [])
         self.steer_arrived.set()
 
     async def cancel(self) -> None:

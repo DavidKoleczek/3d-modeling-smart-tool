@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 
 import { ActivityPanel } from "@/components/ActivityPanel";
@@ -15,8 +15,10 @@ import { Segmented } from "@/components/ui/segmented";
 import { Viewport, type ViewMode } from "@/components/Viewport";
 import { Workspace } from "@/components/Workspace";
 import { onDisplay, requestDisplayMode } from "@/lib/host";
+import { useIntelligence } from "@/lib/intelligence";
 import { paneLayout, useBreakpoint } from "@/lib/layout";
 import { useModels } from "@/lib/models";
+import type { Handoff, NextRequest } from "@/lib/requests";
 import { useShortcuts } from "@/lib/shortcuts";
 import { updateSettings, useSettings } from "@/lib/settings";
 import { counted, dimensions, type SceneStats } from "@/lib/stats";
@@ -36,6 +38,21 @@ function App() {
   const [fits, setFits] = useState(0);
   const [stats, setStats] = useState<SceneStats | null>(null);
   const { listing, model, error, pick } = useModels();
+  // By model, whether the person left Continue session on, which the composer's requests follow.
+  const [resumes, setResumes] = useState<Record<string, boolean>>({});
+  // Marked views on their way into a model's composer, which may not be showing until its pane opens.
+  const [handoff, setHandoff] = useState<Handoff | null>(null);
+  // Only ever counts up, so a composer that took one handoff never mistakes the next for it.
+  const handoffs = useRef(0);
+  const next: NextRequest = {
+    intelligence: useIntelligence(model),
+    resume: (model && resumes[model.name]) ?? true,
+    onResume: (resume) => {
+      if (model) {
+        setResumes((current) => ({ ...current, [model.name]: resume }));
+      }
+    },
+  };
   const { settings, layouts } = useSettings();
   const panes = { models: usePanelRef(), activity: usePanelRef() };
   const search = useRef<HTMLInputElement>(null);
@@ -104,6 +121,27 @@ function App() {
     }
   };
 
+  // Shows the composer the marks went into: Activity alone where there is room for one pane, else its pane, opened.
+  const compose = (text: string, files: File[]) => {
+    if (!model) {
+      return;
+    }
+    handoffs.current += 1;
+    setHandoff({ id: handoffs.current, model: model.name, text, files });
+    const activity = panes.activity.current;
+    if (breakpoint === "narrow") {
+      setNarrowPane("activity");
+    } else if (activity?.isCollapsed()) {
+      toggled.current = true;
+      activity.expand();
+    }
+  };
+  const taken = useCallback(
+    (id: number) =>
+      setHandoff((current) => (current?.id === id ? null : current)),
+    [],
+  );
+
   const toggleTool = (tool: "grid" | "wireframe" | "dimensions") =>
     updateSettings((current) => ({ ...current, [tool]: !current[tool] }));
 
@@ -140,9 +178,18 @@ function App() {
       onFit={() => setFits((count) => count + 1)}
       onStats={setStats}
       onNew={() => startNew()}
+      onCompose={compose}
     />
   );
-  const side = <ActivityPanel model={model} models={models} />;
+  const side = (
+    <ActivityPanel
+      model={model}
+      models={models}
+      next={next}
+      handoff={handoff}
+      onTaken={taken}
+    />
+  );
 
   return (
     <div
@@ -187,7 +234,12 @@ function App() {
               {narrowPane === "model" ? (
                 <>
                   <div className="flex min-h-0 flex-1">{viewport}</div>
-                  <ActivityPanel model={model} models={models} liveOnly />
+                  <ActivityPanel
+                    model={model}
+                    models={models}
+                    next={next}
+                    liveOnly
+                  />
                 </>
               ) : (
                 side

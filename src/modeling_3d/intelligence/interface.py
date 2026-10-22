@@ -17,6 +17,8 @@ SDK_MODULES: dict[AgentProvider, str] = {
     "codex": "openai_codex",
     "claude": "claude_agent_sdk",
 }
+# Codex sessions found already, by Codex home: listings ask every second, and Codex keeps a session until it is deleted.
+_CODEX_SESSIONS: set[tuple[Path, str]] = set()
 
 
 class AgentRun(Protocol):
@@ -31,8 +33,9 @@ class AgentRun(Protocol):
         """Every event from the start, then live ones until the run ends with `terminal`."""
         ...
 
-    async def steer(self, message: str) -> None:
-        """Send a message to the agent while it works; the implementation's `steering` says how it lands."""
+    async def steer(self, message: str, images: list[Path] | None = None) -> None:
+        """Send a message, and any images with it, to the agent while it works; the implementation's `steering` says
+        how it lands."""
         ...
 
     async def cancel(self) -> None:
@@ -139,6 +142,30 @@ def agent_tool_call(agent_provider: AgentProvider) -> Callable[[Iterable[AgentEv
             return claude_steps.tool_call
         case "codex":
             return codex_steps.tool_call
+
+
+def can_resume(agent_provider: AgentProvider, session_id: str | None) -> bool:
+    """Whether a run on this machine can continue the session, telling without the agent provider's SDK installed."""
+    if session_id is None:
+        return False
+    match agent_provider:
+        case "claude":
+            # It resumes from the copy in `AgentRequest.session_directory`, which goes wherever the model goes.
+            return True
+        case "codex":
+            return _codex_keeps(session_id)
+
+
+def _codex_keeps(session_id: str) -> bool:
+    """Whether Codex has the session's rollout file where its resume looks for it, by the name Codex gives it."""
+    home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    if (home, session_id) in _CODEX_SESSIONS:
+        return True
+    pattern = f"rollout-*-{session_id}*.jsonl*"
+    if any(next((home / folder).rglob(pattern), None) for folder in ("sessions", "archived_sessions")):
+        _CODEX_SESSIONS.add((home, session_id))
+        return True
+    return False
 
 
 def state_directory(agent_provider: AgentProvider) -> Path:

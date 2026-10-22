@@ -1,4 +1,10 @@
-import { useState, type DragEvent, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type FormEvent,
+} from "react";
 
 import { AddReferences, ReferenceChips } from "@/components/References";
 import { ModelMenu } from "@/components/ModelPicker";
@@ -8,16 +14,11 @@ import { Help } from "@/components/ui/field";
 import { Icon } from "@/components/ui/icon";
 import { LoadingMark } from "@/components/ui/loading-mark";
 import { Switch } from "@/components/ui/switch";
-import {
-  createModel,
-  openAppFolder,
-  steerModel,
-  type ModelSummary,
-} from "@/lib/api";
+import { openAppFolder, type ModelSummary } from "@/lib/api";
 import { describe } from "@/lib/errors";
-import { providerLabel, type Intelligence } from "@/lib/intelligence";
 import { shortDirectory } from "@/lib/models";
 import { takesReferences, useReferences } from "@/lib/references";
+import { ask, sessionOf, type Handoff, type NextRequest } from "@/lib/requests";
 import { submitsOnEnter } from "@/lib/utils";
 
 const DOLLARS = new Intl.NumberFormat("en-US", {
@@ -46,32 +47,52 @@ function carriesFiles(event: DragEvent) {
 export function Composer({
   model,
   models,
-  intelligence,
+  next,
+  handoff,
+  onTaken,
   cost,
   tokens,
 }: {
   model: ModelSummary;
   models: ModelSummary[];
-  intelligence: Intelligence;
+  next: NextRequest;
+  /** What to put in the message from elsewhere in the app, such as marked views, once it is for this model. */
+  handoff: Handoff | null;
+  onTaken: (id: number) => void;
   /** What the agents' sessions on the model have cost, in US dollars, once any reported it. */
   cost: number | null;
   /** What the sessions of agent providers that report no cost have used in tokens, once any reported it. */
   tokens: number | null;
 }) {
   const [draft, setDraft] = useState("");
-  const [resume, setResume] = useState(true);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const references = useReferences();
+  const { addFiles } = references;
+  const field = useRef<HTMLTextAreaElement>(null);
+  // The handoff last put in, which StrictMode's second run of the effect would otherwise put in twice.
+  const taken = useRef(0);
+
+  useEffect(() => {
+    if (
+      !handoff ||
+      handoff.model !== model.name ||
+      handoff.id === taken.current
+    ) {
+      return;
+    }
+    taken.current = handoff.id;
+    setDraft((current) =>
+      [current.trim(), handoff.text].filter(Boolean).join("\n\n"),
+    );
+    addFiles(handoff.files);
+    field.current?.focus();
+    onTaken(handoff.id);
+  }, [handoff, model.name, addFiles, onTaken]);
   const running = model.status === "running";
-  // A session goes on only with the agent provider it ran on.
-  const sessionProvider = model.last_run?.agent_provider;
-  const continuable =
-    !sessionProvider ||
-    !intelligence.choice ||
-    intelligence.choice.agent_provider === sessionProvider;
-  const continuing = resume && continuable;
+  const { intelligence } = next;
+  const session = sessionOf(model, next);
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -82,18 +103,8 @@ export function Composer({
     setBusy(true);
     setError(null);
     try {
-      if (running) {
-        await steerModel(model.name, text);
-      } else {
-        await createModel({
-          prompt: text,
-          name: model.name,
-          resume_session: continuing,
-          ...(await references.ready()),
-          ...intelligence.choice,
-        });
-        references.clear();
-      }
+      await ask(model, next, text, await references.ready());
+      references.clear();
       setDraft("");
     } catch (cause) {
       setError(describe(cause));
@@ -132,12 +143,11 @@ export function Composer({
       className="relative shrink-0 border-t border-line bg-panel px-3 pt-2 pb-2.5"
     >
       <div className="rounded-md border border-line-control bg-field py-1.5 pr-1.5 pl-2.5 transition-colors focus-within:border-ink focus-within:bg-panel">
-        {!running && (
-          <div className="mb-1.5 empty:hidden">
-            <ReferenceChips references={references} />
-          </div>
-        )}
+        <div className="mb-1.5 empty:hidden">
+          <ReferenceChips references={references} />
+        </div>
         <textarea
+          ref={field}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={submitsOnEnter(() => void submit())}
@@ -172,16 +182,10 @@ export function Composer({
               </AddReferences>
               <span aria-hidden className="mx-1 h-4 w-px bg-line" />
               <Switch
-                checked={continuing}
-                onChange={setResume}
-                disabled={!continuable}
-                title={
-                  !continuable && sessionProvider
-                    ? `Its last session ran on ${providerLabel(sessionProvider)}, which this AI model can't continue, so this starts a fresh session that reads the model's script. Pick a ${providerLabel(sessionProvider)} model to continue it.`
-                    : continuing
-                      ? "Continues the agent session that last worked on it, which remembers the conversation"
-                      : "Starts a fresh agent session, which reads the model's script"
-                }
+                checked={session.continuing}
+                onChange={next.onResume}
+                disabled={!session.continuable}
+                title={session.hint}
               >
                 Continue session
               </Switch>

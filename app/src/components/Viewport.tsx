@@ -32,6 +32,11 @@ import {
   type GizmoApi,
 } from "@/components/viewport/AxisGizmo";
 import { Dimensions } from "@/components/viewport/Dimensions";
+import {
+  CaptureDriver,
+  Markup,
+  type CaptureApi,
+} from "@/components/viewport/Markup";
 import { Renders } from "@/components/viewport/Renders";
 import {
   ViewportToolbar,
@@ -45,6 +50,7 @@ import {
   type ModelSummary,
 } from "@/lib/api";
 import { describe } from "@/lib/errors";
+import { NO_MARKUP, type Markup as MarkupDraft } from "@/lib/markup";
 import { pastelFor } from "@/lib/models";
 import { dispose, parseGlb } from "@/lib/scene";
 import { updateSettings, useSettings } from "@/lib/settings";
@@ -228,6 +234,7 @@ export function Viewport({
   onFit,
   onStats,
   onNew,
+  onCompose,
 }: {
   listing: ModelListing | null;
   model: ModelSummary | null;
@@ -239,6 +246,8 @@ export function Viewport({
   onFit: () => void;
   onStats: (stats: SceneStats | null) => void;
   onNew: () => void;
+  /** Put marked views and their notes in the model's message to its agent, to send from there. */
+  onCompose: (text: string, files: File[]) => void;
 }) {
   const [shown, setShown] = useState<Shown | null>(null);
   const [error, setError] = useState<{ name: string; text: string } | null>(
@@ -250,6 +259,9 @@ export function Viewport({
   const moved = useRef(false);
   const gizmo = useRef<SVGSVGElement>(null);
   const look = useRef<GizmoApi | null>(null);
+  const capture = useRef<CaptureApi | null>(null);
+  // By model, what the person is marking up, which outlasts looking at another model or the renders for a while.
+  const [markups, setMarkups] = useState<Record<string, MarkupDraft>>({});
   const name = model?.name;
   const built = model?.built;
 
@@ -307,6 +319,26 @@ export function Viewport({
 
   const toggle = (tool: ViewTool) =>
     updateSettings((current) => ({ ...current, [tool]: !current[tool] }));
+
+  const in3d = mode === "3d";
+  const markup = (name && markups[name]) || NO_MARKUP;
+  const locked = in3d && markup.viewing !== null;
+
+  // Forgets a model's markup once nothing is left in it.
+  const changeMarkup = (change: (markup: MarkupDraft) => MarkupDraft) =>
+    setMarkups((current) => {
+      if (!name) {
+        return current;
+      }
+      const next = { ...current };
+      const after = change(current[name] ?? NO_MARKUP);
+      if (after.snapshots.length || after.message || after.marking) {
+        next[name] = after;
+      } else {
+        delete next[name];
+      }
+      return next;
+    });
 
   let message: ReactNode = null;
   if (listing === null) {
@@ -406,15 +438,36 @@ export function Viewport({
     );
   }
 
-  const in3d = mode === "3d";
   return (
     <section
       aria-label="Viewport"
       className="relative flex h-full min-h-48 flex-1 overflow-hidden bg-canvas"
     >
       {model?.status === "running" && <ProgressBar className="z-20" />}
-      {showing ? (
-        <div className="absolute inset-0">
+      {showing && model ? (
+        <Markup
+          model={model}
+          onCompose={onCompose}
+          active={in3d}
+          tools={
+            <ViewportToolbar
+              on={{
+                grid: settings.grid,
+                wireframe: settings.wireframe,
+                dimensions: settings.dimensions,
+              }}
+              onToggle={toggle}
+              onFit={onFit}
+              locked={locked}
+              compact={compact}
+              onRenders={compact ? () => onMode("renders") : undefined}
+            />
+          }
+          compact={compact}
+          markup={markup}
+          onChange={changeMarkup}
+          capture={capture}
+        >
           <Canvas
             camera={{ position: [2, 1.5, 2.5], fov: 45, near: 0.01, far: 1000 }}
             dpr={[1, 2]}
@@ -440,27 +493,18 @@ export function Viewport({
                 dark={dark}
               />
             </group>
-            <OrbitControls makeDefault />
+            {/* Still while marking, so a drag draws a box rather than turning the model. */}
+            <OrbitControls makeDefault enabled={!(in3d && markup.marking)} />
             <GizmoDriver svgRef={gizmo} apiRef={look} movedRef={moved} />
+            <CaptureDriver apiRef={capture} />
           </Canvas>
-        </div>
+        </Markup>
       ) : (
         message
       )}
       {showing && in3d && (
         <>
-          <ViewportToolbar
-            on={{
-              grid: settings.grid,
-              wireframe: settings.wireframe,
-              dimensions: settings.dimensions,
-            }}
-            onToggle={toggle}
-            onFit={onFit}
-            compact={compact}
-            onRenders={compact ? () => onMode("renders") : undefined}
-          />
-          {shown.rebuilt && (
+          {shown.rebuilt && !locked && (
             <div className="absolute top-3 right-3 z-10 flex h-7 items-center gap-1.5 rounded-md border border-line bg-panel px-2.5">
               <Icon name="check" />
               <span className="mono-annotation text-ink">
@@ -468,10 +512,12 @@ export function Viewport({
               </span>
             </div>
           )}
-          <AxisGizmo
-            svgRef={gizmo}
-            onAxis={(axis) => look.current?.look(axis)}
-          />
+          {!locked && (
+            <AxisGizmo
+              svgRef={gizmo}
+              onAxis={(axis) => look.current?.look(axis)}
+            />
+          )}
         </>
       )}
       {model && !in3d && (

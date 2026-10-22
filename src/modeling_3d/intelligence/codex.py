@@ -72,7 +72,7 @@ class CodexRun:
         # Replaced on every append, so a reader waits on the one current when it ran out of events.
         self._appended = asyncio.Event()
         # Steering that arrived as a turn ended, which goes on in a turn of its own.
-        self._pending: list[str] = []
+        self._pending: list[list[InputItem]] = []
         self._usage: AgentEvent | None = None
         self._text = ""
         self._answered = False
@@ -91,17 +91,18 @@ class CodexRun:
         """Wait until the prompt is sent, or the run ended trying."""
         await self._began.wait()
 
-    async def steer(self, message: str) -> None:
+    async def steer(self, message: str, images: list[Path] | None = None) -> None:
         await self._began.wait()
         if self._answered or self._task.done() or self._turn is None:
             raise self._ended()
+        content = _content(message, images or [])
         try:
-            await self._turn.steer(message)
+            await self._turn.steer(content)
         except InvalidRequestError:
             # The turn ended as the message went out; unless the run did too, it goes on in a turn of its own.
             if self._answered or self._task.done():
                 raise self._ended() from None
-            self._pending.append(message)
+            self._pending.append(content)
 
     async def cancel(self) -> None:
         self._stopping.set()
@@ -158,9 +159,7 @@ class CodexRun:
                 sandbox=sandbox,
             )
         self._session_id = self._thread.id
-        content: list[InputItem] = [TextInput(self._request.prompt)]
-        content.extend(LocalImageInput(str(path)) for path in self._request.images)
-        await self._begin(content)
+        await self._begin(_content(self._request.prompt, self._request.images))
 
     async def _begin(self, content: RunInput) -> None:
         if self._thread is None:
@@ -298,6 +297,10 @@ def workspace(request: AgentRequest) -> tuple[Path, Sandbox]:
     # Not sandboxed to the workspace when writable, as the agent runs tools such as Blender that write elsewhere; the
     # caller's prompt bounds the agent and the caller validates before anything the agent wrote is kept.
     return request.workspace.path.resolve(), Sandbox.full_access if request.writable else Sandbox.read_only
+
+
+def _content(text: str, images: list[Path]) -> list[InputItem]:
+    return [TextInput(text), *(LocalImageInput(str(path)) for path in images)]
 
 
 def as_data(notification: Notification) -> dict[str, Any]:

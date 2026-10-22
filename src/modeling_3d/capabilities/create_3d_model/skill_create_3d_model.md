@@ -70,8 +70,8 @@ earlier renders.
   A model without a session changes in a fresh one.
 - A session id: an earlier session of the model, to go back to what it knew then. Each run's
   session is its `session_id` in the model's `model.json`; `read-3d-model-activity --name <name>`
-  gives it on each request, beside that request's prompt, and `list-3d-models` gives the last
-  run's.
+  gives it on each request, beside that request's prompt, and `list-3d-models` gives the one
+  `true` continues as `last_session`, and whether it can go on here as `resumable`.
 
 A continued session runs on the agent provider that made it, with any of its models; a fresh
 one can use any.

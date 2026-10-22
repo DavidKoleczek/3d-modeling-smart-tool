@@ -64,7 +64,7 @@ class FakeTurn:
         self.effort = effort
         self.summary = summary
         self.notifications: asyncio.Queue[Notification] = asyncio.Queue()
-        self.steered: list[str] = []
+        self.steered: list[Any] = []
         self.done = False
 
     def put(self, notification: Notification) -> None:
@@ -79,10 +79,10 @@ class FakeTurn:
             if notification.method == "turn/completed":
                 return
 
-    async def steer(self, message: str) -> None:
+    async def steer(self, input: Any) -> None:
         if self.done:
             raise InvalidRequestError(-32600, "no active turn to steer")
-        self.steered.append(message)
+        self.steered.append(input)
 
     async def interrupt(self) -> None:
         self.world.interrupted += 1
@@ -279,12 +279,18 @@ async def test_events_keep_what_codex_said_without_its_deltas_and_one_token_coun
 async def test_steering_lands_in_the_turn_under_way(world: Callable[..., FakeWorld], tmp_path: Path) -> None:
     fake = world(never_answers)
 
+    image = tmp_path / "marked.png"
+
     run = await CodexIntelligence().start(request(tmp_path))
     await run.steer("Make the legs longer.")
+    await run.steer("And this one.", [image])
     fake.turns[0].put(completed())
     await run.result()
 
-    assert fake.turns[0].steered == ["Make the legs longer."]
+    assert fake.turns[0].steered == [
+        [TextInput("Make the legs longer.")],
+        [TextInput("And this one."), LocalImageInput(str(image))],
+    ]
     assert len(fake.turns) == 1
 
 
@@ -307,7 +313,7 @@ async def test_steering_that_arrives_as_the_turn_ends_goes_on_in_a_turn_of_its_o
     result = await run.result()
 
     assert fake.turns[0].steered == []
-    assert fake.turns[1].input == "Also add a hat."
+    assert fake.turns[1].input == [TextInput("Also add a hat.")]
     assert result.text == "second"
 
 

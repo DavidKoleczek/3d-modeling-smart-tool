@@ -11,7 +11,15 @@ from typer.testing import CliRunner
 
 from modeling_3d import lib
 from modeling_3d.cli import app
-from modeling_3d.schemas import Modeling3dError, ModelListing, ModelRecord, ModelRunRecord, ModelRunStatus, ModelSummary
+from modeling_3d.schemas import (
+    AgentProvider,
+    Modeling3dError,
+    ModelListing,
+    ModelRecord,
+    ModelRunRecord,
+    ModelRunStatus,
+    ModelSummary,
+)
 
 START = datetime(2026, 10, 17, 10, tzinfo=UTC)
 # Above Linux's highest pid and never handed out on Windows, so no process has it.
@@ -104,9 +112,46 @@ def test_models_list_newest_first_with_their_files_and_folders_without_a_record_
     assert first.status == "done"
     assert first.last_run is not None
     assert (first.last_run.prompt, first.last_run.session_id) == ("A elk", "session-elk")
+    assert (first.last_session, first.resumable) == (first.last_run, True)
     assert listing.models[2].files == ["model.py", "model.glb", "renders/front.png", "renders/side.png"]
-    assert (owl.status, owl.last_run, owl.files, owl.updated) == (None, None, [], owl.created)
+    assert (owl.status, owl.last_run, owl.last_session, owl.resumable, owl.files, owl.updated) == (
+        None,
+        None,
+        None,
+        False,
+        [],
+        owl.created,
+    )
     assert listing.unreadable == []
+
+
+@pytest.mark.parametrize(
+    ("agent_provider", "rollout", "resumable"),
+    [
+        ("claude", None, True),
+        ("codex", None, False),
+        ("codex", "sessions/2026/10/17/rollout-2026-10-17T10-00-00-{}.jsonl", True),
+        ("codex", "archived_sessions/rollout-2026-10-17T10-00-00-{}_0199f1c2-rollout.jsonl.zst", True),
+    ],
+    ids=["claude", "codex-elsewhere", "codex-here", "codex-archived"],
+)
+def test_a_follow_up_continues_the_latest_session_where_its_agent_provider_still_keeps_it(
+    codex_home: Path, agent_provider: AgentProvider, rollout: str | None, resumable: bool
+) -> None:
+    bear = make_model("bear")
+    record = ModelRecord.model_validate_json((bear / "model.json").read_text(encoding="utf-8"))
+    session = record.runs[0].model_copy(update={"agent_provider": agent_provider, "session_id": "0199f1c2-thread"})
+    unstarted = session.model_copy(update={"id": "run-unstarted", "session_id": None, "status": "failed"})
+    record.runs = [session, unstarted]
+    (bear / "model.json").write_text(record.model_dump_json(), encoding="utf-8")
+    if rollout is not None:
+        path = codex_home / rollout.format(session.session_id)
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+
+    summary = lib.view_3d_model("bear")
+
+    assert (summary.last_run, summary.last_session, summary.resumable) == (unstarted, session, resumable)
 
 
 def test_built_is_when_the_glb_was_last_written() -> None:

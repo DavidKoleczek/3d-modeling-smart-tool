@@ -25,13 +25,20 @@ from modeling_3d.capabilities.create_3d_model.record import (
     RECORD,
     REQUIRED_FILES,
     alive,
+    last_session,
     load_record,
     missing_model,
     model_files,
     read_events,
     write_record,
 )
-from modeling_3d.intelligence.interface import AgentRun, Intelligence, resolve_agent_provider, select_intelligence
+from modeling_3d.intelligence.interface import (
+    AgentRun,
+    Intelligence,
+    can_resume,
+    resolve_agent_provider,
+    select_intelligence,
+)
 from modeling_3d.intelligence.schemas import IMAGE_MEDIA_TYPES, AgentEvent, AgentRequest, HostWorkspace
 from modeling_3d.schemas import (
     AGENT_PROVIDERS,
@@ -80,8 +87,9 @@ class ModelRun(Protocol):
         """Every event from the start, then live ones until the run ends with `finished` or `failed`."""
         ...
 
-    async def steer(self, message: str) -> None:
-        """Send a message to the agent while it works; a `steered` event shows when it is delivered."""
+    async def steer(self, message: str, references: list[Path] | None = None) -> None:
+        """Send a message, and any references with it, to the agent while it works; a `steered` event shows when it is
+        delivered."""
         ...
 
     async def cancel(self) -> None:
@@ -149,9 +157,10 @@ class InProcessRun:
         """Every event from the start, then live ones until the run ends with `finished` or `failed`."""
         return self._replay()
 
-    async def steer(self, message: str) -> None:
-        """Send a message to the agent while it works, as from whoever asked for the run."""
-        await self._deliver(message, self._run.origin)
+    async def steer(self, message: str, references: list[Path] | None = None) -> None:
+        """Send a message, and any references with it, to the agent while it works, as from whoever asked for the run."""
+        copied = await asyncio.to_thread(_copy_references, self.directory, _references(references or []))
+        await self._deliver(message, copied, self._run.origin)
 
     async def cancel(self) -> None:
         """Stop the run at once and wait for it to end; its session can still be resumed."""
@@ -170,11 +179,14 @@ class InProcessRun:
     def _run_directory(self) -> Path:
         return self.directory / "runs" / self.run_id
 
-    async def _deliver(self, message: str, origin: str | None) -> None:
+    async def _deliver(self, message: str, references: list[str], origin: str | None) -> None:
         if self._task.done():
             raise _not_running(self.name, self._run.status, self._next)
-        await self._agent.steer(message)
-        self._emit("steered", message, {"steering": self._intelligence.steering, "origin": origin})
+        images = [self.directory / path for path in references if _attached(path)]
+        await self._agent.steer(message + _listed(references, "message"), images)
+        self._emit(
+            "steered", message, {"steering": self._intelligence.steering, "origin": origin, **_given(references)}
+        )
 
     async def _replay(self) -> AsyncIterator[ModelEvent]:
         index = 0
@@ -266,10 +278,12 @@ class InProcessRun:
                 path.unlink()
                 if self._cancelling is not None:
                     continue
+                references = note.get("references", [])
                 try:
-                    await self._deliver(note["message"], note.get("origin"))
+                    await self._deliver(note["message"], references, note.get("origin"))
                 except Modeling3dError as error:
-                    self._emit("steered", note["message"], {"error": str(error), "origin": note.get("origin")})
+                    data = {"error": str(error), "origin": note.get("origin"), **_given(references)}
+                    self._emit("steered", note["message"], data)
             await asyncio.sleep(POLL_SECONDS)
 
     def _request_cancel(self) -> None:
@@ -322,9 +336,9 @@ class DetachedRun:
         """Every event from the start, then each as the run's process writes it, until the run ends."""
         return self._follow()
 
-    async def steer(self, message: str) -> None:
-        """Send a message to the agent while it works, as from whoever asked for the run."""
-        _write_steering(await asyncio.to_thread(self._running), message, self._origin)
+    async def steer(self, message: str, references: list[Path] | None = None) -> None:
+        """Send a message, and any references with it, to the agent while it works, as from whoever asked for the run."""
+        await asyncio.to_thread(_steer, await asyncio.to_thread(self._running), message, references or [], self._origin)
 
     async def cancel(self) -> None:
         """Stop the run at once and wait for it to end; its session can still be resumed."""
@@ -441,6 +455,14 @@ async def create_3d_model(
         )
     if intelligence is None:
         agent_provider = resolve_agent_provider(agent_provider)
+        if resumed is not None and not can_resume(resumed.agent_provider, resumed.session_id):
+            raise Modeling3dError(
+                f"Model {target.name}'s session {resumed.session_id} is not among the sessions "
+                f"{resumed.agent_provider} keeps on this machine, as when the model was made on another, so it cannot "
+                "be continued here. Pass --resume-session false for a fresh session that reads its model.py.",
+                "session-unavailable",
+                target.name,
+            )
     provider: AgentProvider = agent_provider or AGENT_PROVIDERS[0]
     intelligence, model = select_intelligence(intelligence, provider, model, DEFAULT_INTELLIGENCE_MODELS)
     require_reasoning_effort(reasoning_effort, provider, model)
@@ -498,9 +520,15 @@ async def create_3d_model(
     return InProcessRun(target, record, agent, intelligence, timeout_seconds, next_command)
 
 
-def steer_3d_model(name: str, message: str, directory: Path | None = None, origin: str | None = None) -> None:
-    """Write a steering message for the process running the model's run to deliver."""
-    _write_steering(_running_run(name, directory), message, origin)
+def steer_3d_model(
+    name: str,
+    message: str,
+    directory: Path | None = None,
+    origin: str | None = None,
+    references: list[Path] | None = None,
+) -> None:
+    """Write a steering message for the process running the model's run to deliver, with its references copied in."""
+    _steer(_running_run(name, directory), message, references or [], origin)
 
 
 def cancel_3d_model(name: str, directory: Path | None = None) -> None:
@@ -508,12 +536,13 @@ def cancel_3d_model(name: str, directory: Path | None = None) -> None:
     (_running_run(name, directory) / "cancel").touch()
 
 
-def _write_steering(run_directory: Path, message: str, origin: str | None) -> None:
+def _steer(run_directory: Path, message: str, references: list[Path], origin: str | None) -> None:
+    copied = _copy_references(run_directory.parents[1], _references(references))
     steer = run_directory / "steer"
     stamp = f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}-{secrets.token_hex(3)}"
     # Written aside and renamed, so the running run never reads half a message.
     partial = steer / f"{stamp}.tmp"
-    partial.write_text(json.dumps({"message": message, "origin": origin}), encoding="utf-8")
+    partial.write_text(json.dumps({"message": message, "references": copied, "origin": origin}), encoding="utf-8")
     partial.replace(steer / f"{stamp}.json")
 
 
@@ -625,10 +654,10 @@ def _model_directory(root: Path, name: str) -> tuple[Path, ModelRecord | None]:
 
 def _resumed(name: str, existing: ModelRecord | None, resume_session: bool | str) -> ModelRunRecord | None:
     """The run whose session this one continues: the latest with a session, or the one with the session named."""
-    runs = list(reversed(existing.runs)) if existing is not None else []
     if not isinstance(resume_session, str):
         # A model without a session yet changes in a fresh one.
-        return next((run for run in runs if run.session_id is not None), None) if resume_session else None
+        return last_session(existing) if resume_session and existing is not None else None
+    runs = list(reversed(existing.runs)) if existing is not None else []
     resumed = next((run for run in runs if run.session_id == resume_session), None)
     if resumed is None:
         sessions = ", ".join(dict.fromkeys(run.session_id for run in runs if run.session_id is not None))
@@ -688,11 +717,7 @@ def _copy_references(target: Path, sources: list[Path]) -> list[str]:
 
 
 def _prompt(request: str, target: Path, references: list[str], resumed: bool, created: bool) -> str:
-    listed = ""
-    if references:
-        lines = [f"- {path}{_noted(path)}" for path in references]
-        heading = "References for this request, copied into the model's directory, with paths from there:"
-        listed = f"\n{heading}\n" + "\n".join(lines) + "\n"
+    listed = _listed(references, "request")
     if resumed:
         return (HERE / "resume_prompt.md").read_text(encoding="utf-8").format(request=request, references=listed)
     existing = (
@@ -706,6 +731,20 @@ def _prompt(request: str, target: Path, references: list[str], resumed: bool, cr
         .read_text(encoding="utf-8")
         .format(request=request, directory=target, bpy=BPY_REQUIREMENT, references=listed, existing=existing)
     )
+
+
+def _listed(references: list[str], what: str) -> str:
+    """The references, for the agent to find, after the request or message they came with."""
+    if not references:
+        return ""
+    lines = [f"- {path}{_noted(path)}" for path in references]
+    heading = f"References for this {what}, copied into the model's directory, with paths from there:"
+    return f"\n{heading}\n" + "\n".join(lines) + "\n"
+
+
+def _given(references: list[str]) -> dict[str, list[str]]:
+    """What a `steered` event records of the references sent with it, which most steering has none of."""
+    return {"references": references} if references else {}
 
 
 def _attached(reference: str) -> bool:

@@ -59,6 +59,27 @@ function readBase64(blob: Blob, name: string): Promise<string> {
   });
 }
 
+/** Send `file` to the server as `path` in the upload `upload`, a piece at a time, while `going` says to. */
+async function sendFile(
+  upload: string,
+  path: string,
+  file: Blob,
+  going: () => boolean,
+  sent: (bytes: number) => void,
+): Promise<void> {
+  let offset = 0;
+  // An empty file is still sent once, so it arrives.
+  do {
+    if (!going()) {
+      return;
+    }
+    const piece = file.slice(offset, offset + PIECE_BYTES);
+    await uploadReference(upload, path, offset, await readBase64(piece, path));
+    offset += piece.size;
+    sent(piece.size);
+  } while (offset < file.size);
+}
+
 function uploadId(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) =>
     byte.toString(16).padStart(2, "0"),
@@ -168,22 +189,13 @@ export function useReferences(): References {
       setItems((current) => [...current, reference]);
       const run = async () => {
         for (const { path, file } of entries) {
-          let offset = 0;
-          // An empty file is still sent once, so it arrives.
-          do {
-            if (!sending.current.has(key)) {
-              return;
-            }
-            const piece = file.slice(offset, offset + PIECE_BYTES);
-            await uploadReference(
-              key,
-              path,
-              offset,
-              await readBase64(piece, path),
-            );
-            offset += piece.size;
-            update(key, (item) => ({ sent: item.sent + piece.size }));
-          } while (offset < file.size);
+          await sendFile(
+            key,
+            path,
+            file,
+            () => sending.current.has(key),
+            (bytes) => update(key, (item) => ({ sent: item.sent + bytes })),
+          );
         }
       };
       // Started once it is kept, so its first look finds it there.

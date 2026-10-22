@@ -64,7 +64,7 @@ export function Dimensions({
   const gap = Math.max(size.x, size.y, size.z) * 0.08;
   const { min, max } = box;
   return (
-    <group>
+    <group userData={{ inStills: false }}>
       <Measure
         from={[min.x, min.y, max.z + gap]}
         to={[max.x, min.y, max.z + gap]}

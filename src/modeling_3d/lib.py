@@ -143,7 +143,13 @@ async def create_3d_model(
     )
 
 
-def steer_3d_model(name: str, message: str, directory: Path | None = None, origin: str | None = None) -> None:
+def steer_3d_model(
+    name: str,
+    message: str,
+    directory: Path | None = None,
+    origin: str | None = None,
+    references: list[Path] | None = None,
+) -> None:
     """Send a message to the agent working on the model, from any process; the run's events show when it lands.
 
     Args:
@@ -151,8 +157,10 @@ def steer_3d_model(name: str, message: str, directory: Path | None = None, origi
         message: What to tell its agent.
         directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
         origin: Who is sending it, shown with it in the model's activity, as for `create_3d_model`.
+        references: Files or folders to send with it, copied into the model's references/ as for `create_3d_model`;
+            images are shown to the agent with the message.
     """
-    create.steer_3d_model(name=name, message=message, directory=directory, origin=origin)
+    create.steer_3d_model(name=name, message=message, directory=directory, origin=origin, references=references)
 
 
 def cancel_3d_model(name: str, directory: Path | None = None) -> None:

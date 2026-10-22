@@ -4,6 +4,7 @@ export type FailureReason =
   | "name-in-use"
   | "no-such-model"
   | "no-such-session"
+  | "session-unavailable"
   | "missing-reference"
   | "no-reference-model"
   | "already-running"
@@ -49,6 +50,8 @@ function worded(error: AppError): string | null {
       return `${model} isn't in this folder anymore.`;
     case "no-such-session":
       return `${model} has no agent session like that. Switch Continue session off to change it in a fresh one.`;
+    case "session-unavailable":
+      return `${model}'s last agent session isn't on this machine. Switch off Continue session to change it in a fresh one.`;
     case "missing-reference":
       return "A file to work from couldn't be found. Remove it and add it again.";
     case "no-reference-model":

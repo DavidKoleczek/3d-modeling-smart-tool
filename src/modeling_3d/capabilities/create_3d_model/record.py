@@ -8,7 +8,7 @@ import time
 
 from pydantic import ValidationError
 
-from modeling_3d.schemas import ModelEvent, Modeling3dError, ModelRecord
+from modeling_3d.schemas import ModelEvent, Modeling3dError, ModelRecord, ModelRunRecord
 
 DEFAULT_DIRECTORY = Path(".modeling-3d")
 RECORD = "model.json"
@@ -38,6 +38,11 @@ def load_record(target: Path) -> ModelRecord:
 
 def write_record(target: Path, record: ModelRecord) -> None:
     write_atomically(target / RECORD, record.model_dump_json(indent=2))
+
+
+def last_session(record: ModelRecord) -> ModelRunRecord | None:
+    """The latest run with a session, which a request continues when it resumes without naming a session."""
+    return next((run for run in reversed(record.runs) if run.session_id is not None), None)
 
 
 def read_atomically(path: Path) -> str:

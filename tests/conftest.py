@@ -18,6 +18,14 @@ def config_directory(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.T
 
 
 @pytest.fixture(autouse=True)
+def codex_home(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Where Codex keeps its sessions, so whether one can be continued never turns on those of whoever runs the tests."""
+    home = tmp_path_factory.mktemp("codex")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    return home
+
+
+@pytest.fixture(autouse=True)
 def uploads_directory(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Where the app keeps the references the view sends, so no test touches those of an app running on this machine."""
     uploads = tmp_path_factory.mktemp("uploads")

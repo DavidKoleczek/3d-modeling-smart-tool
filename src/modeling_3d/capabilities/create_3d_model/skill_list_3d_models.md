@@ -52,6 +52,8 @@ JSON on stdout:
         "last_event": "2026-10-17T10:28:41Z",
         "finished": "2026-10-17T10:28:40Z"
       },
+      "last_session": {"id": "20261017-100000-ab12cd", "agent_provider": "claude", "session_id": "5f0e...", ...},
+      "resumable": true,
       "files": ["model.py", "model.glb", "model.py.lock", "renders/front.png"]
     }
   ],
@@ -64,4 +66,8 @@ JSON on stdout:
 ran. `built` is when `model.glb` was last written, and null before the first build. `status` is the last run's: `running`, `done`, `failed`, `cancelled`, or `timed-out`, or
 `crashed` when a run is recorded as running but its process is gone. A crashed model goes on
 with `create-3d-model --name <name> --resume-session true`, which continues its session.
+`last_session` is the entry of the latest run with a session, the one `--resume-session true`
+continues, and usually the same as `last_run`. `resumable` is whether a run on this machine can
+continue it: false without one, or when its agent provider no longer has it here, as for a model
+made on another machine, which changes with `--resume-session false` instead.
 `last_viewed` is set by `view-3d-model`, and is null when that model is gone.
