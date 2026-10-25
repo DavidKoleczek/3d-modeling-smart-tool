@@ -5,9 +5,11 @@ import base64
 from collections.abc import AsyncIterator
 import contextlib
 import dataclasses
+import hashlib
 from importlib.metadata import version
 import json
 from pathlib import Path
+import secrets
 import shutil
 import time
 from typing import Any
@@ -30,11 +32,13 @@ from claude_agent_sdk import (
     fold_session_summary,
 )
 
+from modeling_3d.core.skill import DISTRIBUTION
 from modeling_3d.intelligence.interface import state_directory
 from modeling_3d.intelligence.schemas import IMAGE_MEDIA_TYPES, AgentEvent, AgentRequest, AgentResult, Steering
 from modeling_3d.schemas import Modeling3dError
 
 AUTHENTICATION_DOCUMENTATION = "https://code.claude.com/docs/en/agent-sdk/quickstart"
+# The only tools an agent gets, so AskUserQuestion is not among them: nobody answers a question while a run works.
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"]
 WRITE_TOOLS = ["Edit", "Write"]
 # How long a stopping run waits for Claude Code to abort its tools before ending the process anyway.
@@ -47,6 +51,11 @@ MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 COMPOSING_SECONDS = 1.0
 # Enough of the arguments written so far to find what the call works on, which comes first.
 COMPOSING_HEAD_CHARACTERS = 500
+# Claude Code loads skills only from plugins, so a request's skills come as one, which names them `modeling-3d:<name>`.
+PLUGIN_NAME = DISTRIBUTION
+PLUGIN_HASH_LENGTH = 16
+# Every source the CLI loads by default, which setting skills would narrow to the user's and the project's.
+SETTING_SOURCES: list[Any] = ["user", "project", "local"]
 
 
 @dataclasses.dataclass
@@ -141,6 +150,12 @@ class ClaudeRun:
             if isinstance(message, UserMessage) and message.uuid is not None:
                 self._unechoed.discard(message.uuid)
             if isinstance(message, ResultMessage) and not self._unechoed:
+                follow_up = None
+                if self._request.follow_up is not None and not message.is_error:
+                    follow_up = await self._request.follow_up()
+                if follow_up is not None:
+                    await self._send(follow_up, [])
+                    continue
                 self._answered = True
                 return outcome(message)
         raise RuntimeError("Claude Code ended the conversation without a result.")
@@ -337,9 +352,11 @@ def options(request: AgentRequest) -> ClaudeAgentOptions:
         cwd = scratch_directory()
         cwd.mkdir(parents=True, exist_ok=True)
         tools = []
+    if request.skill_directories:
+        tools = [*tools, "Skill"]
     # The shell is not sandboxed to the workspace; the caller's prompt bounds the agent and the caller
     # validates before anything the agent wrote is kept.
-    return ClaudeAgentOptions(
+    options = ClaudeAgentOptions(
         cwd=cwd,
         model=request.model,
         tools=tools,
@@ -356,6 +373,46 @@ def options(request: AgentRequest) -> ClaudeAgentOptions:
         session_store=None if request.session_directory is None else FolderSessionStore(request.session_directory),
         session_store_flush="eager",
     )
+    if request.skill_directories:
+        options.plugins = [{"type": "local", "path": str(skills_plugin(request.skill_directories))}]
+        options.skills = "all"
+        options.setting_sources = SETTING_SOURCES
+    return options
+
+
+def skills_plugin(skill_directories: list[Path]) -> Path:
+    """A local plugin holding a copy of every skill in the directories.
+
+    Named by the skills' content, so a written plugin never changes and runs at once can share it. Of two skills with
+    one name, the one in the earlier directory is kept.
+    """
+    skills: dict[str, Path] = {}
+    for directory in skill_directories:
+        for found in sorted(directory.glob("*/SKILL.md")):
+            skills.setdefault(found.parent.name, found.parent)
+    digest = hashlib.sha256()
+    for name, folder in sorted(skills.items()):
+        digest.update(f"{name}\0".encode())
+        for path in sorted(each for each in folder.rglob("*") if each.is_file()):
+            digest.update(f"{path.relative_to(folder).as_posix()}\0".encode())
+            digest.update(path.read_bytes())
+    root = scratch_directory() / "plugins" / digest.hexdigest()[:PLUGIN_HASH_LENGTH]
+    plugin = root / PLUGIN_NAME
+    if plugin.is_dir():
+        return plugin
+    # Written aside and renamed, so a run never loads half a plugin.
+    partial = root.with_name(f"{root.name}.{secrets.token_hex(3)}.tmp")
+    (partial / PLUGIN_NAME / "skills").mkdir(parents=True)
+    for name, folder in skills.items():
+        shutil.copytree(folder, partial / PLUGIN_NAME / "skills" / name)
+    try:
+        partial.rename(root)
+    except OSError:
+        # Another run wrote the same plugin first.
+        shutil.rmtree(partial, ignore_errors=True)
+        if not plugin.is_dir():
+            raise
+    return plugin
 
 
 def outcome(result: ResultMessage) -> AgentResult:

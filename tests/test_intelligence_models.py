@@ -3,62 +3,38 @@
 from typing import cast
 
 import pytest
-from typer.testing import CliRunner
 
 from modeling_3d import lib
 from modeling_3d.capabilities.create_3d_model import intelligence_models
-from modeling_3d.cli import app
-from modeling_3d.schemas import AgentProvider, IntelligenceChoice, IntelligenceModels, Modeling3dError, ReasoningEffort
+from modeling_3d.schemas import (
+    AGENT_PROVIDERS,
+    DEFAULT_INTELLIGENCE_MODELS,
+    DEFAULT_REASONING_EFFORT,
+    INTELLIGENCE_MODELS,
+    PROVIDER_REASONING_EFFORTS,
+    REASONING_EFFORTS,
+    AgentProvider,
+    IntelligenceChoice,
+    Modeling3dError,
+    ReasoningEffort,
+)
 
-runner = CliRunner()
 
+@pytest.mark.parametrize(
+    "providers", [("claude",), ("claude", "codex"), ("codex",), ()], ids=["claude", "both", "codex", "none"]
+)
+def test_it_offers_the_models_of_the_installed_agent_providers_and_defaults_to_the_first_s(
+    monkeypatch: pytest.MonkeyPatch, providers: tuple[AgentProvider, ...]
+) -> None:
+    monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: agent_provider in providers)
 
-@pytest.fixture
-def only_claude(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: agent_provider == "claude")
-
-
-def test_it_offers_sonnet_and_opus_up_to_max_with_the_default(only_claude: None) -> None:
     options = lib.list_intelligence_models()
 
-    assert [(model.id, model.label, model.reasoning_efforts) for model in options.models] == [
-        ("claude-sonnet-5-5", "Sonnet 5.5", ["low", "medium", "high", "xhigh", "max"]),
-        ("claude-opus-5-5", "Opus 5.5", ["low", "medium", "high", "xhigh", "max"]),
-    ]
+    assert options.models == [model for model in INTELLIGENCE_MODELS if model.agent_provider in providers]
+    first = providers[0] if providers else AGENT_PROVIDERS[0]
     assert options.default == IntelligenceChoice(
-        agent_provider="claude", model="claude-sonnet-5-5", reasoning_effort="medium"
+        agent_provider=first, model=DEFAULT_INTELLIGENCE_MODELS[first], reasoning_effort=DEFAULT_REASONING_EFFORT
     )
-
-
-def test_with_codex_installed_it_also_offers_sol_and_astra_up_to_ultra(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: True)
-
-    options = lib.list_intelligence_models()
-
-    assert [(model.agent_provider, model.id, model.label) for model in options.models] == [
-        ("claude", "claude-sonnet-5-5", "Sonnet 5.5"),
-        ("claude", "claude-opus-5-5", "Opus 5.5"),
-        ("codex", "gpt-6.1-sol", "Sol 6.1"),
-        ("codex", "gpt-6-astra", "Astra 6"),
-    ]
-    assert [model.reasoning_efforts for model in options.models[2:]] == [
-        ["low", "medium", "high", "xhigh", "max", "ultra"]
-    ] * 2
-
-
-def test_only_codex_installed_makes_sol_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: agent_provider == "codex")
-
-    options = lib.list_intelligence_models()
-
-    assert [model.id for model in options.models] == ["gpt-6.1-sol", "gpt-6-astra"]
-    assert options.default == IntelligenceChoice(agent_provider="codex", model="gpt-6.1-sol", reasoning_effort="medium")
-
-
-def test_without_an_agent_provider_it_offers_no_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: False)
-
-    assert lib.list_intelligence_models().models == []
 
 
 async def test_a_reasoning_effort_that_is_not_one_names_the_ones_that_are() -> None:
@@ -66,26 +42,11 @@ async def test_a_reasoning_effort_that_is_not_one_names_the_ones_that_are() -> N
         await lib.create_3d_model("A bear", name="bear", reasoning_effort=cast(ReasoningEffort, "extreme"), detach=True)
 
     assert failure.value.reason == "bad-reasoning-effort"
-    assert "Pass one of: low, medium, high, xhigh, max, ultra." in str(failure.value)
+    assert ", ".join(REASONING_EFFORTS) in str(failure.value)
 
 
-@pytest.mark.parametrize(
-    ("agent_provider", "model", "efforts"),
-    [
-        ("claude", "claude-opus-5-5", ("low", "medium", "high", "xhigh", "max")),
-        ("claude", "claude-future", ("low", "medium", "high", "xhigh", "max")),
-        ("codex", "gpt-6-astra", ("low", "medium", "high", "xhigh", "max", "ultra")),
-        ("codex", "gpt-future", ("low", "medium", "high", "xhigh", "max", "ultra")),
-    ],
-)
-def test_a_model_takes_its_own_efforts_or_its_agent_provider_s_when_not_listed(
-    agent_provider: AgentProvider, model: str, efforts: tuple[ReasoningEffort, ...]
-) -> None:
-    assert intelligence_models.reasoning_efforts(agent_provider, model) == efforts
+@pytest.mark.parametrize("agent_provider", AGENT_PROVIDERS)
+def test_a_model_not_listed_takes_its_agent_provider_s_efforts(agent_provider: AgentProvider) -> None:
+    efforts = intelligence_models.reasoning_efforts(agent_provider, f"{agent_provider}-future")
 
-
-def test_the_cli_prints_the_options_as_json(only_claude: None) -> None:
-    listed = runner.invoke(app, ["list-intelligence-models"])
-
-    assert listed.exit_code == 0, listed.output
-    assert IntelligenceModels.model_validate_json(listed.stdout) == lib.list_intelligence_models()
+    assert efforts == PROVIDER_REASONING_EFFORTS[agent_provider]

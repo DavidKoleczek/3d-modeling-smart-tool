@@ -6,6 +6,10 @@ import { app } from "@/lib/host";
 const LIST_TOOL = "list_3d_models";
 const VIEW_TOOL = "view_3d_model";
 const CREATE_TOOL = "create_3d_model";
+const RIG_TOOL = "rig_3d_model";
+const COLOR_TOOL = "color_3d_model";
+const DETAIL_TOOL = "detail_3d_model";
+const CHECK_TOOL = "check_3d_model";
 const UPLOAD_TOOL = "upload_reference";
 const STEER_TOOL = "steer_3d_model";
 const CANCEL_TOOL = "cancel_3d_model";
@@ -20,10 +24,15 @@ const OPEN_FOLDER_TOOL = "open_app_folder";
 const MODEL_FILE_PREFIX = "modeling-3d://models/";
 // Starting a run waits for its agent to start, which can take a while on a cold machine.
 const CREATE_TIMEOUT_MS = 120_000;
+// Longer than the server waits on a check before it says the check is still going.
+const CHECK_TIMEOUT_MS = 60_000;
 
 /** `ModelStatus` in schemas.py. */
 export type ModelStatus =
   "running" | "crashed" | "done" | "failed" | "cancelled" | "timed-out";
+
+/** `ModelMode` in schemas.py: the stage a run works on the model in, each a capability of its own. */
+export type ModelMode = "shape" | "rig" | "color" | "detail";
 
 /** `ReasoningEffort` in schemas.py. */
 export type ReasoningEffort =
@@ -32,10 +41,16 @@ export type ReasoningEffort =
 /** The fields of `ModelRunRecord` in schemas.py that the view reads. */
 export type ModelRun = {
   id: string;
+  mode: ModelMode;
+  /** Empty for a rig, coloring, or detailing left to work it out. */
   prompt: string;
   agent_provider: string;
   model: string;
   reasoning_effort: ReasoningEffort;
+  max_triangles: number | null;
+  max_draw_calls: number | null;
+  /** The smallest and largest the model is on screen, in pixels along its longest side at 1080p. */
+  screen_size: [number, number] | null;
   session_id: string | null;
   origin: string | null;
   resumed: boolean;
@@ -51,6 +66,8 @@ export type ModelSummary = {
   created: string;
   updated: string;
   built: string | null;
+  /** When its latest check, checks/report.json, was written. */
+  checked: string | null;
   status: ModelStatus | null;
   last_run: ModelRun | null;
   /** The latest run with a session, the one a request continues when it resumes. */
@@ -80,6 +97,7 @@ export type ActivityKind =
   | "tool-result"
   | "usage"
   | "steered"
+  | "checked"
   | "ended";
 
 /** `ActivityEntry` in schemas.py. */
@@ -97,6 +115,90 @@ export type ModelActivity = {
   model: ModelSummary;
   entries: ActivityEntry[];
   cursor: string;
+};
+
+/** `CheckName` in schemas.py. */
+export type CheckName =
+  | "triangles"
+  | "sub-pixel"
+  | "round-parts"
+  | "buried-faces"
+  | "on-screen"
+  | "draw-calls"
+  | "static-parts"
+  | "moving-parts"
+  | "skeleton"
+  | "markers"
+  | "poses"
+  | "palette"
+  | "face-roles"
+  | "emission"
+  | "schemes"
+  | "detail-texture"
+  | "detail-uvs"
+  | "detail-colors"
+  | "detail-renders";
+
+/** `CHECK_GROUPS` in schemas.py, in the order the report gives them. */
+export const CHECK_GROUPS: { group: string; checks: CheckName[] }[] = [
+  {
+    group: "Shape",
+    checks: [
+      "triangles",
+      "sub-pixel",
+      "round-parts",
+      "buried-faces",
+      "on-screen",
+    ],
+  },
+  {
+    group: "Rig",
+    checks: [
+      "draw-calls",
+      "static-parts",
+      "moving-parts",
+      "skeleton",
+      "markers",
+      "poses",
+    ],
+  },
+  {
+    group: "Color",
+    checks: ["palette", "face-roles", "emission", "schemes"],
+  },
+  {
+    group: "Detail",
+    checks: ["detail-texture", "detail-uvs", "detail-colors", "detail-renders"],
+  },
+];
+
+/** `CheckResult` in schemas.py: what one check measured, for whoever reads it to judge. */
+export type CheckResult = {
+  name: CheckName;
+  summary: string;
+  skipped: boolean;
+  lines: string[];
+  figures: Record<string, unknown>;
+  /** Its renders, relative to the model's directory. */
+  files: string[];
+};
+
+/** `ModelCheck` in schemas.py. */
+export type ModelCheck = {
+  name: string;
+  directory: string;
+  checked: string;
+  glb_sha256: string;
+  max_triangles: number | null;
+  max_draw_calls: number | null;
+  screen_size: [number, number] | null;
+  /** In meters, along glTF's x, y, and z. */
+  dimensions: [number, number, number];
+  bounds: [[number, number, number], [number, number, number]];
+  triangles: number;
+  mesh_objects: number;
+  materials: number;
+  checks: CheckResult[];
 };
 
 /** `ToolCall` in schemas.py. */
@@ -141,6 +243,8 @@ export type AppSettings = {
   grid: boolean;
   wireframe: boolean;
   dimensions: boolean;
+  rig: boolean;
+  surface: boolean;
   wide: AppLayout;
   medium: AppLayout;
   /** By model id, the groups of steps in its activity the person opened or closed, and which. */
@@ -154,6 +258,20 @@ export type AppFolders = { settings: string; models: string };
 export type ModelRequest = {
   prompt: string;
   name: string;
+  /** Left out for the default, or the model's own for a change; null for no budget. */
+  max_triangles?: number | null;
+  max_draw_calls?: number | null;
+  screen_size?: [number, number] | null;
+  resume_session?: boolean | string;
+  uploads?: string[];
+  reference_models?: string[];
+} & Partial<IntelligenceChoice>;
+
+/** What a request to rig, color, or detail a built model asks for; it works to the model's own budgets. */
+export type BuiltModelRequest = {
+  /** Left out, the agent works out what moves, the roles and colors, or what to paint. */
+  prompt?: string;
+  name: string;
   resume_session?: boolean | string;
   uploads?: string[];
   reference_models?: string[];
@@ -163,6 +281,7 @@ export type ModelRequest = {
 export type ModelFile = { base64: string; mimeType: string };
 
 export const GLB = "model.glb";
+const CHECK_REPORT = "checks/report.json";
 const RENDER = /^renders\/.+\.(png|jpe?g|webp)$/i;
 
 // The views the agent usually renders, in the order the app shows them; others follow by name.
@@ -267,6 +386,62 @@ export async function createModel(
     request,
     CREATE_TIMEOUT_MS,
   )) as ModelSummary;
+}
+
+/** Start a run that rigs the built model; resolves with its summary once its agent runs. */
+export async function rigModel(
+  request: BuiltModelRequest,
+): Promise<ModelSummary> {
+  return (await structuredFrom(
+    RIG_TOOL,
+    request,
+    CREATE_TIMEOUT_MS,
+  )) as ModelSummary;
+}
+
+/** Start a run that colors the built model by role; resolves with its summary once its agent runs. */
+export async function colorModel(
+  request: BuiltModelRequest,
+): Promise<ModelSummary> {
+  return (await structuredFrom(
+    COLOR_TOOL,
+    request,
+    CREATE_TIMEOUT_MS,
+  )) as ModelSummary;
+}
+
+/** Start a run that paints the built model's surface detail; resolves with its summary once its agent runs. */
+export async function detailModel(
+  request: BuiltModelRequest,
+): Promise<ModelSummary> {
+  return (await structuredFrom(
+    DETAIL_TOOL,
+    request,
+    CREATE_TIMEOUT_MS,
+  )) as ModelSummary;
+}
+
+/** Check the model against its own budgets, asking again while the server says the check is still going. */
+export async function checkModel(name: string): Promise<ModelCheck> {
+  for (;;) {
+    const structured = await structuredFrom(
+      CHECK_TOOL,
+      { name },
+      CHECK_TIMEOUT_MS,
+    );
+    if (structured.report) {
+      return structured.report as ModelCheck;
+    }
+  }
+}
+
+/** The model's latest check, as checks/report.json keeps it. */
+export async function readCheck(name: string): Promise<ModelCheck> {
+  const file = await readModelFile(name, CHECK_REPORT);
+  const bytes = Uint8Array.from(atob(file.base64), (character) =>
+    character.charCodeAt(0),
+  );
+  return JSON.parse(new TextDecoder().decode(bytes)) as ModelCheck;
 }
 
 /** Send a piece of a file to work from, `data` in base64, to land at `offset` in `path` of the upload. */

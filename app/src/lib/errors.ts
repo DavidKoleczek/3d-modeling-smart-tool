@@ -17,7 +17,11 @@ export type FailureReason =
   | "bad-upload"
   | "no-such-intelligence-model"
   | "bad-reasoning-effort"
-  | "bad-settings";
+  | "bad-budget"
+  | "bad-settings"
+  | "no-such-check"
+  | "not-built"
+  | "bad-glb";
 
 /** A failure from the server, with which one it was when the library named it. */
 export class AppError extends Error {
@@ -74,8 +78,14 @@ function worded(error: AppError): string | null {
       return "That AI model can't be picked here anymore. Pick another.";
     case "bad-reasoning-effort":
       return "That reasoning effort isn't one the agent knows. Pick another.";
+    case "bad-budget":
+      return "Budgets are whole numbers of 1 or more, or none, with the smallest size on screen first.";
     case "bad-settings":
       return "Those settings couldn't be saved. Reset the layout, or reload the app and try again.";
+    case "not-built":
+      return `${model} isn't built yet, so there's nothing to rig or check. Describe it in Shape first.`;
+    case "bad-glb":
+      return `${model}'s model.glb couldn't be read. Ask the agent to rebuild it.`;
     default:
       return null;
   }

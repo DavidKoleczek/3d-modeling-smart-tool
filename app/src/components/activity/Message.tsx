@@ -7,6 +7,12 @@ import { useModelImage } from "@/lib/images";
 import { cn } from "@/lib/utils";
 
 const IMAGE = /\.(png|jpe?g|webp)$/i;
+// What a request that asked for nothing in particular shows, by mode.
+const UNASKED: Record<string, string> = {
+  rig: "Rig it, working out what moves",
+  color: "Color it, working out the roles and colors",
+  detail: "Paint its surface detail, working out what it shows",
+};
 
 /** Who sent a request or steering message, as the activity names them. */
 function sender(origin: string | null): string {
@@ -61,6 +67,11 @@ export function Message({
   const images = references.filter((path) => IMAGE.test(path));
   const files = references.filter((path) => !IMAGE.test(path));
   const error = typeof entry.data.error === "string" ? entry.data.error : null;
+  // A rig, coloring, or detailing asked for nothing in particular, which leaves the agent to work it out.
+  const unasked =
+    !entry.text &&
+    typeof entry.data.mode === "string" &&
+    Object.hasOwn(UNASKED, entry.data.mode);
   const [opened, setOpened] = useState<ShownImage | null>(null);
   return (
     <li className="flex max-w-[86%] shrink-0 flex-col items-end gap-1 self-end">
@@ -75,9 +86,10 @@ export function Message({
         className={cn(
           "rounded-lg border bg-field px-3 py-1.5 wrap-break-word whitespace-pre-wrap",
           steering ? "border-line-control" : "border-line",
+          unasked && "text-ink-muted",
         )}
       >
-        {entry.text}
+        {unasked ? UNASKED[entry.data.mode as string] : entry.text}
       </p>
       {references.length > 0 && (
         <div className="flex flex-wrap items-end justify-end gap-1">

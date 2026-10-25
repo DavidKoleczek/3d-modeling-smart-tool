@@ -1,0 +1,9 @@
+# Only each model's sources are committed; the rest are the agent's working files.
+/*
+!/.gitignore
+!/AGENTS.md
+/*/*
+!/*/model.json
+!/*/model.py
+!/*/validate.py
+!/*/README.md

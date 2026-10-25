@@ -62,6 +62,10 @@ Stop-Process -Id (Get-NetTCPConnection -LocalPort 8788 -State Listen).OwningProc
 # Create a 3D model in .modeling-3d/bear
 modeling-3d create-3d-model "A low poly brown bear like the image" --name bear --reference bear.png
 
+# A model within budgets, seen from 40 to 240 pixels long
+modeling-3d create-3d-model "A delivery truck" --name truck --max-triangles 2000 \
+    --max-draw-calls 2 --screen-size 40-240
+
 # Change it, in a fresh session that reads its model.py
 modeling-3d create-3d-model "Make it a polar bear" --name bear
 
@@ -75,6 +79,22 @@ modeling-3d create-3d-model "A cub like the bear" --name cub --detach \
 # Steer or stop it from another shell while it works
 modeling-3d steer-3d-model --name bear --message "Make the ears rounder"
 modeling-3d cancel-3d-model --name bear
+
+# Once the shape is right, rig it to move: the agent works out what moves, or you say
+modeling-3d rig-3d-model --name truck
+modeling-3d rig-3d-model "The tailgate swings down 90 degrees" --name truck
+
+# Then color it by role from a palette, a row for each color scheme
+modeling-3d color-3d-model --name truck
+modeling-3d color-3d-model "Add a postal scheme in reds and whites" --name truck
+
+# Then paint its surface detail, such as seams, screws, and wear, which shades every scheme
+modeling-3d detail-3d-model --name truck
+modeling-3d detail-3d-model "Mud on the wheel arches, fading up the sides" --name truck
+
+# Measure a model against its budgets, with renders at its sizes on screen; it reports and never fails
+modeling-3d check-3d-model --name bear
+modeling-3d check-3d-model --name bear --check shape
 
 # What was asked of a model, by whom, and what its agent did, in the app or anywhere else
 modeling-3d read-3d-model-activity --name bear

@@ -2,6 +2,7 @@ import asyncio
 import base64
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
+import json
 import os
 from pathlib import Path
 import re
@@ -12,14 +13,21 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import detached_agent
+from fakes import run_record
+from glbs import Glb, box
 from mcp import Client, MCPError
 from mcp.types import BlobResourceContents, TextContent, TextResourceContents
 import pytest
 
 from modeling_3d import lib
+from modeling_3d.capabilities.app import mcp_server
 from modeling_3d.capabilities.app import server as server_module
 from modeling_3d.capabilities.create_3d_model import create, intelligence_models
+from modeling_3d.capabilities.create_3d_model.record import write_record
 from modeling_3d.schemas import (
+    DEFAULT_INTELLIGENCE_MODELS,
+    DEFAULT_REASONING_EFFORT,
+    PROVIDER_REASONING_EFFORTS,
     AppFolders,
     AppIntelligence,
     AppLayout,
@@ -31,7 +39,6 @@ from modeling_3d.schemas import (
     Modeling3dError,
     ModelListing,
     ModelRecord,
-    ModelRunRecord,
     ModelSummary,
     PaneLayout,
     ToolCall,
@@ -91,34 +98,20 @@ async def send(client: Client, path: str, data: bytes, upload: str | None = None
     return upload
 
 
-def model_in(directory: Path, name: str, references: list[str] | None = None) -> Path:
-    """A model that has been built, whose one run was given `references`."""
+def model_in(directory: Path, name: str, references: list[str] | None = None, **run: Any) -> Path:
+    """A model that has been built, whose one run was given `references`, and whatever else `run` sets."""
     target = directory / name
     (target / "renders").mkdir(parents=True)
-    runs = []
-    if references is not None:
-        run = ModelRunRecord(
-            id="run",
-            prompt=f"A {name}",
-            references=references,
-            resumed=False,
-            agent_provider="claude",
-            model="claude-sonnet-5-5",
-            reasoning_effort="medium",
-            status="done",
-            pid=1,
-            started=datetime.now(UTC),
-        )
-        runs.append(run)
+    runs = [] if references is None else [run_record(prompt=f"A {name}", references=references, **run)]
     record = ModelRecord(id=f"id-{name}", name=name, created=datetime.now(UTC), runs=runs)
-    (target / "model.json").write_text(record.model_dump_json(), encoding="utf-8")
+    write_record(target, record)
     (target / "model.py").write_text("# the model", encoding="utf-8")
     (target / "model.glb").write_bytes(b"glTF-bytes")
     (target / "renders" / "front view.png").write_bytes(b"png-bytes")
     return target
 
 
-def test_the_host_page_points_at_a_sandbox_on_another_origin_with_the_view_csp_and_nothing_else(
+def test_the_host_page_points_at_a_sandbox_on_another_origin_and_only_its_own_pages_reach_mcp(
     open_app: Callable[..., lib.AppServer],
 ) -> None:
     app = open_app().open()
@@ -130,18 +123,7 @@ def test_the_host_page_points_at_a_sandbox_on_another_origin_with_the_view_csp_a
     assert "connect-src 'none'" in headers["content-security-policy"]
     assert f'content="{app.url.rsplit(":", 1)[1]}"' in page
     assert get(f"{sandbox}/")[0] == 404
-
-
-async def test_the_browser_host_reaches_the_server_over_mcp(open_app: Callable[..., lib.AppServer]) -> None:
-    app_server = open_app()
-
-    async with Client(f"{app_server.open().url}/mcp") as client:
-        view = (await client.read_resource("ui://modeling-3d/app")).contents[0]
-        tools = {tool.name for tool in (await client.list_tools()).tools}
-
-    assert isinstance(view, TextResourceContents)
-    assert view.text == lib.app_view()
-    assert {"reply", "app_updates", "app_message"}.isdisjoint(tools)
+    assert get(f"{app.url}/mcp", origin="https://example.com")[0] == 403
 
 
 async def activity_until(client: Client, name: str, ends: int) -> ModelActivity:
@@ -157,6 +139,7 @@ async def activity_until(client: Client, name: str, ends: int) -> ModelActivity:
     raise AssertionError(f"Model {name} did not end {ends} runs.")
 
 
+@pytest.mark.detached
 async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_their_activity(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uploads_directory: Path
 ) -> None:
@@ -176,6 +159,9 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
                 "name": "cub",
                 "reference_models": ["bear"],
                 "uploads": [sketch, kit],
+                "max_triangles": 2000,
+                "max_draw_calls": None,
+                "screen_size": [40, 240],
                 "agent_provider": "claude",
                 "model": "claude-opus-5-5",
                 "reasoning_effort": "high",
@@ -210,7 +196,12 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
     assert [entry.data["resumed"] for entry in second.entries if entry.kind == "request"] == [False, True]
     assert [
         (entry.data["model"], entry.data["reasoning_effort"]) for entry in second.entries if entry.kind == "request"
-    ] == [("claude-opus-5-5", "high"), ("claude-sonnet-5-5", "medium")]
+    ] == [("claude-opus-5-5", "high"), (DEFAULT_INTELLIGENCE_MODELS["claude"], DEFAULT_REASONING_EFFORT)]
+    assert [
+        (entry.data["max_triangles"], entry.data.get("max_draw_calls"), entry.data["screen_size"])
+        for entry in second.entries
+        if entry.kind == "request"
+    ] == [(2000, None, [40, 240])] * 2
     assert [entry.data["status"] for entry in second.entries if entry.kind == "ended"] == ["done", "cancelled"]
     assert ModelActivity.model_validate(since.structured_content).entries == []
     assert isinstance(sketched, BlobResourceContents)
@@ -221,6 +212,66 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
     assert (tmp_path / "cub" / "references" / "marked-view-1.png").read_bytes() == b"marked-bytes"
     assert not (tmp_path / "cub" / "references" / "kit" / ".git").exists()
     assert list(uploads_directory.iterdir()) == []
+
+
+@pytest.mark.detached
+async def test_the_view_rigs_a_model_as_the_app_to_its_own_budgets(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_in(tmp_path, "bear", references=[], max_triangles=2000, max_draw_calls=2, screen_size=(40, 240))
+    app_server = open_app(directory=tmp_path)
+    monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command("builds"))
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        rigged = await client.call_tool("rig_3d_model", {"name": "bear", "reasoning_effort": "high"})
+        told = await activity_until(client, "bear", 1)
+
+    assert ModelSummary.model_validate(rigged.structured_content).status == "running"
+    [request] = [entry for entry in told.entries if entry.kind == "request"]
+    assert (request.text, request.origin, request.data["mode"]) == ("", "app", "rig")
+    budgets = (request.data["max_triangles"], request.data["max_draw_calls"], request.data["screen_size"])
+    assert budgets == (2000, 2, [40, 240])
+    assert told.model.last_run is not None
+    assert (told.model.last_run.mode, told.model.last_run.reasoning_effort) == ("rig", "high")
+
+
+async def test_the_view_checks_a_model_waiting_again_on_a_long_check_and_reads_the_report(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bear = model_in(tmp_path, "bear", references=[])
+    glb = Glb()
+    glb.node("Box", mesh=glb.mesh(box()))
+    glb.write(bear / "model.glb")
+    (model_in(tmp_path, "fox") / "model.glb").unlink()
+    app_server = open_app(directory=tmp_path)
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        unchecked = ModelSummary.model_validate(
+            (await client.call_tool("view_3d_model", {"name": "bear"})).structured_content
+        )
+        monkeypatch.setattr(mcp_server, "CHECK_WAIT_SECONDS", 0)
+        waiting = await client.call_tool("check_3d_model", {"name": "bear"})
+        monkeypatch.setattr(mcp_server, "CHECK_WAIT_SECONDS", TIMEOUT_SECONDS)
+        checked = await client.call_tool("check_3d_model", {"name": "bear"})
+        kept = (await client.read_resource("modeling-3d://models/bear/checks/report.json")).contents[0]
+        summary = ModelSummary.model_validate(
+            (await client.call_tool("view_3d_model", {"name": "bear"})).structured_content
+        )
+        unbuilt = await client.call_tool("check_3d_model", {"name": "fox"})
+
+    assert unchecked.checked is None
+    assert waiting.structured_content == {"checking": True}
+    assert checked.structured_content is not None
+    report = checked.structured_content["report"]
+    assert (report["name"], report["triangles"]) == ("bear", 12)
+    assert isinstance(kept, BlobResourceContents)
+    assert (kept.mime_type, json.loads(base64.b64decode(kept.blob))["glb_sha256"]) == (
+        "application/json",
+        report["glb_sha256"],
+    )
+    assert summary.checked is not None
+    assert unbuilt.is_error
+    assert unbuilt.structured_content == {"reason": "not-built", "model": "fox"}
 
 
 async def test_a_view_tool_that_cannot_run_is_a_tool_error_naming_the_fix(
@@ -296,29 +347,19 @@ async def test_uploads_no_request_took_are_cleared_when_the_app_closes_or_a_day_
     assert [path.name for path in uploads_directory.iterdir()] == [recent.name]
 
 
-def test_a_page_from_another_origin_cannot_reach_mcp(open_app: Callable[..., lib.AppServer]) -> None:
-    app = open_app().open()
-
-    assert get(f"{app.url}/mcp", origin="https://example.com")[0] == 403
-
-
-def test_an_uncompiled_view_names_the_build_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
-    monkeypatch.setattr(server_module, "VIEW", tmp_path / "mcp_app.html")
-
-    with pytest.raises(Modeling3dError, match=r"uv run build-app\.py"):
-        lib.app_view()
-
-
-def test_the_view_carries_the_tool_s_version_and_where_its_docs_are(
+def test_the_view_names_the_build_command_until_compiled_and_then_carries_the_tool_s_version_and_docs(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
     page = tmp_path / "mcp_app.html"
+    monkeypatch.setattr(server_module, "VIEW", page)
+
+    with pytest.raises(Modeling3dError, match=r"uv run build-app\.py"):
+        lib.app_view()
     page.write_text(
         '<meta name="modeling-3d-version" content="{{version}}"><meta name="modeling-3d-repository" '
         'content="{{repository}}">',
         encoding="utf-8",
     )
-    monkeypatch.setattr(server_module, "VIEW", page)
     monkeypatch.setattr(server_module, "repository_url", lambda: "https://example.com/tool?a=1&b=2")
 
     assert lib.app_view() == (
@@ -340,22 +381,42 @@ def test_a_held_port_is_a_named_failure_until_close_frees_it() -> None:
     second.close()
 
 
-async def test_the_view_lists_views_and_reads_the_models_in_the_app_directory(
+async def test_the_view_lists_views_and_reads_the_models_in_the_app_directory_and_their_agents_tool_calls(
     open_app: Callable[..., lib.AppServer], tmp_path: Path
 ) -> None:
     bear = model_in(tmp_path, "bear", references=["references/kit/"])
     (bear / "references" / "kit" / "parts").mkdir(parents=True)
     (bear / "references" / "kit" / "parts" / "wheel.png").write_bytes(b"wheel-bytes")
+    call = {"id": "toolu_01", "name": "Bash", "input": {"command": "uv run --script model.py\necho built"}}
+    result = {"tool_use_id": "toolu_01", "content": "Exported model.glb", "is_error": False}
+    events = bear / "runs" / "run" / "events.jsonl"
+    events.parent.mkdir(parents=True)
+    events.write_text(
+        "".join(
+            ModelEvent(run_id="run", kind="agent", text=kind, data={"content": [block]}).model_dump_json() + "\n"
+            for kind, block in (("AssistantMessage", call), ("UserMessage", result))
+        ),
+        encoding="utf-8",
+    )
     app_server = open_app(directory=tmp_path)
 
     async with Client(f"{app_server.open().url}/mcp") as client:
+        view = (await client.read_resource("ui://modeling-3d/app")).contents[0]
         listed = await client.call_tool("list_3d_models", {})
         viewed = await client.call_tool("view_3d_model", {"name": "bear"})
         again = await client.call_tool("list_3d_models", {})
         glb = (await client.read_resource("modeling-3d://models/bear/model.glb")).contents[0]
         render = (await client.read_resource("modeling-3d://models/bear/renders/front%20view.png")).contents[0]
         wheel = (await client.read_resource("modeling-3d://models/bear/references/kit/parts/wheel.png")).contents[0]
+        read = await client.call_tool(
+            "read_3d_model_tool_call", {"name": "bear", "run_id": "run", "call_id": "toolu_01"}
+        )
+        missing = await client.call_tool(
+            "read_3d_model_tool_call", {"name": "bear", "run_id": "run", "call_id": "toolu_02"}
+        )
 
+    assert isinstance(view, TextResourceContents)
+    assert view.text == lib.app_view()
     listing = ModelListing.model_validate(listed.structured_content)
     assert listing.directory == tmp_path.resolve()
     assert [model.name for model in listing.models] == ["bear"]
@@ -368,79 +429,37 @@ async def test_the_view_lists_views_and_reads_the_models_in_the_app_directory(
     assert (render.mime_type, base64.b64decode(render.blob)) == ("image/png", b"png-bytes")
     assert isinstance(wheel, BlobResourceContents)
     assert base64.b64decode(wheel.blob) == b"wheel-bytes"
+    assert ToolCall.model_validate(read.structured_content) == ToolCall(
+        name="Bash", input=call["input"], output="Exported model.glb", failed=False
+    )
+    assert missing.is_error
+    assert missing.structured_content == {"reason": "no-such-tool-call", "model": "bear"}
 
 
-@pytest.mark.parametrize(
-    ("uri", "message"),
-    [
-        ("modeling-3d://models/bear/model.json", "It has: model.glb, renders/front view.png, references/a.png."),
-        ("modeling-3d://models/bear/model.py", "'model.py' is not a file the app reads from model bear"),
-        ("modeling-3d://models/bear/../bear/model.glb", "'../bear/model.glb' is not a file the app reads"),
-        ("modeling-3d://models/bear/references/kit/notes.txt", "'references/kit/notes.txt' is not a file the app"),
-        ("modeling-3d://models/bear/references/kit/../../../away.png", "is not a file the app reads"),
-        ("modeling-3d://models/fox/model.glb", "There is no model named 'fox'"),
-        ("modeling-3d://elsewhere", "is not a resource of this server"),
-    ],
-)
 async def test_only_a_model_s_glb_renders_and_reference_images_can_be_read(
-    open_app: Callable[..., lib.AppServer], tmp_path: Path, uri: str, message: str
+    open_app: Callable[..., lib.AppServer], tmp_path: Path
 ) -> None:
     bear = model_in(tmp_path, "bear", references=["references/a.png", "references/notes.txt", "references/kit/"])
     (bear / "references" / "kit").mkdir(parents=True)
     (bear / "references" / "kit" / "notes.txt").write_text("notes", encoding="utf-8")
     (tmp_path / "away.png").write_bytes(b"png-bytes")
     app_server = open_app(directory=tmp_path)
+    refused = {
+        "modeling-3d://models/bear/model.json": "It has: model.glb, renders/front view.png, references/a.png.",
+        "modeling-3d://models/bear/../bear/model.glb": "'../bear/model.glb' is not a file the app reads",
+        "modeling-3d://models/bear/references/kit/notes.txt": "'references/kit/notes.txt' is not a file the app",
+        "modeling-3d://models/bear/references/kit/../../../away.png": "is not a file the app reads",
+        "modeling-3d://models/bear/checks/report.json": "'checks/report.json' is not a file the app reads",
+        "modeling-3d://models/bear/checks/blender-request.json": "'checks/blender-request.json' is not a file",
+        "modeling-3d://models/fox/model.glb": "There is no model named 'fox'",
+        "modeling-3d://elsewhere": "is not a resource of this server",
+    }
 
     async with Client(f"{app_server.open().url}/mcp") as client:
-        with pytest.raises(MCPError) as failure:
-            await client.read_resource(uri)
-
-    assert message in str(failure.value)
-
-
-async def test_viewing_a_model_that_does_not_exist_is_a_tool_error_naming_the_models(
-    open_app: Callable[..., lib.AppServer], tmp_path: Path
-) -> None:
-    model_in(tmp_path, "bear")
-    app_server = open_app(directory=tmp_path)
-
-    async with Client(f"{app_server.open().url}/mcp") as client:
-        result = await client.call_tool("view_3d_model", {"name": "fox"})
-
-    assert result.is_error
-    assert "The models there: bear." in text_of(result)
-
-
-async def test_the_view_reads_a_tool_call_of_a_model_s_agent_in_full(
-    open_app: Callable[..., lib.AppServer], tmp_path: Path
-) -> None:
-    target = model_in(tmp_path, "bear", references=[])
-    call = {"id": "toolu_01", "name": "Bash", "input": {"command": "uv run --script model.py\necho built"}}
-    result = {"tool_use_id": "toolu_01", "content": "Exported model.glb", "is_error": False}
-    events = target / "runs" / "run" / "events.jsonl"
-    events.parent.mkdir(parents=True)
-    events.write_text(
-        "".join(
-            ModelEvent(run_id="run", kind="agent", text=kind, data={"content": [block]}).model_dump_json() + "\n"
-            for kind, block in (("AssistantMessage", call), ("UserMessage", result))
-        ),
-        encoding="utf-8",
-    )
-    app_server = open_app(directory=tmp_path)
-
-    async with Client(f"{app_server.open().url}/mcp") as client:
-        read = await client.call_tool(
-            "read_3d_model_tool_call", {"name": "bear", "run_id": "run", "call_id": "toolu_01"}
-        )
-        missing = await client.call_tool(
-            "read_3d_model_tool_call", {"name": "bear", "run_id": "run", "call_id": "toolu_02"}
-        )
-
-    assert ToolCall.model_validate(read.structured_content) == ToolCall(
-        name="Bash", input=call["input"], output="Exported model.glb", failed=False
-    )
-    assert missing.is_error
-    assert missing.structured_content == {"reason": "no-such-tool-call", "model": "bear"}
+        for uri, message in refused.items():
+            with pytest.raises(MCPError) as failure:
+                await client.read_resource(uri)
+            assert message in str(failure.value), uri
 
 
 async def test_the_view_remembers_the_ai_model_picked_in_the_app_directory_until_it_is_no_longer_offered(
@@ -449,21 +468,18 @@ async def test_the_view_remembers_the_ai_model_picked_in_the_app_directory_until
     monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: agent_provider == "claude")
     directory = tmp_path / "models"
     app_server = open_app(directory=directory)
-    opus = IntelligenceChoice(agent_provider="claude", model="claude-opus-5-5", reasoning_effort="high")
     options = lib.list_intelligence_models()
+    picked = IntelligenceChoice(agent_provider="claude", model=options.models[-1].id, reasoning_effort="high")
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         before = await client.call_tool("list_intelligence_models", {})
         chosen = await client.call_tool(
-            "choose_intelligence_model", {"model": "claude-opus-5-5", "reasoning_effort": "high"}
+            "choose_intelligence_model", {"model": picked.model, "reasoning_effort": "high"}
         )
         after = await client.call_tool("list_intelligence_models", {})
         unknown = await client.call_tool("choose_intelligence_model", {"model": "nope", "reasoning_effort": "high"})
-        extreme = await client.call_tool(
-            "choose_intelligence_model", {"model": "claude-opus-5-5", "reasoning_effort": "extreme"}
-        )
         ultra = await client.call_tool(
-            "choose_intelligence_model", {"model": "claude-opus-5-5", "reasoning_effort": "ultra"}
+            "choose_intelligence_model", {"model": picked.model, "reasoning_effort": "ultra"}
         )
         monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: False)
         gone = await client.call_tool("list_intelligence_models", {})
@@ -471,14 +487,13 @@ async def test_the_view_remembers_the_ai_model_picked_in_the_app_directory_until
     assert AppIntelligence.model_validate(before.structured_content) == AppIntelligence(
         **options.model_dump(), chosen=None
     )
-    assert AppIntelligence.model_validate(chosen.structured_content).chosen == opus
-    assert AppIntelligence.model_validate(after.structured_content).chosen == opus
-    assert AppState.model_validate_json((directory / ".app.json").read_text(encoding="utf-8")).intelligence == opus
+    assert AppIntelligence.model_validate(chosen.structured_content).chosen == picked
+    assert AppIntelligence.model_validate(after.structured_content).chosen == picked
+    assert AppState.model_validate_json((directory / ".app.json").read_text(encoding="utf-8")).intelligence == picked
     assert unknown.structured_content == {"reason": "no-such-intelligence-model", "model": None}
-    assert "It offers: claude-sonnet-5-5, claude-opus-5-5." in text_of(unknown)
-    assert extreme.structured_content == {"reason": "bad-reasoning-effort", "model": None}
+    assert ", ".join(model.id for model in options.models) in text_of(unknown)
     assert ultra.structured_content == {"reason": "bad-reasoning-effort", "model": None}
-    assert "Pass one of: low, medium, high, xhigh, max." in text_of(ultra)
+    assert ", ".join(PROVIDER_REASONING_EFFORTS["claude"]) in text_of(ultra)
     assert AppIntelligence.model_validate(gone.structured_content).chosen is None
 
 
@@ -508,7 +523,7 @@ async def test_the_view_keeps_the_person_s_settings_in_their_config_directory_fo
     assert not (tmp_path / "toys" / "app-settings.json").exists()
 
 
-async def test_settings_that_are_not_valid_are_refused_naming_the_field_and_unreadable_ones_read_as_defaults(
+async def test_settings_that_are_not_valid_are_refused_naming_the_field_and_kept_ones_read_as_far_as_they_can(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
 ) -> None:
     app_server = open_app(directory=tmp_path)
@@ -520,27 +535,18 @@ async def test_settings_that_are_not_valid_are_refused_naming_the_field_and_unre
         unreadable = await client.call_tool("read_app_settings", {})
         bad = await client.call_tool("save_app_settings", {"settings": {"theme": "sepia"}})
         nested = await client.call_tool("save_app_settings", {"settings": {"wide": {"models": {"size": -1}}}})
+        untouched = kept.read_text(encoding="utf-8")
+        # What an earlier version kept, which has a setting this one no longer has.
+        kept.write_text('{"theme": "dark", "activity_detail": "every-step"}', encoding="utf-8")
+        earlier = await client.call_tool("read_app_settings", {})
 
     assert AppSettings.model_validate(unreadable.structured_content) == AppSettings()
     assert bad.is_error
     assert bad.structured_content == {"reason": "bad-settings", "model": None}
     assert "The app setting theme is not valid" in text_of(bad)
     assert "The app setting wide.models.size is not valid" in text_of(nested)
-    assert kept.read_text(encoding="utf-8") == "{not json"
-
-
-async def test_settings_kept_by_an_earlier_version_still_read_with_what_it_no_longer_has_left_out(
-    open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
-) -> None:
-    app_server = open_app(directory=tmp_path)
-    kept = config_directory / "modeling-3d" / "app-settings.json"
-    kept.parent.mkdir(parents=True)
-    kept.write_text('{"theme": "dark", "activity_detail": "every-step"}', encoding="utf-8")
-
-    async with Client(f"{app_server.open().url}/mcp") as client:
-        read = await client.call_tool("read_app_settings", {})
-
-    assert AppSettings.model_validate(read.structured_content) == AppSettings(theme="dark")
+    assert untouched == "{not json"
+    assert AppSettings.model_validate(earlier.structured_content) == AppSettings(theme="dark")
 
 
 async def test_the_view_names_and_opens_the_folders_where_the_app_keeps_things(

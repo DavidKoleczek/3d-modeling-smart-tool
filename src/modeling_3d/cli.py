@@ -1,14 +1,13 @@
 """Command line entry point for 3D Modeling"""
 
 import asyncio
-from collections.abc import Callable, Coroutine, Generator
+from collections.abc import Callable, Coroutine
 import contextlib
 import json
 import os
 from pathlib import Path
-import signal
+import re
 import time
-from types import FrameType
 from typing import Annotated, Any
 
 import typer
@@ -21,11 +20,16 @@ from typer.models import CommandFunctionType
 from modeling_3d import lib
 from modeling_3d.adapters import mcp as mcp_adapter
 from modeling_3d.core.skill import DISTRIBUTION
-from modeling_3d.schemas import DEFAULT_REASONING_EFFORT, AgentProvider, ModelEvent, Modeling3dError, ReasoningEffort
+from modeling_3d.schemas import (
+    DEFAULT_REASONING_EFFORT,
+    NOT_GIVEN,
+    AgentProvider,
+    ModelEvent,
+    Modeling3dError,
+    NotGiven,
+    ReasoningEffort,
+)
 
-# Every signal that ends the process stops a run first, so its session stays resumable and nothing it started
-# outlives it. SIGHUP is the console closing on Linux and macOS, SIGBREAK on Windows.
-STOPPING_SIGNALS = ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK")
 # Claude Code sets it for the commands its sessions run, so what a session asks for shows in the activity as its own.
 SESSION_VARIABLE = "CLAUDE_CODE_SESSION_ID"
 
@@ -157,6 +161,33 @@ def create_3d_model(
         list[Path] | None,
         typer.Option("--reference", help="A file or folder to work from, such as an image or a model; repeatable."),
     ] = None,
+    max_triangles: Annotated[
+        str | None,
+        typer.Option(
+            "--max-triangles",
+            metavar="N|none",
+            help="The most triangles, chosen for what the model is for. Omitted, a default for a new model, and the "
+            "model's own for a change.",
+        ),
+    ] = None,
+    max_draw_calls: Annotated[
+        str | None,
+        typer.Option(
+            "--max-draw-calls",
+            metavar="N|none",
+            help="The most draw calls, one for each material on each mesh object. Omitted, a default for a new "
+            "model, and the model's own for a change.",
+        ),
+    ] = None,
+    screen_size: Annotated[
+        str | None,
+        typer.Option(
+            "--screen-size",
+            metavar="SMALLEST-LARGEST|none",
+            help="The smallest and largest it is on screen, in pixels along its longest side at 1080p. Omitted, a "
+            "default for a new model, and the model's own for a change.",
+        ),
+    ] = None,
     resume_session: Annotated[
         str,
         typer.Option(
@@ -185,6 +216,191 @@ def create_3d_model(
             lib.create_3d_model(
                 prompt=prompt,
                 name=name,
+                directory=directory,
+                references=references,
+                max_triangles=_count("--max-triangles", max_triangles),
+                max_draw_calls=_count("--max-draw-calls", max_draw_calls),
+                screen_size=_sizes(screen_size),
+                resume_session={"true": True, "false": False}.get(resume_session.lower(), resume_session),
+                agent_provider=agent_provider,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                timeout_seconds=timeout_seconds,
+                origin=_origin(),
+                detach=detach,
+            ),
+            detach,
+        )
+    )
+    raise typer.Exit(code)
+
+
+@app.command()
+def rig_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The built model to rig.")],
+    prompt: Annotated[
+        str | None,
+        typer.Argument(
+            help="What moves and how, or what to change in the rig; the agent works it out when omitted.",
+            show_default=False,
+        ),
+    ] = None,
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+    references: Annotated[
+        list[Path] | None,
+        typer.Option("--reference", help="A file or folder to work from, such as an image; repeatable."),
+    ] = None,
+    resume_session: Annotated[
+        str,
+        typer.Option(
+            "--resume-session",
+            help="true to continue its last session, false for a fresh one, or the id of one of its sessions.",
+        ),
+    ] = "false",
+    agent_provider: Annotated[
+        AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
+    ] = None,
+    model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
+    reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,
+    timeout_seconds: Annotated[int, typer.Option("--timeout-seconds", min=1)] = 3600,
+    detach: Annotated[
+        bool, typer.Option("--detach", help="Leave the run going in a process of its own once its agent runs.")
+    ] = False,
+) -> None:
+    """Rig a built 3D model so it can move, printing each event as a JSON line. Model-backed.
+
+    The last line is the `finished` or `failed` event, carrying the result. Exits 0 when the model is done. With
+    --detach, prints the `started` event and exits 0 once the agent runs, and the run goes on by itself.
+    """
+    code = asyncio.run(
+        _run_model(
+            lib.rig_3d_model(
+                name=name,
+                prompt=prompt,
+                directory=directory,
+                references=references,
+                resume_session={"true": True, "false": False}.get(resume_session.lower(), resume_session),
+                agent_provider=agent_provider,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                timeout_seconds=timeout_seconds,
+                origin=_origin(),
+                detach=detach,
+            ),
+            detach,
+        )
+    )
+    raise typer.Exit(code)
+
+
+@app.command()
+def color_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The built model to color.")],
+    prompt: Annotated[
+        str | None,
+        typer.Argument(
+            help="The roles, schemes, or colors wanted, or what to change; the agent works them out when omitted.",
+            show_default=False,
+        ),
+    ] = None,
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+    references: Annotated[
+        list[Path] | None,
+        typer.Option("--reference", help="A file or folder to work from, such as concept art; repeatable."),
+    ] = None,
+    resume_session: Annotated[
+        str,
+        typer.Option(
+            "--resume-session",
+            help="true to continue its last session, false for a fresh one, or the id of one of its sessions.",
+        ),
+    ] = "false",
+    agent_provider: Annotated[
+        AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
+    ] = None,
+    model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
+    reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,
+    timeout_seconds: Annotated[int, typer.Option("--timeout-seconds", min=1)] = 3600,
+    detach: Annotated[
+        bool, typer.Option("--detach", help="Leave the run going in a process of its own once its agent runs.")
+    ] = False,
+) -> None:
+    """Color a built 3D model by role from a palette, printing each event as a JSON line. Model-backed.
+
+    The last line is the `finished` or `failed` event, carrying the result. Exits 0 when the model is done. With
+    --detach, prints the `started` event and exits 0 once the agent runs, and the run goes on by itself.
+    """
+    code = asyncio.run(
+        _run_model(
+            lib.color_3d_model(
+                name=name,
+                prompt=prompt,
+                directory=directory,
+                references=references,
+                resume_session={"true": True, "false": False}.get(resume_session.lower(), resume_session),
+                agent_provider=agent_provider,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                timeout_seconds=timeout_seconds,
+                origin=_origin(),
+                detach=detach,
+            ),
+            detach,
+        )
+    )
+    raise typer.Exit(code)
+
+
+@app.command()
+def detail_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The built model to paint the surface detail of.")],
+    prompt: Annotated[
+        str | None,
+        typer.Argument(
+            help="The detail wanted, or what to change in it; the agent works it out when omitted.",
+            show_default=False,
+        ),
+    ] = None,
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+    references: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--reference", help="A file or folder to work from, such as a photo of the wear wanted; repeatable."
+        ),
+    ] = None,
+    resume_session: Annotated[
+        str,
+        typer.Option(
+            "--resume-session",
+            help="true to continue its last session, false for a fresh one, or the id of one of its sessions.",
+        ),
+    ] = "false",
+    agent_provider: Annotated[
+        AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
+    ] = None,
+    model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
+    reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,
+    timeout_seconds: Annotated[int, typer.Option("--timeout-seconds", min=1)] = 3600,
+    detach: Annotated[
+        bool, typer.Option("--detach", help="Leave the run going in a process of its own once its agent runs.")
+    ] = False,
+) -> None:
+    """Paint the surface detail of a built 3D model, printing each event as a JSON line. Model-backed.
+
+    The last line is the `finished` or `failed` event, carrying the result. Exits 0 when the model is done. With
+    --detach, prints the `started` event and exits 0 once the agent runs, and the run goes on by itself.
+    """
+    code = asyncio.run(
+        _run_model(
+            lib.detail_3d_model(
+                name=name,
+                prompt=prompt,
                 directory=directory,
                 references=references,
                 resume_session={"true": True, "false": False}.get(resume_session.lower(), resume_session),
@@ -226,6 +442,56 @@ def cancel_3d_model(
 ) -> None:
     """Stop the run working on a model at once; its session can still be resumed. Deterministic."""
     lib.cancel_3d_model(name=name, directory=directory)
+
+
+@app.command()
+def check_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The model to check.")],
+    checks: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--check",
+            help="A check, or the group shape, rig, color, or detail, to run; repeatable. Every check when omitted.",
+        ),
+    ] = None,
+    max_triangles: Annotated[
+        str | None,
+        typer.Option(
+            "--max-triangles",
+            metavar="N|none",
+            help="The triangle budget to measure against. Omitted, the model's own.",
+        ),
+    ] = None,
+    max_draw_calls: Annotated[
+        str | None,
+        typer.Option(
+            "--max-draw-calls",
+            metavar="N|none",
+            help="The draw call budget to measure against. Omitted, the model's own.",
+        ),
+    ] = None,
+    screen_size: Annotated[
+        str | None,
+        typer.Option(
+            "--screen-size",
+            metavar="SMALLEST-LARGEST|none",
+            help="The sizes on screen to measure at, in pixels along its longest side at 1080p. Omitted, the model's own.",
+        ),
+    ] = None,
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """Measure a model's model.glb against its budgets and the workflow, printing the report as JSON. Deterministic."""
+    report = lib.check_3d_model(
+        name=name,
+        directory=directory,
+        checks=checks,
+        max_triangles=_count("--max-triangles", max_triangles),
+        max_draw_calls=_count("--max-draw-calls", max_draw_calls),
+        screen_size=_sizes(screen_size),
+    )
+    typer.echo(report.model_dump_json(indent=2))
 
 
 @app.command()
@@ -317,7 +583,7 @@ async def _run_model(starting: Coroutine[Any, Any, lib.ModelRun], detach: bool) 
         # The run goes on in its own process, so its start is all there is to print.
         _print_event(await anext(run.events()))
         return 0
-    with _stopped_by_signals(run):
+    with lib.stopped_by_signals(run):
         async for event in run.events():
             _print_event(event)
         result = await run.result()
@@ -329,35 +595,34 @@ def _origin() -> str | None:
     return f"claude-code:{session}" if session else None
 
 
+def _count(option: str, typed: str | None) -> int | NotGiven | None:
+    """A budget as typed: a whole number, or none for no budget."""
+    if typed is None:
+        return NOT_GIVEN
+    if typed.lower() == "none":
+        return None
+    if not typed.isdigit():
+        raise typer.BadParameter(f"{typed!r} is not a whole number or none.", param_hint=option)
+    return int(typed)
+
+
+def _sizes(typed: str | None) -> tuple[int, int] | NotGiven | None:
+    """A screen size as typed: SMALLEST-LARGEST, or none for no budget."""
+    if typed is None:
+        return NOT_GIVEN
+    if typed.lower() == "none":
+        return None
+    match = re.fullmatch(r"(\d+)-(\d+)", typed)
+    if match is None:
+        raise typer.BadParameter(
+            f"{typed!r} is not SMALLEST-LARGEST, such as 40-240, or none.", param_hint="--screen-size"
+        )
+    return int(match[1]), int(match[2])
+
+
 def _print_event(event: ModelEvent) -> None:
     # ASCII-escaped JSON is UTF-8 on any console encoding, and echo writes the line in one call and flushes it.
     typer.echo(json.dumps(event.model_dump(mode="json")))
-
-
-@contextlib.contextmanager
-def _stopped_by_signals(run: lib.ModelRun) -> Generator[None]:
-    """Stop the run on every signal that ends the process."""
-    loop = asyncio.get_running_loop()
-    stopping: set[asyncio.Task[None]] = set()
-
-    def stop() -> None:
-        task = asyncio.ensure_future(run.cancel())
-        stopping.add(task)
-        task.add_done_callback(stopping.discard)
-
-    def handler(signum: int, frame: FrameType | None) -> None:
-        loop.call_soon_threadsafe(stop)
-
-    previous: dict[signal.Signals, Any] = {}
-    for name in STOPPING_SIGNALS:
-        number = getattr(signal, name, None)
-        if isinstance(number, signal.Signals):
-            previous[number] = signal.signal(number, handler)
-    try:
-        yield
-    finally:
-        for number, original in previous.items():
-            signal.signal(number, original)
 
 
 def main() -> int:

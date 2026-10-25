@@ -24,10 +24,16 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
 - `list_3d_models`, `view_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`: the
   library's, on the app's directory, which the view polls and calls when the person picks a model
   or opens a step.
-- `create_3d_model`, `steer_3d_model`, and `cancel_3d_model`: the library's, on the app's
-  directory with origin `app`, which the view calls for the person. `create_3d_model` always
-  detaches, so its runs outlive the server, and takes the agent provider, model, and reasoning
-  effort the person picked, the models in the directory to work from, and the uploads to work from.
+- `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, `steer_3d_model`, and
+  `cancel_3d_model`: the library's, on the app's directory with origin `app`, which the view calls
+  for the person. `create_3d_model`, `rig_3d_model`, `color_3d_model`, and `detail_3d_model`, the
+  request box's Shape, Rig, Color, and Detail modes, always detach, so their runs outlive the server, and take the agent provider, model, and
+  reasoning effort the person picked, the models in the directory to work from, and the uploads to
+  work from.
+- `check_3d_model`: the library's, against the model's own budgets. A check still going after a
+  while returns `{"checking": true}`, and calling again waits on the same check, so a check that
+  outlasts a host's time limit for a call still reaches the view. The view reads the report and
+  its renders under the model's `checks/` through the model file resource.
 - `upload_reference`: a piece of a file or folder the person added, in base64 at an offset in a
   path under an upload id of the view's, so a reference of any size arrives in requests the
   transport takes. Uploads no request took are cleared when the server closes, or a day on by the

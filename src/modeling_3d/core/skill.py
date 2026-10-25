@@ -11,74 +11,100 @@ DISTRIBUTION = "modeling-3d"
 
 # One table drives the skill's capability list, so it cannot drift from what the CLI exposes.
 # Every capability added to the library gets a row here, naming the capability's own skill:
-# the Markdown beside its code, at `capabilities/<name>/skill_<capability>.md`.
+# the Markdown in its folder's skills, at `capabilities/<name>/skills/skill_<capability>.md`.
 CAPABILITIES = (
-    Capability("manifest", "Print the tool's manifest as JSON.", model_backed=False, skill="core/skill_manifest.md"),
+    Capability(
+        "manifest", "Print the tool's manifest as JSON.", model_backed=False, skill="core/skills/skill_manifest.md"
+    ),
     Capability(
         "app",
         "Serve the app in a browser page on this machine, where the person creates, changes, and steers models.",
         model_backed=False,
-        skill="capabilities/app/skill_app.md",
+        skill="capabilities/app/skills/skill_app.md",
     ),
     Capability(
         "create-3d-model",
         "Create a 3D model, or change one, as a Blender script, its GLB, and renders; streams events as JSON lines.",
         model_backed=True,
-        skill="capabilities/create_3d_model/skill_create_3d_model.md",
+        skill="capabilities/create_3d_model/skills/skill_create_3d_model.md",
+    ),
+    Capability(
+        "rig-3d-model",
+        "Rig a built model so it can move: moving parts pivoted and declared, the rest joined, markers placed.",
+        model_backed=True,
+        skill="capabilities/create_3d_model/skills/skill_rig_3d_model.md",
+    ),
+    Capability(
+        "color-3d-model",
+        "Color a built model by role: one material, a palette with a row per scheme, each face on its role's swatch.",
+        model_backed=True,
+        skill="capabilities/create_3d_model/skills/skill_color_3d_model.md",
+    ),
+    Capability(
+        "detail-3d-model",
+        "Paint a built model's surface detail: a grayscale texture from its geometry, on its second UV set.",
+        model_backed=True,
+        skill="capabilities/create_3d_model/skills/skill_detail_3d_model.md",
+    ),
+    Capability(
+        "check-3d-model",
+        "Measure a model's model.glb against its budgets and the workflow, with renders to look at; prints JSON.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skills/skill_check_3d_model.md",
     ),
     Capability(
         "steer-3d-model",
         "Send a message to the agent working on a model, from any process.",
         model_backed=False,
-        skill="capabilities/create_3d_model/skill_steer_3d_model.md",
+        skill="capabilities/create_3d_model/skills/skill_steer_3d_model.md",
     ),
     Capability(
         "cancel-3d-model",
         "Stop the run working on a model at once, from any process; its session can still be resumed.",
         model_backed=False,
-        skill="capabilities/create_3d_model/skill_cancel_3d_model.md",
+        skill="capabilities/create_3d_model/skills/skill_cancel_3d_model.md",
     ),
     Capability(
         "list-3d-models",
         "List the models in a directory, newest first, with their state and the one viewed last; prints JSON.",
         model_backed=False,
-        skill="capabilities/create_3d_model/skill_list_3d_models.md",
+        skill="capabilities/create_3d_model/skills/skill_list_3d_models.md",
     ),
     Capability(
         "read-3d-model-activity",
         "Print a model's summary and its activity: each request, steering message, agent step, and how runs ended.",
         model_backed=False,
-        skill="capabilities/create_3d_model/skill_read_3d_model_activity.md",
+        skill="capabilities/create_3d_model/skills/skill_read_3d_model_activity.md",
     ),
     Capability(
         "read-3d-model-tool-call",
         "Print one tool call of a model's agent in full: the arguments it was called with and what came back.",
         model_backed=False,
-        skill="capabilities/create_3d_model/skill_read_3d_model_tool_call.md",
+        skill="capabilities/create_3d_model/skills/skill_read_3d_model_tool_call.md",
     ),
     Capability(
         "view-3d-model",
         "Record a model as the one viewed last in its directory and print its summary as JSON.",
         model_backed=False,
-        skill="capabilities/create_3d_model/skill_view_3d_model.md",
+        skill="capabilities/create_3d_model/skills/skill_view_3d_model.md",
     ),
     Capability(
         "list-intelligence-models",
         "List the AI models and reasoning efforts to pick from for create-3d-model; prints JSON.",
         model_backed=False,
-        skill="capabilities/create_3d_model/skill_list_intelligence_models.md",
+        skill="capabilities/create_3d_model/skills/skill_list_intelligence_models.md",
     ),
     Capability(
         "add-blender-to-path",
         "Make `blender` run an installed Blender from new terminals; building models does not need it.",
         model_backed=False,
-        skill="capabilities/blender/skill_add_blender_to_path.md",
+        skill="capabilities/blender/skills/skill_add_blender_to_path.md",
     ),
     Capability(
         "mcp",
         "Serve the app over stdio as an MCP App, so a session can show it to the person inline or in a browser.",
         model_backed=False,
-        skill="adapters/skill_mcp.md",
+        skill="adapters/skills/skill_mcp.md",
     ),
 )
 

@@ -5,7 +5,7 @@ import sys
 
 import fakes
 
-from modeling_3d.capabilities.create_3d_model import background, create
+from modeling_3d.capabilities.create_3d_model import background, runs
 
 
 def command(script: str) -> list[str]:
@@ -14,5 +14,5 @@ def command(script: str) -> list[str]:
 
 
 if __name__ == "__main__":
-    create.POLL_SECONDS = 0.01
+    runs.POLL_SECONDS = 0.01
     raise SystemExit(background.main(fakes.FakeIntelligence(getattr(fakes, sys.argv[1]))))

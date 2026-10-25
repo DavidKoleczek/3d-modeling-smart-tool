@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 
+import { CheckedEntry } from "@/components/activity/CheckedEntry";
 import { LiveStrip } from "@/components/activity/LiveStrip";
 import { Message } from "@/components/activity/Message";
 import { RunDivider } from "@/components/activity/RunDivider";
@@ -208,6 +209,8 @@ export function ActivityPanel({
                           Rebuilt {timeOfDay(block.time, true)}
                         </li>
                       );
+                    case "checked":
+                      return <CheckedEntry key={index} entry={block.entry} />;
                     case "ended":
                       return (
                         <RunResult

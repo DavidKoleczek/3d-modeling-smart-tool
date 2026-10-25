@@ -12,6 +12,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   grid: true,
   wireframe: false,
   dimensions: false,
+  rig: false,
+  surface: false,
   wide: {
     models: { size: null, open: true },
     activity: { size: null, open: true },

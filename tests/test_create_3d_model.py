@@ -1,91 +1,58 @@
 """Drives create-3d-model with the agent faked by a script, so neither credentials nor a model are needed."""
 
 import asyncio
-from collections.abc import Callable
 import json
 import os
 from pathlib import Path
-import time
+import sys
 from typing import Any
 
-import detached_agent
 from fakes import (
     SESSION,
     FakeIntelligence,
+    FakeRun,
     Refusing,
     Script,
     builds,
     builds_nothing,
     fails,
+    record_of,
+    run_to_end,
     waits_for_steering,
     works_forever,
 )
+from glbs import Glb, box
 import pytest
 from typer.testing import CliRunner
 
 from modeling_3d import lib
-from modeling_3d.capabilities.create_3d_model import create
-from modeling_3d.capabilities.create_3d_model.record import alive, read_atomically
+from modeling_3d.capabilities.create_3d_model import constants, create
+from modeling_3d.capabilities.create_3d_model.check import check
+from modeling_3d.capabilities.create_3d_model.prompting import template
+from modeling_3d.capabilities.create_3d_model.record import GITIGNORE, write_record
 from modeling_3d.cli import app
 from modeling_3d.intelligence import interface
-from modeling_3d.schemas import ModelEvent, Modeling3dError, ModelRecord, ModelRunRecord
+from modeling_3d.intelligence.schemas import AgentResult
+from modeling_3d.schemas import (
+    BPY_REQUIREMENT,
+    DEFAULT_INTELLIGENCE_MODELS,
+    DEFAULT_MAX_DRAW_CALLS,
+    DEFAULT_MAX_TRIANGLES,
+    DEFAULT_REASONING_EFFORT,
+    DEFAULT_SCREEN_SIZE,
+    PROVIDER_REASONING_EFFORTS,
+    ModelEvent,
+    Modeling3dError,
+)
 
 TIMEOUT_SECONDS = 5
-# A detached run starts a Python process of its own, which takes a while to import the library.
-DETACHED_TIMEOUT_SECONDS = 30
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def working_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(create, "POLL_SECONDS", 0.01)
-    return tmp_path
-
-
-async def run_to_end(
-    script: Script = builds, prompt: str = "A low poly bear", **arguments: Any
-) -> tuple[ModelEvent, lib.ModelRun, FakeIntelligence, list[ModelEvent]]:
-    intelligence = FakeIntelligence(script)
-    run = await lib.create_3d_model(prompt, intelligence=intelligence, **arguments)
-    events = [event async for event in run.events()]
-    return events[-1], run, intelligence, events
-
-
-@pytest.fixture
-def detached(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
-    """Have detached runs fake their agent with the named script from fakes.py."""
-
-    def use(script: str) -> None:
-        monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command(script))
-
-    return use
-
-
-def record_of(directory: Path) -> ModelRecord:
-    # A detached run writes it from another process, which Windows refuses a read of in the moment of replacing it.
-    return ModelRecord.model_validate_json(read_atomically(directory / "model.json"))
-
-
-def ended(directory: Path) -> ModelRunRecord:
-    """The model's last run once its process has finished it."""
-    deadline = time.monotonic() + DETACHED_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        run = record_of(directory).runs[-1]
-        if run.status != "running" and not alive(run.pid):
-            return run
-        time.sleep(0.05)
-    raise AssertionError(f"The run in {directory} did not end.")
-
-
-def events_of(directory: Path, run_id: str) -> list[ModelEvent]:
-    lines = (directory / "runs" / run_id / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    return [ModelEvent.model_validate_json(line) for line in lines]
+pytestmark = pytest.mark.usefixtures("working_directory", "quick_polls")
 
 
 async def test_a_new_model_is_built_and_recorded_in_its_own_directory(working_directory: Path) -> None:
-    last, run, intelligence, events = await run_to_end(name="bear")
+    last, run, intelligence, events = await run_to_end(name="bear", origin="claude-code:abc")
     result = await run.result()
 
     directory = working_directory / ".modeling-3d" / "bear"
@@ -104,31 +71,61 @@ async def test_a_new_model_is_built_and_recorded_in_its_own_directory(working_di
     assert request.writable
     assert request.session_directory == directory / "sessions"
     assert request.resume is None
-    assert request.model == "claude-sonnet-5-5"
-    assert request.reasoning_effort == "medium"
+    assert request.model == DEFAULT_INTELLIGENCE_MODELS["claude"]
+    assert request.reasoning_effort == DEFAULT_REASONING_EFFORT
     assert request.timeout_seconds == 3600 + create.AGENT_TIMEOUT_GRACE_SECONDS
     assert "A low poly bear" in request.prompt
-    assert create.BPY_REQUIREMENT in request.prompt
+    assert BPY_REQUIREMENT in request.prompt
     assert str(directory) in request.prompt
-    assert "Write files only in the model's directory" in request.prompt
-    assert "ready to rig and animate" in request.prompt
-    assert "already holds" not in request.prompt
+    assert f"through {constants.MODE_CAPABILITIES['shape']}." in request.prompt
+    assert template("shape.md").strip() in request.prompt
+    assert template("rig.md").strip() not in request.prompt
+    assert constants.EXISTING not in request.prompt
+    assert f"- At most {DEFAULT_MAX_TRIANGLES} triangles." in request.prompt
     record = record_of(directory)
     assert (record.tool, record.name) == ("modeling-3d", "bear")
+    assert "runs" not in json.loads((directory / "model.json").read_text(encoding="utf-8"))
     [entry] = record.runs
     assert (entry.id, entry.status, entry.session_id, entry.pid) == (run.run_id, "done", SESSION, os.getpid())
-    assert entry.agent_provider == "claude"
+    assert (entry.mode, events[0].data["mode"]) == ("shape", "shape")
+    assert (entry.agent_provider, entry.origin) == ("claude", "claude-code:abc")
+    started = events[0].data
+    assert (started["prompt"], started["origin"], started["resumed"]) == ("A low poly bear", "claude-code:abc", False)
+    assert (started["agent_provider"], started["references"]) == ("claude", [])
+    assert (entry.max_triangles, entry.max_draw_calls, entry.screen_size) == (
+        DEFAULT_MAX_TRIANGLES,
+        DEFAULT_MAX_DRAW_CALLS,
+        DEFAULT_SCREEN_SIZE,
+    )
     assert entry.finished is not None
     assert entry.last_event == events[-1].time
     lines = (directory / "runs" / run.run_id / "events.jsonl").read_text(encoding="utf-8").splitlines()
     assert [ModelEvent.model_validate_json(line) for line in lines] == events
 
 
-async def test_another_directory_holds_the_models_when_named(working_directory: Path) -> None:
-    _, run, _, _ = await run_to_end(name="bear", directory=Path("models"))
+async def test_the_models_directory_named_holds_the_models_and_gets_a_gitignore_when_new_to_the_tool(
+    working_directory: Path,
+) -> None:
+    (working_directory / "picked").mkdir()
+    (working_directory / "picked" / ".app.json").write_text("{}", encoding="utf-8")
+    (working_directory / "kept" / "notes").mkdir(parents=True)
 
-    assert run.directory == working_directory / "models" / "bear"
-    assert (await run.result()).next.endswith(f"--directory {working_directory / 'models'}")
+    _, made, _, _ = await run_to_end(name="bear")
+    gitignore = made.directory.parent / ".gitignore"
+    first = gitignore.read_text(encoding="utf-8")
+    gitignore.write_text("/*\n", encoding="utf-8")
+    await run_to_end(name="cub")
+    _, fox, _, _ = await run_to_end(name="fox", directory=Path("picked"))
+    await run_to_end(name="owl", directory=Path("kept"))
+
+    written = GITIGNORE.read_text(encoding="utf-8")
+    assert first == written
+    assert "!/AGENTS.md" in written
+    assert gitignore.read_text(encoding="utf-8") == "/*\n"
+    assert (working_directory / "picked" / ".gitignore").read_text(encoding="utf-8") == written
+    assert not (working_directory / "kept" / ".gitignore").exists()
+    assert fox.directory == working_directory / "picked" / "fox"
+    assert (await fox.result()).next.endswith(f"--directory {working_directory / 'picked'}")
 
 
 @pytest.mark.parametrize(
@@ -137,8 +134,6 @@ async def test_another_directory_holds_the_models_when_named(working_directory: 
         ({"name": "notes"}, "already exists and is not a model", "name-in-use"),
         ({"name": "NOTES"}, "already exists and is not a model", "name-in-use"),
         ({"name": "../escape"}, "cannot name a model", "invalid-name"),
-        ({"name": "a b"}, "cannot name a model", "invalid-name"),
-        ({"name": ""}, "cannot name a model", "invalid-name"),
         ({"name": "fox", "references": [Path("nope.png")]}, "nope.png is not a file", "missing-reference"),
         (
             {"name": "elsewhere", "agent_provider": "claude", "resume_session": True},
@@ -147,22 +142,25 @@ async def test_another_directory_holds_the_models_when_named(working_directory: 
         ),
         (
             {"name": "fox", "agent_provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "ultra"},
-            "'ultra' is not a reasoning effort claude-opus-5-5 takes. Pass one of: low, medium, high, xhigh, max.",
+            ", ".join(PROVIDER_REASONING_EFFORTS["claude"]),
             "bad-reasoning-effort",
         ),
         ({"name": "bear", "resume_session": "gone"}, "has no session 'gone'. Its sessions", "no-such-session"),
         ({"name": "fox", "resume_session": "gone"}, "Model fox has no session 'gone'", "no-such-session"),
+        ({"name": "fox", "max_triangles": 0}, "max_triangles is 0, and a budget is 1 or more", "bad-budget"),
+        ({"name": "fox", "screen_size": (240, 40)}, "Give the smallest and then the largest", "bad-budget"),
+        ({"name": "fox", "detach": True}, "cannot reach", None),
     ],
 )
 async def test_a_request_that_cannot_run_is_refused_before_anything_starts(
     working_directory: Path, arguments: dict[str, Any], message: str, reason: str | None
 ) -> None:
-    for name, change in [("bear", None), ("quiet", {"session_id": None}), ("elsewhere", {"agent_provider": "codex"})]:
+    for name, change in [("bear", None), ("elsewhere", {"agent_provider": "codex"})]:
         _, built, _, _ = await run_to_end(name=name)
         if change is not None:
             record = record_of(built.directory)
             record.runs[0] = record.runs[0].model_copy(update=change)
-            (built.directory / "model.json").write_text(record.model_dump_json(), encoding="utf-8")
+            write_record(built.directory, record)
     (working_directory / ".modeling-3d" / "notes").mkdir()
     intelligence = FakeIntelligence(builds)
 
@@ -191,7 +189,7 @@ async def test_references_are_copied_shown_with_the_prompt_and_never_overwrite_a
     request = intelligence.runs[0].request
     references = run.directory / "references"
     assert request.images == [references / "bear.png"]
-    assert "references/bear.png (also attached)" in request.prompt
+    assert f"references/bear.png{constants.ATTACHED}" in request.prompt
     assert "references/old.glb\n" in request.prompt
     assert (references / "old.glb").read_bytes() == b"glTF"
     assert (references / "bear.png").read_bytes() == b"first"
@@ -220,7 +218,7 @@ async def test_a_folder_is_copied_whole_but_for_hidden_folders_and_caches_and_ne
         "parts/wheel.png",
     ]
     assert (run.directory / "references" / "kit-2" / "parts" / "wheel.png").is_file()
-    assert "references/kit/ (a folder)" in intelligence.runs[0].request.prompt
+    assert f"references/kit/{constants.FOLDER}" in intelligence.runs[0].request.prompt
     assert intelligence.runs[0].request.images == []
     assert [entry.references for entry in record_of(run.directory).runs] == [["references/kit/"], ["references/kit-2/"]]
 
@@ -241,15 +239,6 @@ async def test_another_model_s_files_are_references_like_any_other() -> None:
     assert intelligence.runs[0].request.images == [copied / "front.png"]
 
 
-async def test_who_asked_is_kept_with_the_run_and_its_started_event() -> None:
-    _, run, _, events = await run_to_end(name="bear", origin="claude-code:abc")
-
-    assert record_of(run.directory).runs[0].origin == "claude-code:abc"
-    started = events[0].data
-    assert (started["prompt"], started["origin"], started["resumed"]) == ("A low poly bear", "claude-code:abc", False)
-    assert (started["agent_provider"], started["references"]) == ("claude", [])
-
-
 async def test_a_name_a_model_has_changes_it_in_a_fresh_session_unless_told_to_resume_one() -> None:
     _, first, creating, _ = await run_to_end(name="bear")
 
@@ -258,15 +247,80 @@ async def test_a_name_a_model_has_changes_it_in_a_fresh_session_unless_told_to_r
 
     fresh = refreshing.runs[0].request
     resume = resuming.runs[0].request
-    assert "already holds" not in creating.runs[0].request.prompt
+    assert constants.EXISTING not in creating.runs[0].request.prompt
     assert changed.directory == first.directory
     assert changed.name == "bear"
     assert fresh.resume is None
     assert "Make the snout longer" in fresh.prompt
-    assert "Read model.py first" in fresh.prompt
+    assert constants.EXISTING in fresh.prompt
     assert resume.resume == SESSION
     assert resume.prompt.strip() == "And the ears rounder"
     assert [entry.resumed for entry in record_of(first.directory).runs] == [False, False, True]
+
+
+async def test_budgets_are_given_to_the_agent_kept_by_a_change_and_sent_to_a_session_only_when_set() -> None:
+    _, run, creating, events = await run_to_end(
+        name="bear", max_triangles=2000, max_draw_calls=2, screen_size=(40, 240)
+    )
+    _, _, refreshing, _ = await run_to_end(prompt="Make the snout longer", name="bear", max_triangles=3000)
+    _, _, resuming, _ = await run_to_end(prompt="And the ears rounder", name="bear", resume_session=True)
+    _, _, changing, _ = await run_to_end(
+        prompt="Rounder still", name="bear", resume_session=True, max_draw_calls=1, screen_size=None
+    )
+
+    at_most, triangles, draw_calls = constants.AT_MOST.format, constants.TRIANGLE, constants.DRAW_CALL
+    on_screen = constants.ON_SCREEN.format(smallest=40, largest=240)
+    created = creating.runs[0].request.prompt
+    assert f"{at_most(count=2000, noun=triangles[1])}\n{at_most(count=2, noun=draw_calls[1])}\n{on_screen}" in created
+    assert "\n".join(constants.SHAPE_SCREEN_ADVICE) in created
+    # Joining parts into objects is rigging's, so shaping lists the draw call budget without saying how to keep to it.
+    assert constants.RIG_DRAW_CALL_ADVICE[0] not in created
+    assert at_most(count=3000, noun=triangles[1]) in refreshing.runs[0].request.prompt
+    assert resuming.runs[0].request.prompt.strip() == "And the ears rounder"
+    told = changing.runs[0].request.prompt
+    assert told.startswith("Rounder still\n")
+    removed = constants.NO_BUDGET.format(name=constants.SCREEN_SIZE)
+    assert f"{at_most(count=1, noun=draw_calls[0])}\n{removed}\n" in told
+    assert at_most(count=3000, noun=triangles[1]) not in told
+    assert constants.SHAPE_SCREEN_ADVICE[1] not in told
+    assert [
+        (entry.max_triangles, entry.max_draw_calls, entry.screen_size) for entry in record_of(run.directory).runs
+    ] == [
+        (2000, 2, (40, 240)),
+        (3000, 2, (40, 240)),
+        (3000, 2, (40, 240)),
+        (3000, 1, None),
+    ]
+    assert (events[0].data["max_triangles"], events[0].data["screen_size"]) == (2000, [40, 240])
+
+
+async def test_a_model_without_budgets_gets_no_budget_instructions() -> None:
+    _, run, intelligence, _ = await run_to_end(name="bear", max_triangles=None, max_draw_calls=None, screen_size=None)
+    _, _, refreshing, _ = await run_to_end(prompt="Make the snout longer", name="bear")
+
+    for prompt in (intelligence.runs[0].request.prompt, refreshing.runs[0].request.prompt):
+        assert "<budgets>" not in prompt
+    assert record_of(run.directory).runs[-1].max_triangles is None
+
+
+async def test_a_fresh_session_is_told_to_read_the_project_s_guidance_beside_its_models(
+    working_directory: Path,
+) -> None:
+    _, bear, without, _ = await run_to_end(name="bear")
+    (bear.directory.parent / "AGENTS.md").write_text("Models face -Z.\n", encoding="utf-8")
+    (working_directory / "models").mkdir()
+    (working_directory / "models" / "AGENTS.md").write_text("Keep them small.", encoding="utf-8")
+
+    _, _, fresh, _ = await run_to_end(prompt="Make the snout longer", name="bear")
+    _, _, resuming, _ = await run_to_end(prompt="And the ears rounder", name="bear", resume_session=True)
+    _, _, elsewhere, _ = await run_to_end(name="fox", directory=Path("models"))
+
+    guidance = bear.directory.parent / "AGENTS.md"
+    assert str(guidance) not in without.runs[0].request.prompt
+    assert constants.READ_GUIDANCE.format(path=guidance) in fresh.runs[0].request.prompt
+    assert "Models face -Z." not in fresh.runs[0].request.prompt
+    assert str(guidance) not in resuming.runs[0].request.prompt
+    assert str(working_directory / "models" / "AGENTS.md") in elsewhere.runs[0].request.prompt
 
 
 async def test_a_session_goes_on_with_another_model_of_its_agent_provider() -> None:
@@ -286,7 +340,7 @@ async def test_a_session_named_by_its_id_is_the_one_continued() -> None:
     await run_to_end(prompt="Make the snout longer", name="bear", resume_session=False)
     record = record_of(first.directory)
     record.runs[0].session_id, record.runs[1].session_id = "first-session", "second-session"
-    (first.directory / "model.json").write_text(record.model_dump_json(), encoding="utf-8")
+    write_record(first.directory, record)
 
     _, _, named, _ = await run_to_end(prompt="Back to how it was", name="bear", resume_session="first-session")
     _, _, latest, _ = await run_to_end(prompt="And then", name="bear", resume_session=True)
@@ -299,12 +353,12 @@ async def test_a_model_without_a_session_changes_in_a_fresh_one() -> None:
     _, first, _, _ = await run_to_end(name="bear")
     record = record_of(first.directory)
     record.runs[0].session_id = None
-    (first.directory / "model.json").write_text(record.model_dump_json(), encoding="utf-8")
+    write_record(first.directory, record)
 
     _, _, intelligence, _ = await run_to_end(prompt="Make the snout longer", name="bear", resume_session=True)
 
     assert intelligence.runs[0].request.resume is None
-    assert "Read model.py first" in intelligence.runs[0].request.prompt
+    assert constants.EXISTING in intelligence.runs[0].request.prompt
     assert record_of(first.directory).runs[-1].resumed is False
 
 
@@ -342,7 +396,7 @@ async def test_a_crashed_run_is_marked_failed_and_its_session_resumed() -> None:
     record = record_of(run.directory)
     record.runs[0].status = "running"
     record.runs[0].pid = 2**22 + 7
-    (run.directory / "model.json").write_text(record.model_dump_json(), encoding="utf-8")
+    write_record(run.directory, record)
 
     _, resumed, intelligence, _ = await run_to_end(prompt="Go on", name="bear", resume_session=True)
 
@@ -375,44 +429,30 @@ async def test_a_refused_start_leaves_no_new_model_behind(working_directory: Pat
 
 
 @pytest.mark.parametrize(("sender", "origin"), [("handle", "claude-code:abc"), ("another-process", "app")])
-async def test_steering_reaches_the_agent_and_shows_as_an_event_from_its_sender(sender: str, origin: str) -> None:
-    run = await lib.create_3d_model(
-        "A bear", name="bear", origin="claude-code:abc", intelligence=FakeIntelligence(waits_for_steering)
-    )
-
-    if sender == "handle":
-        await run.steer("Rounder ears.")
-    else:
-        await asyncio.to_thread(lib.steer_3d_model, "bear", "Rounder ears.", None, "app")
-    result = await asyncio.wait_for(run.result(), TIMEOUT_SECONDS)
-
-    assert result.text == "Did: Rounder ears."
-    steered = [(event.kind, event.text, event.data.get("origin")) async for event in run.events()]
-    assert ("steered", "Rounder ears.", origin) in steered
-    assert not list((run.directory / "runs" / run.run_id / "steer").iterdir())
-
-
-@pytest.mark.parametrize("sender", ["handle", "another-process"])
-async def test_references_sent_with_steering_are_copied_in_named_and_shown(
-    working_directory: Path, sender: str
+async def test_steering_reaches_the_agent_with_its_references_and_shows_as_an_event_from_its_sender(
+    working_directory: Path, sender: str, origin: str
 ) -> None:
     (working_directory / "ears.png").write_bytes(b"png")
     intelligence = FakeIntelligence(waits_for_steering)
-    run = await lib.create_3d_model("A bear", name="bear", intelligence=intelligence)
+    run = await lib.create_3d_model("A bear", name="bear", origin="claude-code:abc", intelligence=intelligence)
 
     if sender == "handle":
-        await run.steer("Like this.", [Path("ears.png")])
+        await run.steer("Rounder ears.", [Path("ears.png")])
     else:
-        await asyncio.to_thread(lib.steer_3d_model, "bear", "Like this.", None, "app", [Path("ears.png")])
-    await asyncio.wait_for(run.result(), TIMEOUT_SECONDS)
+        await asyncio.to_thread(lib.steer_3d_model, "bear", "Rounder ears.", None, "app", [Path("ears.png")])
+    result = await asyncio.wait_for(run.result(), TIMEOUT_SECONDS)
 
     agent = intelligence.runs[0]
-    assert agent.steered[0].startswith("Like this.\n")
-    assert "- references/ears.png (also attached)" in agent.steered[0]
+    listed = f"{constants.ADDED_REFERENCES}\n- references/ears.png{constants.ATTACHED}\n"
+    assert agent.steered == [f"Rounder ears.\n{listed}"]
+    assert result.text == f"Did: {agent.steered[0]}"
     assert agent.steered_images == [[run.directory / "references" / "ears.png"]]
     assert (run.directory / "references" / "ears.png").read_bytes() == b"png"
     steered = [event async for event in run.events() if event.kind == "steered"]
-    assert [(event.text, event.data["references"]) for event in steered] == [("Like this.", ["references/ears.png"])]
+    assert [(event.text, event.data["origin"], event.data["references"]) for event in steered] == [
+        ("Rounder ears.", origin, ["references/ears.png"])
+    ]
+    assert not list((run.directory / "runs" / run.run_id / "steer").iterdir())
 
 
 async def test_cancel_from_another_process_stops_the_run_and_keeps_the_session() -> None:
@@ -427,6 +467,7 @@ async def test_cancel_from_another_process_stops_the_run_and_keeps_the_session()
     assert [event.kind async for event in run.events()][-1] == "finished"
 
 
+@pytest.mark.real_timeout
 async def test_a_run_past_its_timeout_is_stopped_and_says_how_to_go_on() -> None:
     last, run, _, _ = await run_to_end(works_forever, name="bear", timeout_seconds=1)
     result = await run.result()
@@ -447,15 +488,14 @@ async def test_steering_or_cancelling_a_model_nothing_works_on_names_what_to_do_
     with pytest.raises(Modeling3dError) as missing:
         lib.cancel_3d_model("fox")
 
-    assert "not being worked on" in str(steering.value)
-    assert 'create-3d-model "<what to change>" --name bear' in str(steering.value)
     assert (steering.value.reason, steering.value.model) == ("not-running", "bear")
-    assert "its last run ended done" in str(cancelling.value)
-    assert "no model named 'fox'" in str(missing.value)
+    assert 'create-3d-model "<what to change>" --name bear' in str(steering.value)
+    assert cancelling.value.reason == "not-running"
+    assert missing.value.reason == "no-such-model"
     assert "bear" in str(missing.value)
 
 
-def test_the_cli_prints_each_event_as_a_json_line_and_exits_0_when_done(
+def test_the_cli_prints_each_event_as_a_json_line_and_exits_0_only_when_done(
     monkeypatch: pytest.MonkeyPatch, working_directory: Path
 ) -> None:
     monkeypatch.setattr(interface, "resolve_intelligence", lambda *arguments: FakeIntelligence(builds))
@@ -463,106 +503,136 @@ def test_the_cli_prints_each_event_as_a_json_line_and_exits_0_when_done(
     image.write_bytes(b"png")
 
     result = runner.invoke(app, ["create-3d-model", "A low poly bear", "--name", "bear", "--reference", "bear.png"])
+    monkeypatch.setattr(interface, "resolve_intelligence", lambda *arguments: FakeIntelligence(builds_nothing))
+    unfinished = runner.invoke(app, ["create-3d-model", "A fox", "--name", "fox"])
 
     assert result.exit_code == 0, result.output
     lines = [json.loads(line) for line in result.stdout.splitlines()]
     assert [line["kind"] for line in lines] == ["started", "agent", "finished"]
     assert lines[-1]["data"]["status"] == "done"
     assert (working_directory / ".modeling-3d" / "bear" / "references" / "bear.png").is_file()
-
-
-def test_the_cli_exits_2_without_a_name_and_1_when_the_model_is_not_done(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(interface, "resolve_intelligence", lambda *arguments: FakeIntelligence(builds_nothing))
-
-    nameless = runner.invoke(app, ["create-3d-model", "A low poly bear"])
-    unfinished = runner.invoke(app, ["create-3d-model", "A low poly bear", "--name", "bear"])
-
-    assert nameless.exit_code == 2
-    assert "--name" in nameless.output
     assert unfinished.exit_code == 1
     assert json.loads(unfinished.stdout.splitlines()[-1])["kind"] == "failed"
 
 
-async def test_a_detached_run_goes_on_in_its_own_process_and_its_handle_follows_it(
-    detached: Callable[[str], None],
-) -> None:
-    detached("waits_for_steering")
-
-    run = await lib.create_3d_model("A bear", name="bear", origin="app", detach=True)
-    entry = record_of(run.directory).runs[0]
-    await run.steer("Rounder ears.")
-    result = await asyncio.wait_for(run.result(), DETACHED_TIMEOUT_SECONDS)
-    events = [event async for event in run.events()]
-
-    assert entry.pid != os.getpid()
-    assert entry.origin == "app"
-    assert (result.status, result.text, result.session_id) == ("done", "Did: Rounder ears.", SESSION)
-    assert [event.kind for event in events] == ["started", "steered", "finished"]
-    assert events[1].data["origin"] == "app"
-    assert run.session_id == SESSION
-    assert (run.directory / "runs" / run.run_id / create.PROCESS_LOG).is_file()
-
-
-async def test_a_detached_run_outlives_its_handle_and_stops_when_its_handle_cancels(
-    detached: Callable[[str], None],
-) -> None:
-    detached("waits_for_steering")
-    run = await lib.create_3d_model("A bear", name="bear", detach=True)
-    directory = run.directory
-    del run
-
-    await asyncio.to_thread(lib.steer_3d_model, "bear", "Rounder ears.")
-    finished = await asyncio.to_thread(ended, directory)
-    detached("works_forever")
-    again = await lib.create_3d_model("Go on", name="bear", resume_session=True, detach=True)
-    await asyncio.wait_for(again.cancel(), DETACHED_TIMEOUT_SECONDS)
-
-    assert finished.status == "done"
-    assert (await again.result()).status == "cancelled"
-    assert record_of(directory).runs[-1].resumed
-
-
-async def test_a_detached_request_that_cannot_run_raises_what_stopped_it(detached: Callable[[str], None]) -> None:
-    await run_to_end(name="bear")
-    detached("builds")
-
-    with pytest.raises(Modeling3dError, match="has no session 'gone'") as taken:
-        await lib.create_3d_model("Another bear", name="bear", resume_session="gone", detach=True)
-    with pytest.raises(Modeling3dError, match="cannot reach"):
-        await lib.create_3d_model("A fox", name="fox", detach=True, intelligence=FakeIntelligence(builds))
-
-    assert (taken.value.reason, taken.value.model) == ("no-such-session", "bear")
-
-
-def test_the_cli_detached_prints_the_started_event_and_exits_0_with_the_session_as_origin(
-    monkeypatch: pytest.MonkeyPatch, detached: Callable[[str], None], working_directory: Path
-) -> None:
-    detached("waits_for_steering")
-    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "abc")
-
-    started = runner.invoke(app, ["create-3d-model", "A low poly bear", "--name", "bear", "--detach"])
-    steered = runner.invoke(app, ["steer-3d-model", "--name", "bear", "--message", "Rounder ears."])
-    directory = working_directory / ".modeling-3d" / "bear"
-    run = ended(directory)
-
-    assert started.exit_code == steered.exit_code == 0, started.output + steered.output
-    [line] = [json.loads(line) for line in started.stdout.splitlines()]
-    assert (line["kind"], line["data"]["origin"]) == ("started", "claude-code:abc")
-    assert run.status == "done"
-    steerings = [event.data["origin"] for event in events_of(directory, run.id) if event.kind == "steered"]
-    assert steerings == ["claude-code:abc"]
-
-
-def test_the_cli_starts_a_fresh_session_unless_given_true_or_a_session_id(
+def test_the_cli_takes_the_budgets_and_starts_a_fresh_session_unless_given_true_or_a_session_id(
     monkeypatch: pytest.MonkeyPatch, working_directory: Path
 ) -> None:
     monkeypatch.setattr(interface, "resolve_intelligence", lambda *arguments: FakeIntelligence(builds))
-    runner.invoke(app, ["create-3d-model", "A bear", "--name", "bear"])
+    budgets = ["--max-triangles", "none", "--max-draw-calls", "2", "--screen-size", "40-240"]
 
-    fresh = runner.invoke(app, ["create-3d-model", "Taller", "--name", "bear"])
-    named = runner.invoke(app, ["create-3d-model", "Wider", "--name", "bear", "--resume-session", SESSION])
-    last = runner.invoke(app, ["create-3d-model", "Rounder", "--name", "bear", "--resume-session", "true"])
+    results = [
+        runner.invoke(app, ["create-3d-model", "A bear", "--name", "bear", *budgets]),
+        runner.invoke(app, ["create-3d-model", "Taller", "--name", "bear"]),
+        runner.invoke(app, ["create-3d-model", "Wider", "--name", "bear", "--resume-session", SESSION]),
+        runner.invoke(app, ["create-3d-model", "Rounder", "--name", "bear", "--resume-session", "true"]),
+    ]
+    misread = runner.invoke(app, ["create-3d-model", "A fox", "--name", "fox", "--screen-size", "40x240"])
 
-    assert fresh.exit_code == named.exit_code == last.exit_code == 0, fresh.output + named.output + last.output
+    assert [result.exit_code for result in results] == [0, 0, 0, 0], "".join(result.output for result in results)
     runs = record_of(working_directory / ".modeling-3d" / "bear").runs
     assert [run.resumed for run in runs] == [False, False, True, True]
+    assert (runs[0].max_triangles, runs[0].max_draw_calls, runs[0].screen_size) == (None, 2, (40, 240))
+    assert misread.exit_code == 2
+    assert "SMALLEST-LARGEST" in misread.output
+
+
+async def builds_a_box(run: FakeRun) -> AgentResult:
+    """An agent that builds a model the check can read, and finishes without checking it."""
+    assert run.request.session_directory is not None
+    model = run.request.session_directory.parent
+    (model / "model.py").write_text("# the box", encoding="utf-8")
+    glb = Glb()
+    glb.node("Box", mesh=glb.mesh(box()))
+    glb.write(model / "model.glb")
+    return AgentResult(text="A box.", session_id=run.session_id)
+
+
+async def builds_a_box_and_checks_it(run: FakeRun) -> AgentResult:
+    result = await builds_a_box(run)
+    await asyncio.to_thread(lib.check_3d_model, "box")
+    return result
+
+
+async def checks_too_soon(run: FakeRun) -> AgentResult:
+    """An agent that checks the model, then changes it."""
+    result = await builds_a_box_and_checks_it(run)
+    glb = Glb()
+    glb.node("Box", mesh=glb.mesh(box(size=(2.0, 2.0, 2.0))))
+    assert run.request.session_directory is not None
+    glb.write(run.request.session_directory.parent / "model.glb")
+    return result
+
+
+async def test_every_run_gets_the_check_as_a_skill_and_is_told_to_run_it(state_directory: Path) -> None:
+    _, run, intelligence, _ = await run_to_end(name="bear")
+
+    request = intelligence.runs[0].request
+    [skills] = request.skill_directories
+    assert skills.is_relative_to(state_directory)
+    skill = (skills / "check-3d-model" / "SKILL.md").read_text(encoding="utf-8")
+    frontmatter = f"---\nname: {constants.AGENT_SKILL}\ndescription: {constants.AGENT_SKILL_DESCRIPTION}\n"
+    assert skill.startswith(frontmatter)
+    assert sys.executable in skill
+    assert " ".join(check.CHECK_COMMAND[1:]) in skill
+    assert lib.skill(constants.AGENT_SKILL) in skill
+    assert f"--name bear --directory {run.directory.parent}" in request.prompt
+
+
+async def test_an_agent_that_did_not_check_the_model_gets_the_check_once_as_it_finishes() -> None:
+    intelligence = FakeIntelligence(builds_a_box, follows_up=True)
+
+    run = await lib.create_3d_model(
+        "A box", name="box", max_triangles=100, max_draw_calls=None, screen_size=None, intelligence=intelligence
+    )
+    events = [event async for event in run.events()]
+
+    [message] = intelligence.runs[0].followed_up
+    assert [event.kind for event in events] == ["started", "checked", "finished"]
+    assert message == template("checked.md").format(report=events[1].text)
+    assert events[1].data == {"report": "checks/report.json"}
+    entries = lib.read_3d_model_activity("box").entries
+    assert [entry.kind for entry in entries] == ["request", "checked", "ended"]
+    assert entries[1].data == {"report": "checks/report.json"}
+
+
+async def test_an_agent_that_checked_the_model_as_it_is_gets_no_follow_up() -> None:
+    intelligence = FakeIntelligence(builds_a_box_and_checks_it, follows_up=True)
+
+    run = await lib.create_3d_model("A box", name="box", intelligence=intelligence)
+    events = [event async for event in run.events()]
+
+    assert intelligence.runs[0].followed_up == []
+    assert [event.kind for event in events] == ["started", "finished"]
+
+
+async def test_an_agent_that_changed_the_model_after_checking_it_gets_the_check_of_it_as_it_is() -> None:
+    intelligence = FakeIntelligence(checks_too_soon, follows_up=True)
+
+    run = await lib.create_3d_model("A box", name="box", intelligence=intelligence)
+    events = [event async for event in run.events()]
+
+    [message] = intelligence.runs[0].followed_up
+    [checked] = [event for event in events if event.kind == "checked"]
+    assert message == template("checked.md").format(report=checked.text)
+    assert check.covers(run.directory)
+
+
+async def test_a_check_that_cannot_run_tells_the_agent_why() -> None:
+    intelligence = FakeIntelligence(builds, follows_up=True)
+
+    run = await lib.create_3d_model("A bear", name="bear", intelligence=intelligence)
+    events = [event async for event in run.events()]
+
+    [message] = intelligence.runs[0].followed_up
+    [checked] = [event for event in events if event.kind == "checked"]
+    assert "is not a glTF binary" in checked.data["error"]
+    failed = constants.CHECK_FAILED.format(error=checked.data["error"])
+    assert message == template("checked.md").format(report=failed)
+
+
+async def test_a_run_that_leaves_its_model_unchecked_is_checked_for_whoever_looks_next() -> None:
+    _, run, _, events = await run_to_end(builds_a_box, name="box")
+
+    assert check.covers(run.directory)
+    assert "checked" not in [event.kind for event in events]

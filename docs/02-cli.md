@@ -38,6 +38,7 @@ modeling-3d app [--port <n>] [--directory <dir>]
 
 ```bash
 modeling-3d create-3d-model PROMPT --name <name> [--directory <dir>] [--reference <path>]...
+    [--max-triangles <n|none>] [--max-draw-calls <n|none>] [--screen-size <smallest-largest|none>]
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
     [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
 ```
@@ -45,6 +46,7 @@ modeling-3d create-3d-model PROMPT --name <name> [--directory <dir>] [--referenc
 `lib.create_3d_model()`, run to its end. Each event is printed to stdout as one JSON line; the last is `finished` or `failed`, carrying the result in `data`. Exits 0 when the result's `status` is `done`, otherwise 1. A failure before the agent starts exits 1 with its message on stderr.
 Ctrl+C, and every other signal that ends the process, stops the run at once, and its session can still be resumed.
 `--resume-session` takes `true`, `false`, or a session id, the values of `resume_session`.
+The budget options take `none` for `None`, and `--screen-size` takes `SMALLEST-LARGEST`, such as `40-240`. A budget option left out is left out of the call.
 With `--detach`, it prints the `started` event and exits 0 once the agent runs, and the run goes on in a process of its own.
 Run from Claude Code, the origin is `claude-code:` and the session's `CLAUDE_CODE_SESSION_ID`, so the model's activity shows which session asked.
 
@@ -57,6 +59,36 @@ modeling-3d steer-3d-model --name bear --message "Rounder ears"
 ```
 
 An agent harness with its own way to run a command in the background can use that instead of `&`; the output still goes to the file. The model's `runs/<run id>/events.jsonl` holds the same events, so the run can be followed from there too.
+
+## modeling-3d rig-3d-model
+
+```bash
+modeling-3d rig-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
+    [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
+    [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
+```
+
+`lib.rig_3d_model()`, run to its end, printed and exited as for `create-3d-model`, with the same signals, `--resume-session` values, `--detach`, and origin. `PROMPT` may be left out. It takes no budget options, since a rig works to the model's own. Exits 1 with its message on stderr when the model does not exist or is not built yet.
+
+## modeling-3d color-3d-model
+
+```bash
+modeling-3d color-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
+    [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
+    [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
+```
+
+`lib.color_3d_model()`, run and exited as `rig-3d-model` is, taking the same options. `PROMPT` may be left out, and the agent works out the roles and colors.
+
+## modeling-3d detail-3d-model
+
+```bash
+modeling-3d detail-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
+    [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
+    [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
+```
+
+`lib.detail_3d_model()`, run and exited as `rig-3d-model` is, taking the same options. `PROMPT` may be left out, and the agent works out what to paint.
 
 ## modeling-3d steer-3d-model
 
@@ -73,6 +105,15 @@ modeling-3d cancel-3d-model --name <name> [--directory <dir>]
 ```
 
 `lib.cancel_3d_model()`. Prints nothing; exits 1 when nothing is working on the model.
+
+## modeling-3d check-3d-model
+
+```bash
+modeling-3d check-3d-model --name <name> [--check <check>]... [--max-triangles <n|none>]
+    [--max-draw-calls <n|none>] [--screen-size <smallest-largest|none>] [--directory <dir>]
+```
+
+`lib.check_3d_model()`, the report printed as JSON. `--check` is repeatable, and the budget options take `none` as for `create-3d-model`. Exits 0 once it has checked, whatever it found, and 1 when it cannot check.
 
 ## modeling-3d list-3d-models
 

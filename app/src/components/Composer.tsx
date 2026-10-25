@@ -13,12 +13,19 @@ import { CropMarks } from "@/components/ui/empty-state";
 import { Help } from "@/components/ui/field";
 import { Icon } from "@/components/ui/icon";
 import { LoadingMark } from "@/components/ui/loading-mark";
+import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { openAppFolder, type ModelSummary } from "@/lib/api";
 import { describe } from "@/lib/errors";
 import { shortDirectory } from "@/lib/models";
 import { takesReferences, useReferences } from "@/lib/references";
-import { ask, sessionOf, type Handoff, type NextRequest } from "@/lib/requests";
+import {
+  ask,
+  MODE_LABELS,
+  sessionOf,
+  type Handoff,
+  type NextRequest,
+} from "@/lib/requests";
 import { submitsOnEnter } from "@/lib/utils";
 
 const DOLLARS = new Intl.NumberFormat("en-US", {
@@ -41,8 +48,9 @@ function carriesFiles(event: DragEvent) {
 
 /**
  * Where the person talks to a model's agent. While a run works, what they write steers it; otherwise it starts a new
- * run on the model, continuing its last session unless they switch that off. The AI model they pick runs that next
- * run, so a pick made while one works waits for it.
+ * run on the model in the mode picked, Shape, Rig, Color, or Detail, continuing its last session unless they switch
+ * that off. A rig, coloring, or detailing can be sent with nothing written, for the agent to work it out. The AI model they pick runs that next run,
+ * so a pick made while one works waits for it.
  */
 export function Composer({
   model,
@@ -93,11 +101,14 @@ export function Composer({
   const running = model.status === "running";
   const { intelligence } = next;
   const session = sessionOf(model, next);
+  // Every mode but shaping has a built model to work out what to do with.
+  const unasked = next.mode !== "shape" && !running;
+  const sendable = Boolean(draft.trim()) || unasked;
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
     const text = draft.trim();
-    if (!text || busy) {
+    if (!sendable || busy) {
       return;
     }
     setBusy(true);
@@ -155,9 +166,15 @@ export function Composer({
           placeholder={
             running
               ? "Steer the agent, like make the legs longer"
-              : model.status === null
-                ? `Describe what ${model.name} should be`
-                : `Describe a change to ${model.name}`
+              : unasked && next.mode === "rig"
+                ? `Describe what moves on ${model.name} and how, or send to let the agent work it out`
+                : unasked && next.mode === "color"
+                  ? `Describe the colors ${model.name} should take, or send to let the agent work them out`
+                  : unasked
+                    ? `Describe the detail to paint on ${model.name}, or send to let the agent work it out`
+                    : model.status === null
+                      ? `Describe what ${model.name} should be`
+                      : `Describe a change to ${model.name}`
           }
           aria-label={running ? "Message to the agent" : "What to change"}
           className="block field-sizing-content max-h-40 min-h-10 w-full resize-none bg-transparent text-ink outline-none placeholder:text-ink-muted focus-visible:outline-none"
@@ -181,6 +198,36 @@ export function Composer({
                 <Icon name="attach" />
               </AddReferences>
               <span aria-hidden className="mx-1 h-4 w-px bg-line" />
+              <Segmented
+                label="Mode"
+                size="sm"
+                value={next.mode}
+                onChange={next.onMode}
+                options={[
+                  { value: "shape", label: MODE_LABELS.shape },
+                  {
+                    value: "rig",
+                    label: MODE_LABELS.rig,
+                    disabled: model.built
+                      ? undefined
+                      : `${model.name} can be rigged once it's built`,
+                  },
+                  {
+                    value: "color",
+                    label: MODE_LABELS.color,
+                    disabled: model.built
+                      ? undefined
+                      : `${model.name} can be colored once it's built`,
+                  },
+                  {
+                    value: "detail",
+                    label: MODE_LABELS.detail,
+                    disabled: model.built
+                      ? undefined
+                      : `${model.name} can be detailed once it's built`,
+                  },
+                ]}
+              />
               <Switch
                 checked={session.continuing}
                 onChange={next.onResume}
@@ -205,7 +252,7 @@ export function Composer({
               variant="primary"
               size="sm"
               icon={!running}
-              disabled={busy || !draft.trim()}
+              disabled={busy || !sendable}
               aria-label={running ? "Steer" : "Send"}
             >
               {busy ? <LoadingMark /> : <Icon name="send" />}

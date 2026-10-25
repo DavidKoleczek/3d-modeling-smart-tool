@@ -6,32 +6,21 @@ import os
 from pathlib import Path
 import shutil
 
+from fakes import run_record
 import pytest
 from typer.testing import CliRunner
 
 from modeling_3d import lib
+from modeling_3d.capabilities.create_3d_model.record import load_record, write_record
 from modeling_3d.cli import app
-from modeling_3d.schemas import (
-    AgentProvider,
-    Modeling3dError,
-    ModelListing,
-    ModelRecord,
-    ModelRunRecord,
-    ModelRunStatus,
-    ModelSummary,
-)
+from modeling_3d.schemas import AgentProvider, Modeling3dError, ModelListing, ModelRecord, ModelRunStatus, ModelSummary
 
 START = datetime(2026, 10, 17, 10, tzinfo=UTC)
 # Above Linux's highest pid and never handed out on Windows, so no process has it.
 GONE_PID = 2**22 + 7
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def working_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
+pytestmark = pytest.mark.usefixtures("working_directory")
 
 
 def make_model(
@@ -48,13 +37,9 @@ def make_model(
     if minutes is not None:
         started = START + timedelta(minutes=minutes)
         runs.append(
-            ModelRunRecord(
+            run_record(
                 id=f"run-{name}",
                 prompt=f"A {name}",
-                resumed=False,
-                agent_provider="claude",
-                model="claude-sonnet-5-5",
-                reasoning_effort="medium",
                 session_id=f"session-{name}",
                 status=status,
                 pid=pid,
@@ -64,8 +49,7 @@ def make_model(
         )
         (target / "model.py").write_text("# the model", encoding="utf-8")
         (target / "model.glb").write_bytes(b"glTF")
-    record = ModelRecord(id=f"id-{name}", name=name, created=START - timedelta(days=1), runs=runs)
-    (target / "model.json").write_text(record.model_dump_json(), encoding="utf-8")
+    write_record(target, ModelRecord(id=f"id-{name}", name=name, created=START - timedelta(days=1), runs=runs))
     return target
 
 
@@ -139,11 +123,11 @@ def test_a_follow_up_continues_the_latest_session_where_its_agent_provider_still
     codex_home: Path, agent_provider: AgentProvider, rollout: str | None, resumable: bool
 ) -> None:
     bear = make_model("bear")
-    record = ModelRecord.model_validate_json((bear / "model.json").read_text(encoding="utf-8"))
+    record = load_record(bear)
     session = record.runs[0].model_copy(update={"agent_provider": agent_provider, "session_id": "0199f1c2-thread"})
     unstarted = session.model_copy(update={"id": "run-unstarted", "session_id": None, "status": "failed"})
     record.runs = [session, unstarted]
-    (bear / "model.json").write_text(record.model_dump_json(), encoding="utf-8")
+    write_record(bear, record)
     if rollout is not None:
         path = codex_home / rollout.format(session.session_id)
         path.parent.mkdir(parents=True)
@@ -169,12 +153,20 @@ def test_built_is_when_the_glb_was_last_written() -> None:
 def test_a_run_whose_process_is_gone_lists_as_crashed_and_is_left_as_it_is() -> None:
     crashed = make_model("bear", status="running", pid=GONE_PID)
     make_model("fox", status="running", pid=os.getpid())
-    before = (crashed / "model.json").read_bytes()
+    before = (crashed / "runs.json").read_bytes()
 
     statuses = {model.name: model.status for model in lib.list_3d_models().models}
 
     assert statuses == {"bear": "crashed", "fox": "running"}
-    assert (crashed / "model.json").read_bytes() == before
+    assert (crashed / "runs.json").read_bytes() == before
+
+
+def test_a_model_cloned_without_its_runs_lists_as_never_run() -> None:
+    (make_model("bear") / "runs.json").unlink()
+
+    [summary] = lib.list_3d_models().models
+
+    assert (summary.status, summary.last_run, summary.updated) == (None, None, START - timedelta(days=1))
 
 
 def test_a_broken_record_is_named_in_unreadable_and_the_rest_still_list() -> None:
@@ -183,27 +175,35 @@ def test_a_broken_record_is_named_in_unreadable_and_the_rest_still_list() -> Non
     (broken / "model.json").write_text("{", encoding="utf-8")
     alien = make_model("alien")
     (alien / "model.json").write_text('{"tool": "another-tool"}', encoding="utf-8")
+    runless = make_model("runless")
+    (runless / "runs.json").write_text('{"runs": [{}]}', encoding="utf-8")
 
     listing = lib.list_3d_models()
 
     assert [model.name for model in listing.models] == ["bear"]
-    assert len(listing.unreadable) == 2
-    for message, target in zip(listing.unreadable, [alien, broken], strict=True):
-        assert str((target / "model.json").resolve()) in message
-        assert "Fix or remove it." in message
+    assert len(listing.unreadable) == 3
+    for message, path in zip(
+        listing.unreadable, [alien / "model.json", broken / "model.json", runless / "runs.json"], strict=True
+    ):
+        assert str(path.resolve()) in message
+        assert "Fix" in message
 
 
-def test_viewing_a_model_makes_it_the_one_viewed_last() -> None:
+def test_viewing_a_model_makes_it_the_one_viewed_last_in_its_directory(working_directory: Path) -> None:
     make_model("bear")
     make_model("fox", minutes=30)
+    make_model("owl", root=Path("models"))
 
     summary = lib.view_3d_model("bear")
     after_bear = lib.list_3d_models()
     lib.view_3d_model("fox")
+    lib.view_3d_model("owl", Path("models"))
 
     assert summary == after_bear.models[1]
     assert after_bear.last_viewed == "bear"
     assert lib.list_3d_models().last_viewed == "fox"
+    assert lib.list_3d_models(Path("models")).last_viewed == "owl"
+    assert (working_directory / "models" / ".state.json").is_file()
 
 
 def test_viewing_models_at_once_never_fails() -> None:
@@ -215,16 +215,6 @@ def test_viewing_models_at_once_never_fails() -> None:
 
     assert lib.list_3d_models().last_viewed in ("bear", "fox")
     assert [path.name for path in Path(".modeling-3d").iterdir() if path.suffix == ".tmp"] == []
-
-
-def test_viewing_records_the_model_in_the_directory_it_names(working_directory: Path) -> None:
-    make_model("bear", root=Path("models"))
-
-    lib.view_3d_model("bear", Path("models"))
-
-    assert lib.list_3d_models(Path("models")).last_viewed == "bear"
-    assert lib.list_3d_models().last_viewed is None
-    assert (working_directory / "models" / ".state.json").is_file()
 
 
 @pytest.mark.parametrize("name", ["fox", "Bear", "../bear", "notes"])

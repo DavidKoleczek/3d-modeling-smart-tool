@@ -14,8 +14,8 @@ listing = list_3d_models()
 [(model.name, model.status) for model in listing.models]
 ```
 
-A directory that does not exist lists as empty. A model whose `model.json` cannot be read is left
-out and named in `unreadable`, with what is wrong with it.
+A directory that does not exist lists as empty. A model whose `model.json` or `runs.json` cannot
+be read is left out and named in `unreadable`, with what is wrong with it.
 
 ## Arguments
 
@@ -62,7 +62,7 @@ JSON on stdout:
 }
 ```
 
-`last_run` is the last run's entry in the model's `model.json`, and null for a model that never
+`last_run` is the last run's entry in the model's `runs.json`, and null for a model that never
 ran. `built` is when `model.glb` was last written, and null before the first build. `status` is the last run's: `running`, `done`, `failed`, `cancelled`, or `timed-out`, or
 `crashed` when a run is recorded as running but its process is gone. A crashed model goes on
 with `create-3d-model --name <name> --resume-session true`, which continues its session.

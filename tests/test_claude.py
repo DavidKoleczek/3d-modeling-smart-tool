@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from fakes import collect
 import pytest
 
 pytest.importorskip("claude_agent_sdk")
@@ -33,7 +34,7 @@ from modeling_3d.intelligence.claude import (
     FolderSessionStore,
     scratch_directory,
 )
-from modeling_3d.intelligence.schemas import AgentEvent, AgentRequest, HostWorkspace
+from modeling_3d.intelligence.schemas import AgentRequest, HostWorkspace
 from modeling_3d.schemas import Modeling3dError
 
 SESSION = "fake-session"
@@ -171,10 +172,6 @@ def request(workspace: Path | None = None, **fields: Any) -> AgentRequest:
         timeout_seconds=fields.pop("timeout_seconds", TIMEOUT_SECONDS),
         **fields,
     )
-
-
-async def collect(events: AsyncIterator[AgentEvent]) -> list[AgentEvent]:
-    return [event async for event in events]
 
 
 @pytest.mark.parametrize(
@@ -330,7 +327,6 @@ async def test_a_steering_message_joins_the_session_and_a_result_before_it_is_ta
 
     assert result.text == "second turn"
     assert fake.clients[0].sent[1]["message"] == {"role": "user", "content": "Also do this."}
-    assert ClaudeIntelligence().steering == "queued"
 
 
 async def test_steering_an_ended_run_names_the_session_to_resume(world: Callable[..., FakeWorld]) -> None:
@@ -345,7 +341,7 @@ async def test_steering_an_ended_run_names_the_session_to_resume(world: Callable
     assert SESSION in str(failure.value)
 
 
-@pytest.mark.parametrize("stop", ["cancel", "timeout"])
+@pytest.mark.parametrize("stop", ["cancel", pytest.param("timeout", marks=pytest.mark.real_timeout)])
 async def test_a_stopped_run_is_interrupted_at_once_and_keeps_the_session(
     world: Callable[..., FakeWorld], stop: str
 ) -> None:
@@ -476,3 +472,47 @@ def test_preflight_names_the_runtime_when_it_cannot_start(
     assert "did not start" in message
     assert "FileNotFoundError" in message
     assert "[claude]" in message
+
+
+async def test_a_follow_up_goes_on_in_the_session_until_it_has_nothing_more_to_say(
+    world: Callable[..., FakeWorld], tmp_path: Path
+) -> None:
+    async def script(client: FakeClient) -> None:
+        client.echo(0)
+        client.messages.put_nowait(finished("built"))
+        await client.wait_for_message(2)
+        client.echo(1)
+        client.messages.put_nowait(finished("acted on the check"))
+
+    fake = world(script)
+    replies = iter(["Here is the check.", None])
+
+    async def follow_up() -> str | None:
+        return next(replies)
+
+    run = await ClaudeIntelligence().start(request(tmp_path, follow_up=follow_up))
+    result = await run.result()
+
+    assert result.text == "acted on the check"
+    assert fake.clients[0].sent[1]["message"] == {"role": "user", "content": "Here is the check."}
+    assert next(replies, "asked again") == "asked again"
+
+
+async def test_skills_come_as_a_plugin_with_the_skill_tool_and_every_setting_source(
+    world: Callable[..., FakeWorld], tmp_path: Path
+) -> None:
+    skills = tmp_path / "skills"
+    (skills / "check-3d-model").mkdir(parents=True)
+    (skills / "check-3d-model" / "SKILL.md").write_text("---\nname: check-3d-model\n---\n", encoding="utf-8")
+    fake = world()
+
+    await (await ClaudeIntelligence().start(request(tmp_path, writable=True, skill_directories=[skills]))).result()
+
+    options = fake.clients[0].options
+    assert options.tools == [*READ_ONLY_TOOLS, *WRITE_TOOLS, "Skill"]
+    assert options.skills == "all"
+    assert options.setting_sources == ["user", "project", "local"]
+    [plugin] = options.plugins
+    copied = Path(plugin["path"]) / "skills" / "check-3d-model" / "SKILL.md"
+    assert Path(plugin["path"]).name == "modeling-3d"
+    assert copied.read_text(encoding="utf-8") == "---\nname: check-3d-model\n---\n"

@@ -1,12 +1,27 @@
 `create-3d-model` has an agent create a 3D model, or change one, as a Blender script. The agent
 writes `model.py`, builds `model.glb` with it, renders the result, looks at the renders, and fixes
-what does not match, until it is done. Unless the request says otherwise, it makes the model
-ready to rig and animate: a skeleton for what bends, separate pivoted parts for what moves
-rigidly. Every model has a name, unique in its directory. Naming a model that exists changes it;
-any other name creates a new model.
+what does not match, until it is done. Every model has a name, unique in its directory. Naming a
+model that exists changes it; any other name creates a new model.
+
+This is the shape of the model, built from named parts, with no materials unless the request asks
+for them, and small marks such as screws and seams left to its surface detail. Rigging it to move,
+coloring it by role, and painting its surface detail are stages of their own, `rig-3d-model`,
+`color-3d-model`, and `detail-3d-model`, which a run never moves on to by itself. Changing the
+shape of a rigged, colored, or detailed model keeps its rig, colors, and detail working.
+
+The agent has `check-3d-model` as a skill and is told to check the model before it finishes. If it
+finishes without a check of the `model.glb` it left, the run checks it once and sends it the
+report to act on, as a `checked` event.
 
 The agent runs in the working directory, so run from the project the model is for: the agent
 reads its docs, conventions, and assets for context, and writes only in the model's directory.
+An `AGENTS.md` in the models directory is the project's guidance for every model there, such as
+which way models face, their roles and palette, and the budgets for each kind of model. A fresh
+session is told to read it, and the request decides over it.
+
+A models directory the tool makes gets a `.gitignore` of its own, which commits only `AGENTS.md`
+and each opted-in model's `model.json`, `model.py`, `validate.py`, and `README.md`. Opt a model
+in with a line like `!/bear/` in it. A directory that already holds models is left as it is.
 
 Blender comes from PyPI through uv, so no Blender install is needed. The first build downloads it,
 about 340 MB, into uv's cache. Building runs on Windows, Linux x64, and macOS on Apple silicon.
@@ -23,6 +38,14 @@ The person may have changed or steered a model in the app. Read its activity wit
 ```bash
 # a new model, from a description and a reference image
 modeling-3d create-3d-model "A low poly brown bear like the image" --name bear --reference bear.png > bear.jsonl &
+
+# a model within budgets, seen from 40 to 240 pixels long
+modeling-3d create-3d-model "A delivery truck" --name truck --max-triangles 2000 \
+    --max-draw-calls 2 --screen-size 40-240
+
+# a model for an offline render, with no budgets
+modeling-3d create-3d-model "A detailed chess set" --name chess --max-triangles none \
+    --max-draw-calls none --screen-size none
 
 # a change, in a fresh session that reads its model.py
 modeling-3d create-3d-model "Make it a polar bear" --name bear
@@ -69,12 +92,36 @@ earlier renders.
   back to the conversation ("put the ears back how they were"), or when the last run was cut short.
   A model without a session changes in a fresh one.
 - A session id: an earlier session of the model, to go back to what it knew then. Each run's
-  session is its `session_id` in the model's `model.json`; `read-3d-model-activity --name <name>`
+  session is its `session_id` in the model's `runs.json`; `read-3d-model-activity --name <name>`
   gives it on each request, beside that request's prompt, and `list-3d-models` gives the one
   `true` continues as `last_session`, and whether it can go on here as `resumable`.
 
 A continued session runs on the agent provider that made it, with any of its models; a fresh
-one can use any.
+one can use any. A session that last rigged the model can go on shaping it, and is told this
+mode's instructions as it does.
+
+A continued session already has what earlier requests gave it, so it is sent only what is set in this call: the prompt, any new references, and any budgets passed. Leave the budgets out unless you want them to change.
+
+## Budgets
+
+Every model is built to budgets, which the agent checks the model against and reports on:
+
+- `--max-triangles N`: the most triangles.
+- `--max-draw-calls N`: the most draw calls, one for each material on each mesh object.
+- `--screen-size SMALLEST-LARGEST`: the smallest and largest the model is on screen, in pixels
+  along its longest side at 1080p, such as `40-240`. It sets how small detail can be and how many
+  sides round parts need.
+
+Choose numbers that make sense for the task at hand: what the model is, how much of the screen
+it takes, and how many others like it are drawn at once. Work the screen size out from how the
+project shows the model: smallest from its farthest camera, largest from its closest view, such
+as a thumbnail or a close-up. Look for budgets in the project's guidance and docs first,
+such as an `AGENTS.md` in the models directory. A new model given none gets general defaults,
+which are unlikely to fit it.
+
+Pass `none` for no budget, such as all three for a model not meant for a real-time renderer.
+With no budgets at all, the agent gets no budget instructions. A change keeps the model's
+budgets when they are left out, and `none` removes one.
 
 ## Arguments
 
@@ -86,6 +133,8 @@ one can use any.
   model's `model.py`, `model.glb`, or render, or a folder of them. Each is copied into the model's
   `references/`, a folder whole but for its hidden folders, `node_modules`, and `__pycache__`, and
   images are also shown to the agent with the prompt.
+- `--max-triangles N|none`, `--max-draw-calls N|none`, `--screen-size SMALLEST-LARGEST|none`:
+  the model's budgets. See Budgets.
 - `--resume-session S`: for a model that exists, `false` (the default) for a fresh session, `true`
   to continue its last one, or the id of one of its sessions. See Changing a model.
 - `--agent-provider P`: `claude` or `codex`; the first installed when omitted, and the session's
@@ -106,10 +155,12 @@ Run from Claude Code, the request is recorded as from `claude-code:<session id>`
 
 One JSON line per event on stdout. `kind` is one of:
 
-- `started`
+- `started`: the request in `data`, with `mode` `shape`
 - `agent`: one message from the agent, as its provider gave it, with the provider's name for it in
   `text`
 - `steered`
+- `checked`: the report of the check sent to the agent as it finished, in `text`, and in `data`
+  where it is kept, or the `error` that stopped it
 - `finished`
 - `failed`
 
@@ -122,7 +173,8 @@ and it exits 0.
 The model's directory, `<directory>/<name>/`:
 
 ```
-model.json        marks it as a model made by modeling-3d; every run, its status, process, and session
+model.json        marks it as a model made by modeling-3d
+runs.json         every run, its status, process, and session; not committed
 model.py          the Blender script, with inline dependencies; `uv run --script model.py` rebuilds everything
 model.py.lock     the locked dependencies
 model.glb         the model

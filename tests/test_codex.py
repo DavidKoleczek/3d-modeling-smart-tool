@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from fakes import collect
 import pytest
 
 pytest.importorskip("openai_codex")
@@ -22,7 +23,7 @@ from openai_codex.types import GetAccountResponse, TurnCompletedNotification
 from modeling_3d.intelligence import codex as adapter
 from modeling_3d.intelligence import interface
 from modeling_3d.intelligence.codex import CodexIntelligence, scratch_directory
-from modeling_3d.intelligence.schemas import AgentEvent, AgentRequest, HostWorkspace
+from modeling_3d.intelligence.schemas import AgentRequest, HostWorkspace
 from modeling_3d.schemas import Modeling3dError
 
 THREAD = "fake-thread"
@@ -138,11 +139,19 @@ class FakeWorld:
         self.start_error: Exception | None = None
         self.interrupted = 0
         self.closed = 0
+        self.requests: list[tuple[str, Any]] = []
 
     def codex(self) -> Any:
         world = self
 
+        async def request(method: str, params: Any, response_model: Any) -> Any:
+            world.requests.append((method, params))
+            return response_model()
+
         class Codex:
+            # The SDK's own client, for requests it has no method for.
+            _client = SimpleNamespace(request=request)
+
             async def __aenter__(self) -> "Codex":
                 return self
 
@@ -192,10 +201,6 @@ def request(workspace: Path | None = None, **fields: Any) -> AgentRequest:
     )
 
 
-async def collect(events: AsyncIterator[AgentEvent]) -> list[AgentEvent]:
-    return [event async for event in events]
-
-
 @pytest.mark.parametrize(
     ("writable", "sandbox"), [(False, Sandbox.read_only), (True, Sandbox.full_access)], ids=["read", "write"]
 )
@@ -215,7 +220,10 @@ async def test_a_workspace_run_gets_the_access_it_asks_for_without_approval_prom
     assert settings["model"] == "gpt-6.1-sol"
     assert settings["sandbox"] == sandbox
     assert settings["approval_mode"] == ApprovalMode.deny_all
-    assert settings["config"] == {"model_reasoning_summary": "detailed"}
+    assert settings["config"] == {
+        "model_reasoning_summary": "detailed",
+        "tools.experimental_request_user_input.enabled": False,
+    }
     turn = fake.turns[0]
     assert turn.effort.value == "ultra"
     assert turn.summary.root.value == "detailed"
@@ -331,31 +339,21 @@ async def test_steering_after_the_run_ended_names_the_session_to_resume(
     assert THREAD in str(failure.value)
 
 
-async def test_cancelling_interrupts_the_turn_and_closes_the_runtime(
-    world: Callable[..., FakeWorld], tmp_path: Path
+@pytest.mark.parametrize("stop", ["cancel", pytest.param("timeout", marks=pytest.mark.real_timeout)])
+async def test_a_stopped_run_interrupts_the_turn_and_closes_the_runtime(
+    world: Callable[..., FakeWorld], tmp_path: Path, stop: str
 ) -> None:
     fake = world(never_answers)
 
-    run = await CodexIntelligence().start(request(tmp_path))
-    await run.cancel()
+    run = await CodexIntelligence().start(request(tmp_path, timeout_seconds=TIMEOUT_SECONDS if stop == "cancel" else 1))
+    if stop == "cancel":
+        await run.cancel()
     result = await run.result()
 
-    assert result.cancelled
+    assert result.cancelled == (stop == "cancel")
+    assert result.error == (None if stop == "cancel" else "The agent did not finish within 1 seconds.")
     assert result.session_id == THREAD
-    assert fake.interrupted == 1
-    assert fake.closed == 1
-
-
-async def test_a_run_that_outlasts_its_timeout_ends_in_an_error(
-    world: Callable[..., FakeWorld], tmp_path: Path
-) -> None:
-    fake = world(never_answers)
-
-    run = await CodexIntelligence().start(request(tmp_path, timeout_seconds=1))
-    result = await run.result()
-
-    assert result.error == "The agent did not finish within 1 seconds."
-    assert fake.interrupted == 1
+    assert (fake.interrupted, fake.closed) == (1, 1)
 
 
 async def test_a_failed_turn_ends_in_the_runtimes_own_words(world: Callable[..., FakeWorld], tmp_path: Path) -> None:
@@ -445,3 +443,27 @@ def test_preflight_names_the_runtime_when_it_cannot_start(monkeypatch: pytest.Mo
     assert "did not start" in message
     assert "FileNotFoundError" in message
     assert "[codex]" in message
+
+
+async def test_a_follow_up_goes_on_in_a_turn_of_its_own_until_it_has_nothing_more_to_say(
+    world: Callable[..., FakeWorld], tmp_path: Path
+) -> None:
+    fake = world(answers("built"), answers("acted on the check"))
+    replies = iter(["Here is the check.", None])
+
+    async def follow_up() -> str | None:
+        return next(replies)
+
+    result = await (await CodexIntelligence().start(request(tmp_path, follow_up=follow_up))).result()
+
+    assert result.text == "acted on the check"
+    assert [turn.input for turn in fake.turns[1:]] == [[TextInput("Here is the check.")]]
+    assert next(replies, "asked again") == "asked again"
+
+
+async def test_skills_are_given_to_the_runtime_the_run_starts(world: Callable[..., FakeWorld], tmp_path: Path) -> None:
+    fake = world()
+
+    await (await CodexIntelligence().start(request(tmp_path, skill_directories=[tmp_path / "skills"]))).result()
+
+    assert fake.requests == [("skills/extraRoots/set", {"extraRoots": [str((tmp_path / "skills").resolve())]})]

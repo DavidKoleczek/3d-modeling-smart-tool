@@ -1,3 +1,4 @@
+import { useFrame } from "@react-three/fiber";
 import { useEffect, useMemo } from "react";
 import {
   EdgesGeometry,
@@ -11,7 +12,20 @@ import {
 // Edges between faces that meet at less than this many degrees are left out, so a smooth surface stays quiet.
 const CREASE_DEGREES = 20;
 
-/** The model's mesh edges in accent ink, drawn over its shaded faces. */
+/** Put each mesh's edges where the mesh is now, and show them only while it shows. */
+function follow(meshes: [LineSegments, Mesh][]) {
+  for (const [lines, mesh] of meshes) {
+    lines.matrix.copy(mesh.matrixWorld);
+    // A part hidden on its own may be a group holding the mesh.
+    let shown = mesh.visible;
+    mesh.traverseAncestors((ancestor) => {
+      shown &&= ancestor.visible;
+    });
+    lines.visible = shown;
+  }
+}
+
+/** The model's mesh edges in accent ink, drawn over its shaded faces, following each part as the rig view poses it. */
 export function Wireframe({
   scene,
   color,
@@ -22,7 +36,7 @@ export function Wireframe({
   const edges = useMemo(() => {
     const material = new LineBasicMaterial({ color });
     const group = new Group();
-    scene.updateMatrixWorld(true);
+    const meshes: [LineSegments, Mesh][] = [];
     scene.traverse((object) => {
       if (object instanceof Mesh) {
         const lines = new LineSegments(
@@ -30,12 +44,14 @@ export function Wireframe({
           material,
         );
         lines.matrixAutoUpdate = false;
-        lines.matrix.copy(object.matrixWorld);
         group.add(lines);
+        meshes.push([lines, object]);
       }
     });
-    return { group, material };
+    return { group, material, meshes };
   }, [scene, color]);
+
+  useFrame(() => follow(edges.meshes));
 
   useEffect(
     () => () => {

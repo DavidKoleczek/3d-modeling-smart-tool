@@ -3,12 +3,12 @@ This is a Smart Tool that must conform to Microsoft's [Amplifier Smart Tool Spec
 ## Orientation
 
 - If not already, set up the environment by following CONTRIBUTING.md. It also has every command for linting, formatting, type checking, testing, and running the conformance kit.
-- After making changes, `prek run --all-files` and `uv run pytest` must pass before the work is done.
+- After making changes, `prek run --all-files` and `uv run pytest` must pass before the work is done. The slow tests should only be run when the changes touch that code.
 - `docs/00-vision.md` is the source of truth for what this tool is and is not, and `docs/01-library.md` for what it exposes. Then `README.md` and `CONTRIBUTING.md`, then the rest of `docs/`. Both are written for people and stay concise. When work changes any of them, propose the doc updates at the end and call out contradictions.
 - The library is the tool. Every capability lives in the library and is reachable from `lib.py`. The CLI and any other surface are thin wrappers: argument parsing and I/O conventions, then a call into the library. Capability that exists only in a wrapper is a defect.
-- Each domain capability lives in `capabilities/<name>/`, with its prompts and templates beside its code. `lib.py` imports it and is the only place that does. `core/` holds only what every smart tool has: the manifest and the skill.
+- Each domain capability lives in `capabilities/<name>/`, with its prompts and templates anywhere under that folder. `lib.py` imports it and is the only place that does. `core/` holds only what every smart tool has: the manifest and the skill.
 - Deterministic capabilities run with no model provider configured. Model-backed capabilities go through the `Intelligence` interface, never an SDK directly, and their help text says they are model-backed. They take `agent_provider`, `model`, and `reasoning_effort` as parameters and resolve the implementation and model with `select_intelligence`, so the model defaults to the agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS` from `schemas.py`; never hardcode a model name.
-- A capability is its code, a row in `CAPABILITIES`, and a `skill_<capability>.md` beside that code carrying its arguments, a worked invocation, and its expected result. `<command> --help` renders that skill, `<command> -h` stays the terse generated summary, and the tool's own skill stays a router pointing at both.
+- A capability is its code, a row in `CAPABILITIES`, and a `skill_<capability>.md` anywhere under `capabilities/<name>/` carrying its arguments, a worked invocation, and its expected result. `<command> --help` renders that skill, `<command> -h` stays the terse generated summary, and the tool's own skill stays a router pointing at both.
 - Failures name what went wrong and how to fix it. These should be surfaced when the library or other surface is used. Listing all possible failures in skills or docs is not appropriate. The caller is usually an agent.
 - The `Repository` URL under `[project.urls]` in `pyproject.toml` is the tool's canonical source: `--help` carries it, so an agent that can run the tool but not read its files still finds the docs, and every install instruction in `README.md`, `SMART_TOOL.md`, and the skill is built on it. If it is still the `<owner>` placeholder, replace it everywhere it appears once the remote exists.
 - Never modify this file unless explicitly told.
@@ -18,7 +18,7 @@ This is a Smart Tool that must conform to Microsoft's [Amplifier Smart Tool Spec
 - Make sure any comments in code are necessary. A necessary comment captures intent that cannot be encoded in names, types, or structure. Comments should be reserved for the "why", only used to record rationale, trade-offs, links to specs/papers, or non-obvious domain insights. They should add signal that code cannot.
 - You must *ALWAYS* match the existing style of documentation and code of the project.
 - When writing documentation
-  - Keep it very concise
+  - Keep it concise
   - No emojis or em dashes.
   - For numbered list, number each element with "1." to make it easier to reorder later.
   - Don't use tables unless asked for.
@@ -27,6 +27,7 @@ This is a Smart Tool that must conform to Microsoft's [Amplifier Smart Tool Spec
 - Never do any git operations (staging, committing, pushing, branches, etc.) without the user explicitly asking.
 - Commit messages are short, like the existing history. Never credit yourself in a commit, as a co-author or in the message.
 - Do not read into too much what files I have open or what lines I am highlighting.
+- Comments, docs, and anything committed should state rationale and facts only. No internal details, plans, chat messages, and so forth.
 
 ## Python Development Instructions
 

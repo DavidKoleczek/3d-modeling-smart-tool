@@ -57,6 +57,7 @@ export type Block =
       latest: boolean;
     }
   | { kind: "rebuilt"; time: string }
+  | { kind: "checked"; entry: ActivityEntry }
   | { kind: "ended"; entry: ActivityEntry; status: ModelStatus };
 
 /** One request on a model and everything that came of it. */
@@ -268,6 +269,8 @@ export function runsOf(
       run.blocks.push({ kind: "message", entry });
     } else if (entry.kind === "said") {
       run.blocks.push({ kind: "said", entry });
+    } else if (entry.kind === "checked") {
+      run.blocks.push({ kind: "checked", entry });
     } else if (entry.kind === "ended") {
       run.ended = entry;
       run.blocks.push({

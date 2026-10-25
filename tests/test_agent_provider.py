@@ -105,4 +105,4 @@ def test_every_installed_agent_provider_resolves_to_its_implementation(agent_pro
 
     intelligence = interface.resolve_intelligence(agent_provider, DEFAULT_INTELLIGENCE_MODELS[agent_provider])
 
-    assert intelligence.implementation
+    assert type(intelligence).__module__ == f"modeling_3d.intelligence.{agent_provider}"

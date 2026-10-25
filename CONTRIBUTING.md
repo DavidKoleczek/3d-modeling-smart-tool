@@ -79,6 +79,20 @@ Run tests:
 uv run pytest
 ```
 
+They run in parallel, leaving out the slow tests, which start a process or wait out a real timeout. When a change touches the code a slow test covers, run its marker too:
+
+- `mcp_process`: the MCP adapter, `adapters/mcp.py`, the `mcp` command, and `open_app` and which tools a client sees.
+- `detached`: detached runs, in `background.py`, how `create.py` starts one, and `DetachedRun` in `runs.py`, and the app's tools that start, steer, and cancel runs.
+- `real_timeout`: how a run, or either agent provider, times out.
+
+```bash
+uv run pytest -m detached              # one marker's tests
+uv run pytest -m ""                    # every test
+uv run pytest -n 0 tests/test_app.py   # in one process, as for a debugger
+```
+
+A new test that starts a process or waits out real time gets one of these markers, or a new one registered in `pyproject.toml` with the code it covers.
+
 #### App Development
 
 `app/` holds the app's frontend, Vite, TypeScript, React, Tailwind, and Base UI, in two builds:

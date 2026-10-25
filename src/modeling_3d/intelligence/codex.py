@@ -20,6 +20,7 @@ from openai_codex import (
     Sandbox,
     TextInput,
 )
+from openai_codex.generated.v2_all import SkillsExtraRootsSetResponse
 from openai_codex.models import Notification, UnknownNotification
 from openai_codex.types import (
     GetAccountResponse,
@@ -36,8 +37,13 @@ from modeling_3d.schemas import Modeling3dError
 SIGN_IN_DOCUMENTATION = "https://developers.openai.com/codex/auth"
 # How long a stopping run waits for Codex to end its turn before closing the runtime anyway.
 INTERRUPT_SECONDS = 5
-# Without it the runtime leaves reasoning summaries out, and they are what the activity shows of reasoning.
-THREAD_CONFIG: dict[str, Any] = {"model_reasoning_summary": "detailed"}
+THREAD_CONFIG: dict[str, Any] = {
+    # Without it the runtime leaves reasoning summaries out, and they are what the activity shows of reasoning.
+    "model_reasoning_summary": "detailed",
+    # Nobody answers a question while a run works, so its agent is not offered the tool for asking one. Codex only
+    # takes it in Plan mode, but still lists it in the Default mode runs use.
+    "tools.experimental_request_user_input.enabled": False,
+}
 SUMMARY = ReasoningSummary.model_validate("detailed")
 # Each piece of a message, of reasoning, or of a command's output comes whole in the item it ends with, and the turn's
 # diff repeats every file change, so these are not kept twice.
@@ -57,6 +63,7 @@ DROPPED_METHODS = frozenset(
 # Codex counts the session's tokens after every model call; the last count of a turn is kept, just before it ends.
 USAGE_METHOD = "thread/tokenUsage/updated"
 TURN_COMPLETED = "turn/completed"
+SKILL_ROOTS_METHOD = "skills/extraRoots/set"
 
 
 class CodexRun:
@@ -159,6 +166,14 @@ class CodexRun:
                 sandbox=sandbox,
             )
         self._session_id = self._thread.id
+        if self._request.skill_directories:
+            # Codex takes extra skill directories only for its whole runtime, and the SDK starts one for each run. The
+            # SDK has no method for it, so it goes through the client the SDK keeps.
+            await self._codex._client.request(
+                SKILL_ROOTS_METHOD,
+                {"extraRoots": [str(path.resolve()) for path in self._request.skill_directories]},
+                response_model=SkillsExtraRootsSetResponse,
+            )
         await self._begin(_content(self._request.prompt, self._request.images))
 
     async def _begin(self, content: RunInput) -> None:
@@ -184,6 +199,14 @@ class CodexRun:
             if completed.turn.status == TurnStatus.completed and self._pending:
                 await self._begin(self._pending.pop(0))
                 continue
+            if completed.turn.status == TurnStatus.completed and self._request.follow_up is not None:
+                follow_up = await self._request.follow_up()
+                # Steering that came while it was asked for goes first, and the follow up after it.
+                if follow_up is not None:
+                    self._pending.append(_content(follow_up, []))
+                if self._pending:
+                    await self._begin(self._pending.pop(0))
+                    continue
             self._answered = True
             return self._outcome(completed)
 

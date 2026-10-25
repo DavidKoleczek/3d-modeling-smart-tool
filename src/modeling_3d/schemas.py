@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, get_args
 
@@ -25,6 +26,22 @@ SEMVER_PATTERN = r"^\d+\.\d+\.\d+$"
 SLUG_PATTERN = r"^[a-z0-9]+(-[a-z0-9]+)*$"
 
 
+class NotGiven(Enum):
+    """A budget left out of a request, apart from None, which is no budget."""
+
+    NOT_GIVEN = "not-given"
+
+
+NOT_GIVEN = NotGiven.NOT_GIVEN
+# What a new model is built to when its request leaves a budget out: a mid-size object, seen from a distance up to
+# filling the screen.
+DEFAULT_MAX_TRIANGLES = 10_000
+DEFAULT_MAX_DRAW_CALLS = 8
+DEFAULT_SCREEN_SIZE = (100, 1080)
+# Blender as a Python module from PyPI, so building a model and checking it need only uv.
+BPY_REQUIREMENT = "bpy==5.2.*"
+
+
 # Which failure it was, for a surface that words it for a person in its own terms rather than passing on the message.
 FailureReason = Literal[
     "invalid-name",
@@ -44,7 +61,11 @@ FailureReason = Literal[
     "bad-upload",
     "no-such-intelligence-model",
     "bad-reasoning-effort",
+    "bad-budget",
     "bad-settings",
+    "no-such-check",
+    "not-built",
+    "bad-glb",
 ]
 
 
@@ -164,19 +185,32 @@ class IntelligenceModels(BaseModel):
 # region: 3D models
 
 ModelRunStatus = Literal["running", "done", "failed", "cancelled", "timed-out"]
-ModelEventKind = Literal["started", "agent", "steered", "finished", "failed"]
+ModelEventKind = Literal["started", "agent", "steered", "checked", "finished", "failed"]
+# The stages of the workflow an agent works on a model in, each run by a capability of its own: `shape` by
+# create_3d_model, `rig` by rig_3d_model, `color` by color_3d_model, and `detail` by detail_3d_model. A run never moves
+# on to the next by itself.
+ModelMode = Literal["shape", "rig", "color", "detail"]
+MODES: tuple[ModelMode, ...] = get_args(ModelMode)
 
 
 class ModelRunRecord(BaseModel):
-    """One request to create or change a model, as model.json keeps it while it runs and after."""
+    """One request to create or change a model, as runs.json keeps it while it runs and after."""
 
     id: str
-    prompt: str
+    mode: ModelMode = Field(default="shape", description="The stage it worked in; `shape` for runs from before modes")
+    prompt: str = Field(description="What was asked; empty for a rig, coloring, or detailing left to work it out")
     references: list[str] = Field(default_factory=list, description="The references given, as copied into the model")
     resumed: bool = Field(description="Whether the run continued the session of the run before it")
     agent_provider: AgentProvider
     model: str
     reasoning_effort: ReasoningEffort
+    max_triangles: int | None = Field(
+        default=None, description="The budgets the run worked to, its request's or those its model had; None for none"
+    )
+    max_draw_calls: int | None = None
+    screen_size: tuple[int, int] | None = Field(
+        default=None, description="The smallest and largest on screen, in pixels along its longest side at 1080p"
+    )
     session_id: str | None = None
     origin: str | None = Field(default=None, description="Who asked: `app`, `claude-code:<session id>`, or unknown")
     status: ModelRunStatus = "running"
@@ -187,12 +221,22 @@ class ModelRunRecord(BaseModel):
 
 
 class ModelRecord(BaseModel):
-    """model.json: what marks a directory as a 3D model made by this tool, and every request it has run."""
+    """model.json: what marks a directory as a 3D model made by this tool, with every request it has run read in."""
 
     tool: Literal["modeling-3d"] = "modeling-3d"
     id: str = Field(description="Stays the same when the model's directory is renamed")
     name: str
     created: datetime
+    runs: list[ModelRunRecord] = Field(default_factory=list, exclude=True, description="Kept in runs.json beside it")
+
+
+class ModelRuns(BaseModel):
+    """runs.json: every request a model has run.
+
+    Kept apart from model.json, which a project commits with the model's sources, since it changes with every event and
+    names this machine's processes and sessions.
+    """
+
     runs: list[ModelRunRecord] = Field(default_factory=list)
 
 
@@ -218,7 +262,69 @@ class ModelResult(BaseModel):
     session_id: str | None = None
     agent_provider: AgentProvider
     files: list[str] = Field(default_factory=list, description="The model's files, relative to its directory")
-    next: str = Field(description="The command that goes on changing this model in the same session")
+    next: str = Field(description="The command that goes on changing this model in the same session and mode")
+
+
+CheckName = Literal[
+    "triangles",
+    "sub-pixel",
+    "round-parts",
+    "buried-faces",
+    "on-screen",
+    "draw-calls",
+    "static-parts",
+    "moving-parts",
+    "skeleton",
+    "markers",
+    "poses",
+    "palette",
+    "face-roles",
+    "emission",
+    "schemes",
+    "detail-texture",
+    "detail-uvs",
+    "detail-colors",
+    "detail-renders",
+]
+CHECK_NAMES: tuple[CheckName, ...] = get_args(CheckName)
+# What a caller asks for to run every check of a stage of the workflow.
+CHECK_GROUPS: dict[str, tuple[CheckName, ...]] = {
+    "shape": ("triangles", "sub-pixel", "round-parts", "buried-faces", "on-screen"),
+    "rig": ("draw-calls", "static-parts", "moving-parts", "skeleton", "markers", "poses"),
+    "color": ("palette", "face-roles", "emission", "schemes"),
+    "detail": ("detail-texture", "detail-uvs", "detail-colors", "detail-renders"),
+}
+
+
+class CheckResult(BaseModel):
+    """What one check measured of a model, for whoever reads it to judge; it never passes or fails."""
+
+    name: CheckName
+    summary: str = Field(description="One line; for a skipped check, why it was skipped")
+    skipped: bool = False
+    lines: list[str] = Field(default_factory=list, description="One for each part or thing measured")
+    figures: dict[str, Any] = Field(default_factory=dict, description="The numbers measured, by name")
+    files: list[str] = Field(default_factory=list, description="Its renders, relative to the model's directory")
+
+
+class ModelCheck(BaseModel):
+    """A check of a model's model.glb, as `check_3d_model` returns it and keeps it in checks/report.json."""
+
+    name: str
+    directory: Path
+    checked: datetime
+    glb_sha256: str = Field(description="The model.glb it checked, so a reader can tell whether it changed since")
+    max_triangles: int | None = Field(description="The budgets it measured against; None for none")
+    max_draw_calls: int | None
+    screen_size: tuple[int, int] | None
+    dimensions: tuple[float, float, float] = Field(description="In meters, along glTF's x, y, and z")
+    bounds: tuple[tuple[float, float, float], tuple[float, float, float]] = Field(
+        description="Its lowest and highest corners in meters, which show where its origin sits"
+    )
+    triangles: int
+    mesh_objects: int
+    materials: int
+    checks: list[CheckResult]
 
 
 ModelStatus = Literal["running", "crashed", "done", "failed", "cancelled", "timed-out"]
@@ -233,6 +339,9 @@ class ModelSummary(BaseModel):
     created: datetime
     updated: datetime = Field(description="The latest time its last run started, sent an event, or finished")
     built: datetime | None = Field(description="When model.glb was last written; None before the first build")
+    checked: datetime | None = Field(
+        description="When its latest check, checks/report.json, was written; None before the first"
+    )
     status: ModelStatus | None = Field(
         description="Its last run's; `crashed` when that run is `running` but its process is gone; None if never run"
     )
@@ -256,7 +365,9 @@ class ModelListing(BaseModel):
     directory: Path
     models: list[ModelSummary]
     last_viewed: str | None = Field(description="None when nothing was viewed, or that model is gone")
-    unreadable: list[str] = Field(default_factory=list, description="Why each broken model.json was skipped")
+    unreadable: list[str] = Field(
+        default_factory=list, description="Why each model whose model.json or runs.json is broken was skipped"
+    )
 
 
 class ModelsState(BaseModel):
@@ -266,7 +377,17 @@ class ModelsState(BaseModel):
 
 
 ActivityKind = Literal[
-    "request", "said", "reasoning", "thought", "composing", "tool", "tool-result", "usage", "steered", "ended"
+    "request",
+    "said",
+    "reasoning",
+    "thought",
+    "composing",
+    "tool",
+    "tool-result",
+    "usage",
+    "steered",
+    "checked",
+    "ended",
 ]
 
 
@@ -350,6 +471,10 @@ class AppSettings(BaseModel):
     grid: bool = True
     wireframe: bool = False
     dimensions: bool = False
+    rig: bool = Field(default=False, description="Whether the 3D view shows the rig: its markers, pivots, and motions")
+    surface: bool = Field(
+        default=False, description="Whether the 3D view shows the surface: its colors, schemes, and detail"
+    )
     wide: AppLayout = Field(default_factory=AppLayout, description="The panes from 1100 pixels wide")
     medium: AppLayout = Field(default_factory=AppLayout, description="The panes from 640 to 1100 pixels wide")
     steps: dict[str, dict[str, bool]] = Field(

@@ -10,7 +10,7 @@ export type ShownImage = { path: string; version?: string | null };
 export type HeldImage = { name: string; url: string };
 
 function name(path: string) {
-  return path.replace(/^(references|renders)\//, "");
+  return path.replace(/^(references|renders|checks)\//, "");
 }
 
 /** `image` of model `model` large, with its name and size, until the person closes it. */

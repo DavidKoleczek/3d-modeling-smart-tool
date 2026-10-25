@@ -1,6 +1,5 @@
 import {
   AppBridge,
-  PostMessageTransport,
   RESOURCE_MIME_TYPE,
   buildAllowAttribute,
   type McpUiResourcePermissions,
@@ -12,6 +11,8 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
+
+import { QuietPostMessageTransport } from "../src/lib/transport";
 
 const HOST = { name: "3D Modeling browser host", version: "1.0.0" };
 const VIEW_URI = "ui://modeling-3d/app";
@@ -138,7 +139,7 @@ async function main(): Promise<void> {
     bridge.oninitialized = () => resolve();
   });
   await bridge.connect(
-    new PostMessageTransport(iframe.contentWindow!, iframe.contentWindow!),
+    new QuietPostMessageTransport(iframe.contentWindow!, iframe.contentWindow!),
   );
   await bridge.sendSandboxResourceReady(view);
   await initialized;

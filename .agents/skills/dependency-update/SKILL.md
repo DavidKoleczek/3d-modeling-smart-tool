@@ -45,5 +45,5 @@ Never apply a major version upgrade yourself. Collect each one, check whether it
 
 ## Finish
 
-1. Run `prek run --all-files` and `uv run pytest`; both must pass. Because `app/` may be untracked, also run the app hooks on its files: `prek run --files $(git ls-files -co --exclude-standard app)`.
+1. Run `prek run --all-files` and `uv run pytest`; both must pass.
 1. Report what moved on each side, every major upgrade you held back with whether its peers allow it, and whether the user still needs to run `uv sync`.

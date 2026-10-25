@@ -86,9 +86,14 @@ def _position(name: str, runs: list[ModelRunRecord], after: str | None) -> tuple
 
 def _entry(event: ModelEvent, run: ModelRunRecord) -> ActivityEntry:
     if event.kind == "started":
-        # From model.json, which runs from before the started event carried the request also have.
+        # From runs.json, which runs from before the started event carried the request also have.
         data = {
+            "mode": run.mode,
             "references": run.references,
+            # Only those the run had, which most have none of.
+            **run.model_dump(
+                mode="json", include={"max_triangles", "max_draw_calls", "screen_size"}, exclude_none=True
+            ),
             "resumed": run.resumed,
             "agent_provider": run.agent_provider,
             "model": run.model,
@@ -103,5 +108,8 @@ def _entry(event: ModelEvent, run: ModelRunRecord) -> ActivityEntry:
         return ActivityEntry(
             time=event.time, run_id=run.id, kind="steered", text=event.text, origin=event.data.get("origin"), data=data
         )
+    if event.kind == "checked":
+        data = {key: event.data[key] for key in ("report", "error") if key in event.data}
+        return ActivityEntry(time=event.time, run_id=run.id, kind="checked", text=event.text, data=data)
     data = {key: event.data.get(key) for key in ("status", "error", "files")}
     return ActivityEntry(time=event.time, run_id=run.id, kind="ended", text=event.data.get("text", ""), data=data)

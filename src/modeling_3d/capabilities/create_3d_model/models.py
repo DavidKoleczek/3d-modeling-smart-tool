@@ -6,6 +6,8 @@ from pathlib import Path
 from modeling_3d.capabilities.create_3d_model.record import (
     DEFAULT_DIRECTORY,
     GLB,
+    REPORT,
+    STATE,
     alive,
     last_session,
     load_record,
@@ -17,9 +19,6 @@ from modeling_3d.capabilities.create_3d_model.record import (
 )
 from modeling_3d.intelligence.interface import can_resume
 from modeling_3d.schemas import Modeling3dError, ModelListing, ModelRecord, ModelsState, ModelStatus, ModelSummary
-
-# A model's name starts with a letter or digit, so this can never be a model's directory.
-STATE = ".state.json"
 
 
 def list_3d_models(directory: Path | None = None) -> ModelListing:
@@ -74,7 +73,8 @@ def model_summary(target: Path, record: ModelRecord) -> ModelSummary:
         directory=target,
         created=record.created,
         updated=max(time for time in times if time is not None),
-        built=_built(target),
+        built=_written(target / GLB),
+        checked=_written(target / REPORT),
         status=status,
         last_run=run,
         last_session=session,
@@ -84,9 +84,9 @@ def model_summary(target: Path, record: ModelRecord) -> ModelSummary:
     )
 
 
-def _built(target: Path) -> datetime | None:
+def _written(path: Path) -> datetime | None:
     try:
-        return datetime.fromtimestamp((target / GLB).stat().st_mtime, UTC)
+        return datetime.fromtimestamp(path.stat().st_mtime, UTC)
     except FileNotFoundError:
         return None
 

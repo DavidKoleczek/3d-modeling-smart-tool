@@ -33,7 +33,7 @@ JSON on stdout: `model`, the summary, the same as one entry of `list-3d-models`'
 and `data`:
 
 ```json
-{"kind": "request", "text": "A low poly bear", "origin": "app", "data": {"references": ["references/bear.png"], "resumed": false, "agent_provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium"}}
+{"kind": "request", "text": "A low poly bear", "origin": "app", "data": {"mode": "shape", "references": ["references/bear.png"], "resumed": false, "agent_provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium"}}
 {"kind": "said", "text": "I'll block out the body first.", "origin": null, "data": {}}
 {"kind": "tool", "text": "model.py", "origin": null, "data": {"id": "toolu_01", "name": "Write", "target": "model.py"}}
 {"kind": "tool-result", "text": "", "origin": null, "data": {"id": "toolu_01", "failed": false}}
@@ -41,8 +41,10 @@ and `data`:
 {"kind": "ended", "text": "A low poly bear, with...", "origin": null, "data": {"status": "done", "error": null, "files": ["model.py", "model.glb"]}}
 ```
 
-- `request`: what a run was asked, in `text`, with the references it was given, a folder's ending
-  in `/`, and the model and reasoning effort it ran with.
+- `request`: what a run was asked, in `text`, with its `mode`, `shape` from `create-3d-model`,
+  `rig` from `rig-3d-model`, `color` from `color-3d-model`, or `detail` from `detail-3d-model`, the
+  references it was given, a folder's ending in `/`, and the model and reasoning effort it ran
+  with. A rig, coloring, or detailing asked for nothing in particular has empty `text`.
 - `said`: what the agent wrote for the person.
 - `reasoning`: the agent started reasoning, as soon as it did. Whatever comes next ends it.
 - `thought`: the summary of the reasoning just done, in `text`, when the agent gave one.
@@ -58,6 +60,8 @@ and `data`:
   session's total includes its earlier runs, so the latest of each session, summed across
   sessions, is what the model has used.
 - `steered`: a steering message as delivered, or with `error` when it was not.
+- `checked`: the report of the check the run sent its agent as it finished, in `text`, with
+  `report` where it is kept, or the `error` that stopped it.
 - `ended`: how a run ended, with the agent's final message in `text`.
 
 `origin` is who sent a request or steering message: `app` for the person in the app,

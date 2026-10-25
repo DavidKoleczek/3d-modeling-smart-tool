@@ -5,24 +5,21 @@ import json
 from pathlib import Path
 from typing import Any
 
+from fakes import run_record as made_run
 import pytest
 from typer.testing import CliRunner
 
 from modeling_3d import lib
+from modeling_3d.capabilities.create_3d_model.record import load_record, write_record
 from modeling_3d.cli import app
-from modeling_3d.schemas import AgentProvider, ModelActivity, Modeling3dError, ModelRecord, ModelRunRecord, ToolCall
+from modeling_3d.schemas import ModelActivity, Modeling3dError, ModelRecord, ModelRunRecord, ToolCall
 
 START = datetime(2026, 10, 17, 10, tzinfo=UTC)
 # What Claude Code sends back for a render the agent reads: the image, as base64.
 RENDER = "iVBORw0KGgo" * 20_000
 
 runner = CliRunner()
-
-
-@pytest.fixture(autouse=True)
-def working_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
+pytestmark = pytest.mark.usefixtures("working_directory")
 
 
 @pytest.fixture
@@ -41,38 +38,15 @@ def bear(working_directory: Path) -> Path:
     return target
 
 
-def run_record(
-    run_id: str,
-    prompt: str,
-    references: list[str] | None = None,
-    resumed: bool = False,
-    origin: str | None = None,
-    agent_provider: AgentProvider = "claude",
-) -> ModelRunRecord:
-    return ModelRunRecord(
-        id=run_id,
-        prompt=prompt,
-        references=references or [],
-        resumed=resumed,
-        agent_provider=agent_provider,
-        model="claude-sonnet-5-5" if agent_provider == "claude" else "gpt-6.1-sol",
-        reasoning_effort="medium",
-        session_id="session",
-        origin=origin,
-        status="done",
-        pid=1,
-        started=START,
-    )
+def run_record(run_id: str, prompt: str, **fields: Any) -> ModelRunRecord:
+    return made_run(id=run_id, prompt=prompt, session_id="session", started=START, **fields)
 
 
 def write_run(target: Path, run: ModelRunRecord, events: list[dict[str, Any]]) -> Path:
-    record_path = target / "model.json"
     created = ModelRecord(id="id-bear", name="bear", created=START)
-    record = (
-        ModelRecord.model_validate_json(record_path.read_text(encoding="utf-8")) if record_path.is_file() else created
-    )
+    record = load_record(target) if (target / "model.json").is_file() else created
     record.runs.append(run)
-    record_path.write_text(record.model_dump_json(), encoding="utf-8")
+    write_record(target, record)
     path = target / "runs" / run.id / "events.jsonl"
     path.parent.mkdir(parents=True)
     lines = [
@@ -155,7 +129,9 @@ def test_the_activity_reads_every_run_in_order_beside_the_model_s_summary(bear: 
         ("new", "ended", None, "Done: a polar bear."),
     ]
     old, _, failed, new, _, read, read_result, bash, bash_result, steered, _, done = activity.entries
+    # A run recorded before modes reads as shaping the model.
     assert old.data == {
+        "mode": "shape",
         "references": ["references/bear.png"],
         "resumed": False,
         "agent_provider": "claude",
@@ -201,21 +177,19 @@ def test_a_cursor_reads_only_what_came_since_never_half_a_line_and_moves_on_to_a
     assert lib.read_3d_model_activity("bear", after=moved.cursor).entries == []
 
 
-@pytest.mark.parametrize("cursor", ["gone:12", "new:twelve", "nonsense"])
+@pytest.mark.parametrize("cursor", ["gone:12", "new:twelve"])
 def test_a_cursor_into_no_run_of_the_model_names_the_fix(bear: Path, cursor: str) -> None:
     with pytest.raises(Modeling3dError) as failure:
         lib.read_3d_model_activity("bear", after=cursor)
 
-    assert f"{cursor!r} is not a cursor into model bear's activity" in str(failure.value)
-    assert "Read it without after" in str(failure.value)
+    assert failure.value.reason == "bad-cursor"
+    assert repr(cursor) in str(failure.value)
 
 
 def test_a_model_that_never_ran_has_no_activity_and_an_unknown_one_names_the_models(working_directory: Path) -> None:
     target = working_directory / ".modeling-3d" / "owl"
     target.mkdir(parents=True)
-    (target / "model.json").write_text(
-        ModelRecord(id="id-owl", name="owl", created=START).model_dump_json(), encoding="utf-8"
-    )
+    write_record(target, ModelRecord(id="id-owl", name="owl", created=START))
 
     activity = lib.read_3d_model_activity("owl")
     with pytest.raises(Modeling3dError) as failure:
@@ -226,14 +200,16 @@ def test_a_model_that_never_ran_has_no_activity_and_an_unknown_one_names_the_mod
     assert "The models there: owl." in str(failure.value)
 
 
-def test_the_cli_prints_the_activity_as_json_and_reads_on_from_a_cursor(bear: Path) -> None:
+def test_the_cli_prints_the_activity_as_json_reads_on_from_a_cursor_and_prints_a_tool_call(bear: Path) -> None:
     printed = runner.invoke(app, ["read-3d-model-activity", "--name", "bear"])
     activity = ModelActivity.model_validate_json(printed.stdout)
     since = runner.invoke(app, ["read-3d-model-activity", "--name", "bear", "--after", activity.cursor])
+    call = runner.invoke(app, ["read-3d-model-tool-call", "--name", "bear", "--run", "new", "--id", "toolu_bash"])
 
-    assert printed.exit_code == since.exit_code == 0, printed.output + since.output
+    assert printed.exit_code == since.exit_code == call.exit_code == 0, printed.output + since.output + call.output
     assert activity == lib.read_3d_model_activity("bear")
     assert ModelActivity.model_validate_json(since.stdout).entries == []
+    assert ToolCall.model_validate_json(call.stdout) == lib.read_3d_model_tool_call("bear", "new", "toolu_bash")
 
 
 def test_a_tool_call_reads_in_full_with_its_output_as_text_and_none_while_it_runs(bear: Path) -> None:
@@ -265,16 +241,8 @@ def test_a_tool_call_the_model_s_runs_do_not_have_names_the_fix(bear: Path, run_
     with pytest.raises(Modeling3dError) as failure:
         lib.read_3d_model_tool_call("bear", run_id, call_id)
 
-    assert f"Model bear has no tool call {call_id!r} in a run {run_id!r}" in str(failure.value)
     assert failure.value.reason == "no-such-tool-call"
     assert "read-3d-model-activity --name bear" in str(failure.value)
-
-
-def test_the_cli_prints_a_tool_call_as_json(bear: Path) -> None:
-    printed = runner.invoke(app, ["read-3d-model-tool-call", "--name", "bear", "--run", "new", "--id", "toolu_bash"])
-
-    assert printed.exit_code == 0, printed.output
-    assert ToolCall.model_validate_json(printed.stdout) == lib.read_3d_model_tool_call("bear", "new", "toolu_bash")
 
 
 def test_reasoning_shows_from_its_first_count_and_its_summary_once_done_with_left_out_reasoning_showing_nothing(

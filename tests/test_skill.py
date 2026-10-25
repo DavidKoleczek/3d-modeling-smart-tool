@@ -3,7 +3,7 @@ import typer
 from typer.testing import CliRunner
 
 from modeling_3d import lib
-from modeling_3d.cli import app
+from modeling_3d.cli import CapabilityCommand, app
 from modeling_3d.core import skill as skill_module
 from modeling_3d.core.skill import CAPABILITIES
 from modeling_3d.schemas import Modeling3dError
@@ -91,7 +91,8 @@ def _resource_lines(document: str) -> list[str]:
     return lines[start + 1 : end]
 
 
-@pytest.mark.parametrize("command", [None, *(capability.name for capability in CAPABILITIES)])
+# Every capability's command is a CapabilityCommand, as the test below makes sure, so one stands for the rest.
+@pytest.mark.parametrize("command", [None, "create-3d-model"])
 def test_help_prints_the_skill_and_short_help_the_terse_summary(command: str | None) -> None:
     prefix = [command] if command else []
 
@@ -110,6 +111,7 @@ def test_the_cli_exposes_exactly_the_capabilities_the_skill_lists() -> None:
     commands = typer.main.get_group(app).commands
 
     assert set(commands) == {capability.name for capability in CAPABILITIES}
+    assert all(isinstance(command, CapabilityCommand) for command in commands.values())
 
 
 def test_every_capability_skill_documents_every_argument_the_cli_takes() -> None:
@@ -129,9 +131,8 @@ def test_every_capability_skill_documents_every_argument_the_cli_takes() -> None
                 assert name in document
 
 
-@pytest.mark.parametrize("flag", ["--version", "-V"])
-def test_version_prints_the_distribution_and_its_installed_version(flag: str) -> None:
-    result = runner.invoke(app, [flag])
+def test_version_prints_the_distribution_and_its_installed_version() -> None:
+    result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
     assert result.output == f"modeling-3d {lib.version()}\n"

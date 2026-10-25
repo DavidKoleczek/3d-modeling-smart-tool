@@ -17,7 +17,10 @@ from mcp.types import ElicitRequestParams, ElicitRequestURLParams, ElicitResult,
 import pytest
 
 from modeling_3d import lib
-from modeling_3d.capabilities.app.mcp_server import VIEW_URI
+from modeling_3d.capabilities.app.mcp_server import SEES_THE_APP
+from modeling_3d.capabilities.app.tools import VIEW_URI
+
+pytestmark = pytest.mark.mcp_process
 
 TIMEOUT_SECONDS = 10
 # What Claude Code 2.1 asks for in `initialize`.
@@ -27,6 +30,10 @@ VIEW_TOOLS = (
     "list_3d_models",
     "view_3d_model",
     "create_3d_model",
+    "rig_3d_model",
+    "color_3d_model",
+    "detail_3d_model",
+    "check_3d_model",
     "upload_reference",
     "steer_3d_model",
     "cancel_3d_model",
@@ -119,12 +126,15 @@ def text_of(result: dict[str, Any]) -> str:
 def test_a_client_without_mcp_apps_sees_only_open_app(wire: Wire) -> None:
     initialized = wire.initialize()
     tools = {tool["name"]: tool for tool in wire.request("tools/list", {})["tools"]}
+    opened = text_of(wire.call_tool("open_app", {}))
 
     assert set(tools) == {"open_app"}
     assert tools["open_app"]["_meta"] == {"ui": {"resourceUri": VIEW_URI}}
     assert "read-3d-model-activity" in initialized["instructions"]
     assert wire.request("resources/list", {})["resources"] == []
     assert wire.request("resources/templates/list", {})["resourceTemplates"] == []
+    assert "URL to open the app: " in opened
+    assert SEES_THE_APP in opened
 
 
 def test_an_mcp_apps_host_gets_the_view_the_tools_it_calls_and_the_model_files(wire: Wire) -> None:
@@ -133,6 +143,7 @@ def test_an_mcp_apps_host_gets_the_view_the_tools_it_calls_and_the_model_files(w
     resources = wire.request("resources/list", {})["resources"]
     templates = wire.request("resources/templates/list", {})["resourceTemplates"]
     contents = wire.request("resources/read", {"uri": VIEW_URI})["contents"]
+    opened = text_of(wire.call_tool("open_app", {}))
 
     assert set(tools) == {"open_app", *VIEW_TOOLS}
     assert all(tools[name]["_meta"]["ui"]["visibility"] == ["app"] for name in VIEW_TOOLS)
@@ -146,9 +157,13 @@ def test_an_mcp_apps_host_gets_the_view_the_tools_it_calls_and_the_model_files(w
             "_meta": {"ui": {"permissions": {"clipboardWrite": {}}}},
         }
     ]
+    assert "inline" in opened
+    assert SEES_THE_APP in opened
 
 
-def test_the_app_shows_the_directory_it_was_started_on_until_open_app_names_another(tmp_path: Path) -> None:
+def test_the_app_shows_the_directory_it_was_started_on_until_open_app_names_another_and_exits_when_left(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "first").mkdir()
     (tmp_path / "file").write_text("", encoding="utf-8")
     wire = Wire(arguments=["--directory", str(tmp_path / "first")])
@@ -160,25 +175,14 @@ def test_the_app_shows_the_directory_it_was_started_on_until_open_app_names_anot
         refused = wire.call_tool("open_app", {"directory": str(tmp_path / "file")})
         kept = wire.call_tool("list_3d_models", {})["structuredContent"]["directory"]
     finally:
-        wire.close()
+        exit_code = wire.close()
 
+    assert exit_code == 0
     assert started == str((tmp_path / "first").resolve())
     assert f"It shows the models in {tmp_path / 'second'}." in opened
     assert switched == kept == str((tmp_path / "second").resolve())
     assert refused["isError"]
     assert "is a file, not a directory of models" in text_of(refused)
-
-
-@pytest.mark.parametrize(("capabilities", "where"), [(MCP_APPS_HOST, "inline"), (None, "URL to open the app: ")])
-def test_open_app_says_the_user_acts_in_the_app_and_how_the_session_sees_it(
-    wire: Wire, capabilities: dict[str, Any] | None, where: str
-) -> None:
-    wire.initialize(capabilities)
-    opened = text_of(wire.call_tool("open_app", {}))
-
-    assert where in opened
-    assert "Nothing they do there is sent to you" in opened
-    assert "modeling-3d read-3d-model-activity --name <name>" in opened
 
 
 # "auto" lands on 2026-07-28, where the question rides back on the result and the client retries; "legacy" is the
@@ -204,10 +208,3 @@ async def test_open_app_asks_the_client_to_open_it_in_the_browser(mode: str, era
     assert len(asked) == 1
     assert f"The user opened the app at {asked[0].url}." in opened.text
     assert f"Give the user this URL to open the app: {asked[0].url}" in again.text
-
-
-def test_it_exits_cleanly_when_the_client_disconnects(wire: Wire) -> None:
-    wire.initialize()
-    wire.call_tool("open_app", {})
-
-    assert wire.close() == 0

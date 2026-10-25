@@ -170,13 +170,18 @@ def _codex_keeps(session_id: str) -> bool:
 
 def state_directory(agent_provider: AgentProvider) -> Path:
     """The platform's per-user state location for the agent provider, where what a later run resumes lives."""
+    return state_root() / agent_provider
+
+
+def state_root() -> Path:
+    """The platform's per-user state location for this tool."""
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state")
-    return base / DISTRIBUTION / agent_provider
+    return base / DISTRIBUTION
 
 
 # The tool is not published to a package index, so it installs from its repository, or from a clone without one.

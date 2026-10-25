@@ -1,5 +1,5 @@
 import { ContactShadows, Grid, OrbitControls } from "@react-three/drei";
-import { Canvas, useThree } from "@react-three/fiber";
+import { Canvas, useThree, type ThreeEvent } from "@react-three/fiber";
 import {
   useEffect,
   useLayoutEffect,
@@ -11,11 +11,13 @@ import {
 } from "react";
 import {
   Box3,
+  MOUSE,
   PerspectiveCamera,
   type Camera,
   PMREMGenerator,
   Sphere,
   Vector3,
+  type Mesh,
   type Object3D,
 } from "three";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
@@ -31,6 +33,7 @@ import {
   GizmoDriver,
   type GizmoApi,
 } from "@/components/viewport/AxisGizmo";
+import { Checks } from "@/components/viewport/Checks";
 import { Dimensions } from "@/components/viewport/Dimensions";
 import {
   CaptureDriver,
@@ -38,6 +41,8 @@ import {
   type CaptureApi,
 } from "@/components/viewport/Markup";
 import { Renders } from "@/components/viewport/Renders";
+import { RigOverlay, RigPanel } from "@/components/viewport/Rig";
+import { SurfacePanel } from "@/components/viewport/Surface";
 import {
   ViewportToolbar,
   type ViewTool,
@@ -47,19 +52,38 @@ import {
   GLB,
   readModelFile,
   type ModelListing,
+  type ModelMode,
   type ModelSummary,
 } from "@/lib/api";
+import {
+  detailSourceOf,
+  loadDetail,
+  releaseDetail,
+  useDetailView,
+  type Detail,
+  type Layers,
+} from "@/lib/detail";
 import { describe } from "@/lib/errors";
 import { NO_MARKUP, type Markup as MarkupDraft } from "@/lib/markup";
 import { pastelFor } from "@/lib/models";
+import {
+  cellAt,
+  intersectionUv,
+  paletteOf,
+  useColorView,
+  type Look,
+  type Palette,
+} from "@/lib/palette";
+import { pose, rigOf, type Pose } from "@/lib/rig";
 import { dispose, parseGlb } from "@/lib/scene";
 import { updateSettings, useSettings } from "@/lib/settings";
 import { sceneStats, type SceneStats } from "@/lib/stats";
 import { timeOfDay, useDelayed, useElapsed } from "@/lib/time";
 import { useTheme } from "@/lib/theme";
 import { useSceneColors } from "@/lib/tokens";
+import { cn } from "@/lib/utils";
 
-export type ViewMode = "3d" | "renders";
+export type ViewMode = "3d" | "renders" | "checks";
 
 /** The model's scene as loaded, from the build at `built`; `rebuilt` once it replaced an earlier build in view. */
 type Shown = { name: string; scene: Object3D; built: string; rebuilt: boolean };
@@ -75,6 +99,13 @@ type Orbit = {
 // Three quarters from the front and above, the way the agent's renders usually look at a model.
 const VIEW_DIRECTION = new Vector3(0.8, 0.55, 1).normalize();
 const MARGIN = 1.1;
+// Every button turns the model, and OrbitControls pans any of them held with shift.
+const MOUSE_BUTTONS = {
+  LEFT: MOUSE.ROTATE,
+  MIDDLE: MOUSE.ROTATE,
+  RIGHT: MOUSE.ROTATE,
+};
+const AT_REST: Pose = {};
 
 /** Points the camera at the whole model from the three-quarter view, unless the person moved it and `force` is off. */
 function frame(
@@ -190,8 +221,10 @@ function Floor({
   const step = 10 ** Math.floor(Math.log10(reach));
   return (
     <>
+      {/* Its frame count starts over each time it renders, so a new name draws the rebuilt model's shadow. Remounting
+          it would too, but leave its render targets on the GPU, since it never frees them. */}
       <ContactShadows
-        key={scene.uuid}
+        name={scene.uuid}
         position={[center.x, base + reach * 0.001, center.z]}
         scale={reach * 3}
         far={reach}
@@ -221,8 +254,10 @@ function Elapsed({ since }: { since: string }) {
 }
 
 /**
- * The model in view in 3D, reloaded each time its GLB is rebuilt, with its tools, or the renders the agent made of it.
- * `onStats` hears what the loaded model is made of.
+ * The model in view in 3D, reloaded each time its GLB is rebuilt, with its tools, or the renders the agent made of it,
+ * or its latest check. The rig view poses it through the motions its parts declare, and the surface view shows its
+ * colors and detail, its palette's roles in each scheme, and colors to try. A detail texture its materials declare
+ * shades it as a renderer would, whichever view is on. `onStats` hears what the loaded model is made of.
  */
 export function Viewport({
   listing,
@@ -240,14 +275,14 @@ export function Viewport({
   model: ModelSummary | null;
   mode: ViewMode;
   onMode: (mode: ViewMode) => void;
-  /** Where the top bar has no room for the 3D or Renders switch, so the toolbar holds it. */
+  /** Where the top bar has no room for the 3D, Renders, and Checks switch, so the toolbar holds it. */
   compact: boolean;
   fit: number;
   onFit: () => void;
   onStats: (stats: SceneStats | null) => void;
   onNew: () => void;
-  /** Put marked views and their notes in the model's message to its agent, to send from there. */
-  onCompose: (text: string, files: File[]) => void;
+  /** Put marked views and their notes, or colors tried, in the model's message to its agent, to send from there. */
+  onCompose: (text: string, files: File[], mode?: ModelMode) => void;
 }) {
   const [shown, setShown] = useState<Shown | null>(null);
   const [error, setError] = useState<{ name: string; text: string } | null>(
@@ -298,14 +333,6 @@ export function Viewport({
   }, [name, built]);
 
   const scene = shown?.scene;
-  useEffect(
-    () => () => {
-      if (scene) {
-        dispose(scene);
-      }
-    },
-    [scene],
-  );
 
   const showing = shown !== null && shown.name === name;
   const failure = error !== null && error.name === name ? error.text : null;
@@ -323,6 +350,94 @@ export function Viewport({
   const in3d = mode === "3d";
   const markup = (name && markups[name]) || NO_MARKUP;
   const locked = in3d && markup.viewing !== null;
+
+  // Where the person set each motion of the scene in view; a new build starts at rest.
+  const [posed, setPosed] = useState<{ scene: Object3D; pose: Pose } | null>(
+    null,
+  );
+  const rig = useMemo(() => (scene ? rigOf(scene) : null), [scene]);
+  const rigging = settings.rig && in3d && showing;
+  const posing = posed !== null && posed.scene === scene ? posed.pose : AT_REST;
+  useEffect(() => {
+    if (rig) {
+      pose(rig, rigging ? posing : AT_REST);
+    }
+  }, [rig, rigging, posing]);
+
+  // The detail texture the scene in view declares, read from beside its model.glb.
+  const shownName = shown?.name;
+  const [loaded, setLoaded] = useState<{
+    scene: Object3D;
+    detail: Detail;
+  } | null>(null);
+  useEffect(() => {
+    const source = scene ? detailSourceOf(scene) : null;
+    if (!scene || !shownName || !source) {
+      return;
+    }
+    let current = true;
+    loadDetail(shownName, source).then(
+      (found) => {
+        if (current) {
+          setLoaded({ scene, detail: found });
+        } else {
+          releaseDetail(found);
+        }
+      },
+      // A texture the app can't read leaves the model without its detail, and the check says why.
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, [scene, shownName]);
+  const detail =
+    loaded !== null && loaded.scene === scene ? loaded.detail : null;
+
+  // The palette of the scene in view, read once the surface view is on, and how that view shows it, which starts in
+  // the scheme the model was built in.
+  const palette = useMemo(
+    () => (scene && settings.surface ? paletteOf(scene) : null),
+    [scene, settings.surface],
+  );
+  const surfacing =
+    settings.surface &&
+    in3d &&
+    showing &&
+    (palette !== null || detail !== null);
+  const coloring = surfacing && palette !== null;
+  const [layers, setLayers] = useState<Layers>("both");
+  const asBuilt = useMemo<Look>(
+    () => ({ scheme: palette?.row ?? 0, focus: null, tried: {} }),
+    [palette],
+  );
+  const [looked, setLooked] = useState<{ palette: Palette; look: Look } | null>(
+    null,
+  );
+  const colorLook =
+    looked !== null && looked.palette === palette ? looked.look : asBuilt;
+  const [flat, setFlat] = useState(false);
+  const [pointed, setPointed] = useState<number | null>(null);
+  const pointAt = (event: ThreeEvent<PointerEvent>) => {
+    event.stopPropagation();
+    const uv = palette && event[intersectionUv(palette)];
+    const cell =
+      palette && uv && palette.meshes.includes(event.object as Mesh)
+        ? cellAt(palette, uv.x, uv.y)
+        : null;
+    setPointed(cell?.column ?? null);
+  };
+  useDetailView(detail, surfacing ? layers : "both");
+  useColorView(palette, coloring, colorLook, flat, detail);
+  // After the surface view, so every mesh has its own material back before the scene it was in is freed.
+  useEffect(
+    () => () => {
+      if (scene) {
+        dispose(scene);
+      }
+    },
+    [scene],
+  );
 
   // Forgets a model's markup once nothing is left in it.
   const changeMarkup = (change: (markup: MarkupDraft) => MarkupDraft) =>
@@ -455,12 +570,15 @@ export function Viewport({
                 grid: settings.grid,
                 wireframe: settings.wireframe,
                 dimensions: settings.dimensions,
+                rig: settings.rig,
+                surface: settings.surface,
               }}
               onToggle={toggle}
               onFit={onFit}
               locked={locked}
               compact={compact}
               onRenders={compact ? () => onMode("renders") : undefined}
+              onChecks={compact ? () => onMode("checks") : undefined}
             />
           }
           compact={compact}
@@ -476,13 +594,24 @@ export function Viewport({
             <directionalLight position={[3, 6, 4]} intensity={1.5} />
             {/* Keyed by model, so switching models frames the new one however the camera was left. */}
             <group key={shown.name}>
-              <primitive object={shown.scene} />
+              <primitive
+                object={shown.scene}
+                onPointerMove={coloring ? pointAt : undefined}
+                onPointerOut={coloring ? () => setPointed(null) : undefined}
+              />
               <Framing scene={shown.scene} movedRef={moved} fit={fit} />
               {settings.wireframe && (
                 <Wireframe scene={shown.scene} color={colors.accentInk} />
               )}
               {settings.dimensions && (
                 <Dimensions scene={shown.scene} color={colors.accentInk} />
+              )}
+              {rigging && rig && (
+                <RigOverlay
+                  rig={rig}
+                  scene={shown.scene}
+                  color={colors.accentInk}
+                />
               )}
               <Floor
                 scene={shown.scene}
@@ -494,7 +623,11 @@ export function Viewport({
               />
             </group>
             {/* Still while marking, so a drag draws a box rather than turning the model. */}
-            <OrbitControls makeDefault enabled={!(in3d && markup.marking)} />
+            <OrbitControls
+              makeDefault
+              enabled={!(in3d && markup.marking)}
+              mouseButtons={MOUSE_BUTTONS}
+            />
             <GizmoDriver svgRef={gizmo} apiRef={look} movedRef={moved} />
             <CaptureDriver apiRef={capture} />
           </Canvas>
@@ -518,16 +651,53 @@ export function Viewport({
               onAxis={(axis) => look.current?.look(axis)}
             />
           )}
+          {!locked && ((rigging && rig) || surfacing) && (
+            <div className="absolute top-12 right-3 z-10 flex max-h-[calc(100%-11rem)] w-64 flex-col gap-2">
+              {rigging && rig && (
+                <RigPanel
+                  rig={rig}
+                  pose={posing}
+                  onPose={(next) => scene && setPosed({ scene, pose: next })}
+                />
+              )}
+              {surfacing && (
+                <SurfacePanel
+                  palette={palette}
+                  detail={detail}
+                  layers={layers}
+                  onLayers={setLayers}
+                  look={colorLook}
+                  onLook={(next) => {
+                    if (palette) {
+                      setLooked({ palette, look: next });
+                    }
+                  }}
+                  flat={flat}
+                  onFlat={setFlat}
+                  pointed={pointed}
+                  onSend={(text) => onCompose(text, [], "color")}
+                />
+              )}
+            </div>
+          )}
         </>
       )}
       {model && !in3d && (
         <div className="absolute inset-0 z-10 bg-canvas">
-          <Renders model={model} />
+          {mode === "renders" ? (
+            <Renders model={model} />
+          ) : (
+            <Checks model={model} />
+          )}
           {compact && (
             <button
               type="button"
               onClick={() => onMode("3d")}
-              className="absolute top-3 right-3 flex h-7 items-center gap-1.5 rounded-md border border-line-control bg-panel px-2.5 text-label hover:bg-hover"
+              className={cn(
+                "absolute right-3 flex h-7 items-center gap-1.5 rounded-md border border-line-control bg-panel px-2.5 text-label hover:bg-hover",
+                // Under the checks' own button, which sits where this does over the renders.
+                mode === "renders" ? "top-3" : "bottom-3",
+              )}
             >
               <Icon name="model" />
               Back to 3D

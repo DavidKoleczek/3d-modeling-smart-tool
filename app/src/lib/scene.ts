@@ -1,4 +1,10 @@
-import { Mesh, Texture, type Material, type Object3D } from "three";
+import {
+  Mesh,
+  SkinnedMesh,
+  Texture,
+  type Material,
+  type Object3D,
+} from "three";
 import {
   GLTFLoader,
   type GLTFParser,
@@ -54,6 +60,10 @@ export function dispose(scene: Object3D): void {
       return;
     }
     object.geometry.dispose();
+    // A skeleton keeps its bones' matrices in a texture on the GPU. Skins that share one free it once.
+    if (object instanceof SkinnedMesh) {
+      object.skeleton.dispose();
+    }
     const materials: Material[] = Array.isArray(object.material)
       ? object.material
       : [object.material];

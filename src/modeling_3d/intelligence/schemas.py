@@ -1,5 +1,6 @@
 """What an intelligence implementation is asked to do, and what it answers with."""
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -46,6 +47,15 @@ class AgentRequest(BaseModel):
         default=None,
         description="Where the session is also kept, so it can be read and resumed from there; None keeps it only "
         "where the agent provider keeps its sessions",
+    )
+    skill_directories: list[Path] = Field(
+        default_factory=list, description="Directories of Agent Skills, a folder holding a SKILL.md each, it may use"
+    )
+    follow_up: Callable[[], Awaitable[str | None]] | None = Field(
+        default=None,
+        exclude=True,
+        description="Asked each time the agent ends a turn with nothing queued; a message it gives goes on in the same "
+        "session, and none lets the run end",
     )
 
 

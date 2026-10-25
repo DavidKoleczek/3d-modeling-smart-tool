@@ -4,6 +4,7 @@ import asyncio
 import base64
 import binascii
 from collections.abc import Awaitable, Callable
+import concurrent.futures
 import contextlib
 import json
 from pathlib import Path, PurePosixPath
@@ -43,9 +44,38 @@ from mcp.types import (
 
 from modeling_3d.capabilities.app.server import App, serve_app, view
 from modeling_3d.capabilities.app.settings import read_app_settings, save_app_settings
+from modeling_3d.capabilities.app.tools import (
+    APP_ONLY,
+    CANCEL_MODEL,
+    CHECK_MODEL,
+    CHOOSE_INTELLIGENCE,
+    COLOR_MODEL,
+    DETAIL_MODEL,
+    CREATE_MODEL,
+    LIST_INTELLIGENCE,
+    LIST_MODELS,
+    MODEL_FILE,
+    MODEL_FILE_PREFIX,
+    OPEN_APP,
+    OPEN_FOLDER,
+    READ_ACTIVITY,
+    READ_FOLDERS,
+    READ_SETTINGS,
+    READ_TOOL_CALL,
+    RIG_MODEL,
+    SAVE_SETTINGS,
+    STEER_MODEL,
+    UPLOAD_REFERENCE,
+    VIEW,
+    VIEW_META,
+    VIEW_MODEL,
+    VIEW_TOOLS,
+    VIEW_URI,
+)
 from modeling_3d.schemas import (
     AGENT_PROVIDERS,
     DEFAULT_REASONING_EFFORT,
+    NOT_GIVEN,
     REASONING_EFFORTS,
     AppFolders,
     AppIntelligence,
@@ -54,13 +84,14 @@ from modeling_3d.schemas import (
     IntelligenceModels,
     Modeling3dError,
     ModelActivity,
+    ModelCheck,
     ModelListing,
+    ModelMode,
     ModelSummary,
     ToolCall,
 )
 
-VIEW_URI = "ui://modeling-3d/app"
-MODEL_FILE_PREFIX = "modeling-3d://models/"
+# region: The model files the view reads
 # What the view reads of a model: its GLB, its renders, and its reference images. The rest, such as model.py and its
 # sessions, stays put.
 MODEL_FILE_TYPES = {
@@ -70,6 +101,17 @@ MODEL_FILE_TYPES = {
     ".jpeg": "image/jpeg",
     ".webp": "image/webp",
 }
+# And its latest check: the report, and the renders beside it.
+CHECK_FILE = re.compile(r"checks/(report\.json|[A-Za-z0-9._-]+\.png)")
+# endregion
+
+# region: Checks
+# How long a call to check a model waits for it. Blender can take longer than a host waits for a call, the first time
+# above all, when uv downloads it, so a call returns before then and the view calls again for the same check.
+CHECK_WAIT_SECONDS = 20
+# endregion
+
+# region: Uploads
 # Where references the view sends wait for the request that takes them, shared by every app on this machine. Each upload
 # has a folder of its own there, under the view's id for it.
 UPLOADS = Path(tempfile.gettempdir()) / "modeling-3d-uploads"
@@ -78,12 +120,18 @@ UPLOAD_ID = re.compile(r"[0-9a-f]{16,64}")
 UPLOAD_LIFETIME_SECONDS = 24 * 60 * 60
 # A model's own files that stand for it as a reference, beside its first render: its script and its GLB.
 REFERENCE_TYPES = (".py", ".glb")
+# endregion
+
+# region: What the app keeps and who it acts as
 # The key `open_app` files its request to open the browser under, when the client answers by retrying the call.
 OPEN_REQUEST = "open"
 # Who the model's activity shows as asking, for everything done in the app.
 ORIGIN = "app"
 # What the person picked in the app, kept beside the models it shows. Starting with a dot, it is never a model.
 APP_STATE = ".app.json"
+# endregion
+
+# region: The host agent's instructions
 SEES_THE_APP = (
     "Nothing they do there is sent to you: see the models and their state with `modeling-3d list-3d-models`, and what "
     "was asked of one and what its agent did with `modeling-3d read-3d-model-activity --name <name>`."
@@ -93,217 +141,12 @@ INSTRUCTIONS = f"""\
 and stops them. Call `open_app` when they ask for it. `modeling-3d view-3d-model --name <name>` brings a model up in it.
 
 {SEES_THE_APP} Read a model's activity before acting on it, since they may have changed or steered it in the app."""
-
-APP_ONLY = {"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}}
-# Copy buttons in the view write to the clipboard, which a sandboxed frame may only do when its host allows it.
-VIEW_META = {"ui": {"permissions": {"clipboardWrite": {}}}}
-OPEN_APP = Tool(
-    name="open_app",
-    description="Show the 3D Modeling app, where the user watches the models in a directory being made, and creates, "
-    "changes, and steers them, and return its browser URL. Hosts that render MCP Apps show it inline. Opening it "
-    "again returns the same URL.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "directory": {
-                "type": "string",
-                "description": "Where the models to show are kept, absolute or relative to where this server started. "
-                "Omit it to keep the current one, .modeling-3d in the working directory at first.",
-            }
-        },
-    },
-    _meta={"ui": {"resourceUri": VIEW_URI}},
-)
-LIST_MODELS = Tool(
-    name="list_3d_models",
-    description="The models in the app's directory, newest first, with their state, and the one viewed last. Called "
-    "by the view.",
-    input_schema={"type": "object", "properties": {}},
-    _meta=APP_ONLY,
-)
-VIEW_MODEL = Tool(
-    name="view_3d_model",
-    description="Record a model in the app's directory as the one viewed last, and return its summary. Called by the "
-    "view.",
-    input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
-    _meta=APP_ONLY,
-)
-CREATE_MODEL = Tool(
-    name="create_3d_model",
-    description="Create a model in the app's directory, or change the one by that name, in a run of its own that "
-    "outlives this server; return the model's summary once its agent runs, and record it as viewed last. Called by "
-    "the view.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "prompt": {"type": "string"},
-            "name": {"type": "string"},
-            "resume_session": {"type": ["boolean", "string"]},
-            "agent_provider": {"type": "string", "enum": list(AGENT_PROVIDERS)},
-            "model": {"type": "string"},
-            "reasoning_effort": {"type": "string", "enum": list(REASONING_EFFORTS)},
-            "reference_models": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Models in the app's directory, whose script, GLB, and first render are references",
-            },
-            "uploads": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Uploads from `upload_reference`, each a file or a folder to work from",
-            },
-        },
-        "required": ["prompt", "name"],
-    },
-    _meta=APP_ONLY,
-)
-UPLOAD_REFERENCE = Tool(
-    name="upload_reference",
-    description="Receive a piece of a file the person added to work from, written at `offset` into the upload named "
-    "`upload`, and return how much of the file has arrived. `create_3d_model` takes the upload once every piece has. "
-    "Called by the view.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "upload": {"type": "string", "description": "An id of the view's own, in hex, one per file or folder"},
-            "path": {"type": "string", "description": "The file's name, or its path in the folder added"},
-            "offset": {"type": "integer", "minimum": 0},
-            "data": {"type": "string", "description": "Base64"},
-        },
-        "required": ["upload", "path", "offset", "data"],
-    },
-    _meta=APP_ONLY,
-)
-STEER_MODEL = Tool(
-    name="steer_3d_model",
-    description="Send a message to the agent working on a model in the app's directory. Called by the view.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "message": {"type": "string"},
-            "uploads": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Uploads from `upload_reference`, each a file or a folder to send with the message",
-            },
-        },
-        "required": ["name", "message"],
-    },
-    _meta=APP_ONLY,
-)
-CANCEL_MODEL = Tool(
-    name="cancel_3d_model",
-    description="Stop the run working on a model in the app's directory. Called by the view.",
-    input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
-    _meta=APP_ONLY,
-)
-READ_ACTIVITY = Tool(
-    name="read_3d_model_activity",
-    description="A model's summary and its activity, or only what came after the cursor `after`. Called by the view.",
-    input_schema={
-        "type": "object",
-        "properties": {"name": {"type": "string"}, "after": {"type": "string"}},
-        "required": ["name"],
-    },
-    _meta=APP_ONLY,
-)
-READ_TOOL_CALL = Tool(
-    name="read_3d_model_tool_call",
-    description="One tool call of a model's agent in full, by the `run_id` and `call_id` of its entry in the model's "
-    "activity. Called by the view.",
-    input_schema={
-        "type": "object",
-        "properties": {"name": {"type": "string"}, "run_id": {"type": "string"}, "call_id": {"type": "string"}},
-        "required": ["name", "run_id", "call_id"],
-    },
-    _meta=APP_ONLY,
-)
-LIST_INTELLIGENCE = Tool(
-    name="list_intelligence_models",
-    description="The AI models and reasoning efforts to pick from, and the ones the person picked last in the app's "
-    "directory. Called by the view.",
-    input_schema={"type": "object", "properties": {}},
-    _meta=APP_ONLY,
-)
-CHOOSE_INTELLIGENCE = Tool(
-    name="choose_intelligence_model",
-    description="Remember an AI model and reasoning effort as the ones the person picked last in the app's "
-    "directory, and return what can be picked. Called by the view.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "model": {"type": "string"},
-            "reasoning_effort": {"type": "string", "enum": list(REASONING_EFFORTS)},
-        },
-        "required": ["model", "reasoning_effort"],
-    },
-    _meta=APP_ONLY,
-)
-READ_SETTINGS = Tool(
-    name="read_app_settings",
-    description="How the person set up the app: theme, viewport tools, pane sizes, and the steps they opened in each "
-    "model's activity, the same in every directory. Called by the view.",
-    input_schema={"type": "object", "properties": {}},
-    _meta=APP_ONLY,
-)
-SAVE_SETTINGS = Tool(
-    name="save_app_settings",
-    description="Keep the app's settings for the person, replacing the ones kept before, and return them. Called by "
-    "the view.",
-    input_schema={
-        "type": "object",
-        "properties": {"settings": {"type": "object", "description": "As `read_app_settings` returns them"}},
-        "required": ["settings"],
-    },
-    _meta=APP_ONLY,
-)
-READ_FOLDERS = Tool(
-    name="read_app_folders",
-    description="Where the app keeps the person's settings, and the models it shows. Called by the view.",
-    input_schema={"type": "object", "properties": {}},
-    _meta=APP_ONLY,
-)
-OPEN_FOLDER = Tool(
-    name="open_app_folder",
-    description="Open the folder of the person's settings, of the app's models, or of one model in their file manager. "
-    "Called by the view.",
-    input_schema={
-        "type": "object",
-        "properties": {
-            "folder": {"type": "string", "enum": ["settings", "models", "model"]},
-            "name": {"type": "string", "description": "The model, for `model`"},
-        },
-        "required": ["folder"],
-    },
-    _meta=APP_ONLY,
-)
-VIEW_TOOLS = [
-    LIST_MODELS,
-    VIEW_MODEL,
-    CREATE_MODEL,
-    UPLOAD_REFERENCE,
-    STEER_MODEL,
-    CANCEL_MODEL,
-    READ_ACTIVITY,
-    READ_TOOL_CALL,
-    LIST_INTELLIGENCE,
-    CHOOSE_INTELLIGENCE,
-    READ_SETTINGS,
-    SAVE_SETTINGS,
-    READ_FOLDERS,
-    OPEN_FOLDER,
-]
-VIEW = Resource(uri=VIEW_URI, name="3D Modeling app", mime_type=APP_MIME_TYPE)
-MODEL_FILE = ResourceTemplate(
-    name="Model file",
-    uri_template=f"{MODEL_FILE_PREFIX}{{name}}/{{+path}}",
-    description="A model's GLB, one of its renders, or a reference image it was given, as base64, for the app's view.",
-)
+# endregion
 
 
 class Started(Protocol):
-    """What the view needs of a run `create_model` started: the model it works on."""
+    """What the view needs of a run `create_model`, `rig_model`, `color_model`, or `detail_model` started: the model
+    it works on."""
 
     name: str
 
@@ -323,6 +166,10 @@ class AppServer:
         list_models: Callable[[Path], ModelListing],
         view_model: Callable[[str, Path], ModelSummary],
         create_model: Callable[..., Awaitable[Started]],
+        rig_model: Callable[..., Awaitable[Started]],
+        color_model: Callable[..., Awaitable[Started]],
+        detail_model: Callable[..., Awaitable[Started]],
+        check_model: Callable[[str, Path], ModelCheck],
         steer_model: Callable[[str, str, Path, str, list[Path]], None],
         cancel_model: Callable[[str, Path], None],
         read_activity: Callable[[str, Path, str | None], ModelActivity],
@@ -336,7 +183,16 @@ class AppServer:
         self._open_folder = open_folder
         self._list_models = list_models
         self._view_model = view_model
-        self._create_model = create_model
+        # What starts a run in each mode.
+        self._starts: dict[ModelMode, Callable[..., Awaitable[Started]]] = {
+            "shape": create_model,
+            "rig": rig_model,
+            "color": color_model,
+            "detail": detail_model,
+        }
+        self._check_model = check_model
+        # By model directory, the check under way, or ended and not yet given to a call.
+        self._checks: dict[Path, concurrent.futures.Future[ModelCheck]] = {}
         self._steer_model = steer_model
         self._cancel_model = cancel_model
         self._read_activity = read_activity
@@ -416,12 +272,13 @@ class AppServer:
         # directory can be read through this.
         listed = [*summary.files, *summary.references]
         readable = [file for file in listed if PurePosixPath(file).suffix.lower() in MODEL_FILE_TYPES]
-        if path not in readable and not _in_reference_folder(summary, path):
+        checked = CHECK_FILE.fullmatch(path) is not None and (summary.directory / path).is_file()
+        if path not in readable and not _in_reference_folder(summary, path) and not checked:
             raise Modeling3dError(
                 f"{path!r} is not a file the app reads from model {name}. It has: {', '.join(readable) or 'none yet'}."
             )
         data = base64.b64encode((summary.directory / path).read_bytes()).decode("ascii")
-        mime_type = MODEL_FILE_TYPES[PurePosixPath(path).suffix.lower()]
+        mime_type = MODEL_FILE_TYPES.get(PurePosixPath(path).suffix.lower(), "application/json")
         return ReadResourceResult(contents=[BlobResourceContents(uri=uri, mime_type=mime_type, blob=data)])
 
     async def _call_tool_or_explain(
@@ -452,7 +309,15 @@ class AppServer:
             summary = await asyncio.to_thread(self._view_model, arguments["name"], self.directory)
             return _structured(summary.model_dump(mode="json"))
         if params.name == CREATE_MODEL.name:
-            return await self._create(arguments)
+            return await self._start(arguments, "shape")
+        if params.name == RIG_MODEL.name:
+            return await self._start(arguments, "rig")
+        if params.name == COLOR_MODEL.name:
+            return await self._start(arguments, "color")
+        if params.name == DETAIL_MODEL.name:
+            return await self._start(arguments, "detail")
+        if params.name == CHECK_MODEL.name:
+            return await self._check(arguments["name"])
         if params.name == UPLOAD_REFERENCE.name:
             received = await asyncio.to_thread(
                 self._receive, arguments["upload"], arguments["path"], arguments["offset"], arguments["data"]
@@ -495,12 +360,23 @@ class AppServer:
         known = ", ".join(tool.name for tool in [OPEN_APP, *VIEW_TOOLS])
         raise Modeling3dError(f"'{params.name}' is not a tool of this server. The tools are: {known}.")
 
-    async def _create(self, arguments: dict[str, Any]) -> CallToolResult:
+    async def _start(self, arguments: dict[str, Any], mode: ModelMode) -> CallToolResult:
+        """Start a run that shapes, rigs, or colors the model, with what the view sent."""
         uploads: list[str] = arguments.get("uploads") or []
         references = [await asyncio.to_thread(_staged, upload) for upload in uploads]
         references += await asyncio.to_thread(self._model_references, arguments.get("reference_models") or [])
-        run = await self._create_model(
-            prompt=arguments["prompt"],
+        start = self._starts[mode]
+        # Only shaping takes budgets; the other modes work to the model's own.
+        budgets: dict[str, Any] = {}
+        if mode == "shape":
+            screen_size = arguments.get("screen_size", NOT_GIVEN)
+            budgets = {
+                "max_triangles": arguments.get("max_triangles", NOT_GIVEN),
+                "max_draw_calls": arguments.get("max_draw_calls", NOT_GIVEN),
+                "screen_size": (screen_size[0], screen_size[1]) if isinstance(screen_size, list) else screen_size,
+            }
+        run = await start(
+            prompt=arguments.get("prompt"),
             name=arguments["name"],
             directory=self.directory,
             references=references,
@@ -510,12 +386,38 @@ class AppServer:
             reasoning_effort=arguments.get("reasoning_effort", DEFAULT_REASONING_EFFORT),
             origin=ORIGIN,
             detach=True,
+            **budgets,
         )
         # Cleared only once the run has started, having copied them into the model: a request that is refused is
         # usually sent again, with the same references.
         await self._clear(uploads)
         summary = await asyncio.to_thread(self._view_model, run.name, self.directory)
         return _structured(summary.model_dump(mode="json"))
+
+    async def _check(self, name: str) -> CallToolResult:
+        """The report of the model's check under way, or of a new one, once it ends or the call has waited long enough.
+
+        Each check runs to its end in a thread of its own, so one a call stopped waiting on is there for the next call.
+        """
+        target = self.directory / name
+        with self._lock:
+            future = self._checks.get(target)
+            if future is None:
+                future = self._checks[target] = concurrent.futures.Future()
+                threading.Thread(target=self._run_check, args=(name, self.directory, future), daemon=True).start()
+        done, _ = await asyncio.to_thread(concurrent.futures.wait, [future], CHECK_WAIT_SECONDS)
+        if not done:
+            return _structured({"checking": True})
+        with self._lock:
+            if self._checks.get(target) is future:
+                del self._checks[target]
+        return _structured({"report": future.result().model_dump(mode="json")})
+
+    def _run_check(self, name: str, directory: Path, future: concurrent.futures.Future[ModelCheck]) -> None:
+        try:
+            future.set_result(self._check_model(name, directory))
+        except Exception as error:
+            future.set_exception(error)
 
     async def _steer(self, arguments: dict[str, Any]) -> CallToolResult:
         uploads: list[str] = arguments.get("uploads") or []
@@ -544,7 +446,9 @@ class AppServer:
         try:
             piece = base64.b64decode(data, validate=True)
         except binascii.Error:
-            raise Modeling3dError(f"The reference {path} did not arrive as base64. Add it again.", "bad-upload") from None
+            raise Modeling3dError(
+                f"The reference {path} did not arrive as base64. Add it again.", "bad-upload"
+            ) from None
         target = folder.joinpath(*parts)
         try:
             arrived = target.stat().st_size if target.is_file() else 0
@@ -564,7 +468,9 @@ class AppServer:
                 file.truncate()
                 return file.tell()
         except OSError as error:
-            raise Modeling3dError(f"Could not keep the reference {path}: {error}. Add it again.", "bad-upload") from None
+            raise Modeling3dError(
+                f"Could not keep the reference {path}: {error}. Add it again.", "bad-upload"
+            ) from None
 
     def _intelligence(self) -> AppIntelligence:
         options = self._list_intelligence()
@@ -738,9 +644,13 @@ def _text(text: str) -> CallToolResult:
 
 
 def _structured(structured: dict[str, Any]) -> CallToolResult:
-    return CallToolResult(content=[TextContent(type="text", text=json.dumps(structured))], structured_content=structured)
+    return CallToolResult(
+        content=[TextContent(type="text", text=json.dumps(structured))], structured_content=structured
+    )
 
 
 def _takes_url_elicitation(ctx: ServerRequestContext[Any]) -> bool:
     capabilities = ctx.session.client_capabilities
-    return capabilities is not None and capabilities.elicitation is not None and capabilities.elicitation.url is not None
+    return (
+        capabilities is not None and capabilities.elicitation is not None and capabilities.elicitation.url is not None
+    )

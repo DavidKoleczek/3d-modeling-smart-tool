@@ -8,6 +8,8 @@ export type SegmentedOption<Value extends string> = {
   value: Value;
   label: string;
   icon?: IconName;
+  /** Why it can't be picked now, which shows on it; it can be picked without one. */
+  disabled?: string;
 };
 
 /** A switch between modes that change what the screen shows, one of which is always on. */
@@ -43,8 +45,10 @@ export function Segmented<Value extends string>({
         <Radio.Root
           key={option.value}
           value={option.value}
+          disabled={option.disabled !== undefined}
+          title={option.disabled}
           className={cn(
-            "inline-flex cursor-default items-center justify-center gap-1.5 rounded-sm border border-transparent text-label whitespace-nowrap text-ink-muted transition-colors select-none hover:text-ink data-checked:border-accent-ink data-checked:bg-accent-soft data-checked:text-ink",
+            "inline-flex cursor-default items-center justify-center gap-1.5 rounded-sm border border-transparent text-label whitespace-nowrap text-ink-muted transition-colors select-none hover:text-ink data-checked:border-accent-ink data-checked:bg-accent-soft data-checked:text-ink data-disabled:text-ink-faint data-disabled:hover:text-ink-faint",
             size === "sm" ? "h-4.5 px-2" : "h-5.5 px-3",
             full && "flex-1",
           )}
