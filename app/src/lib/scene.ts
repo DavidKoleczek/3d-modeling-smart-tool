@@ -48,9 +48,31 @@ function bytesOf(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
+function materialsOf(mesh: Mesh): Material[] {
+  return Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+}
+
+/**
+ * Show each material's own colors. GLTFLoader multiplies them by `COLOR_0`, as glTF specifies, but projects often keep
+ * data there, such as a tag per part, that their renders don't show. The attribute stays on the geometry.
+ */
+function withoutVertexColors(scene: Object3D): void {
+  scene.traverse((object) => {
+    if (!(object instanceof Mesh)) {
+      return;
+    }
+    for (const material of materialsOf(object)) {
+      material.vertexColors = false;
+      material.needsUpdate = true;
+    }
+  });
+}
+
 /** The scene in a GLB, from its bytes: the view's CSP refuses fetches, even of `blob:` URLs, so nothing is loaded. */
 export async function parseGlb(base64: string): Promise<Object3D> {
-  return (await loader.parseAsync(bytesOf(base64), "")).scene;
+  const { scene } = await loader.parseAsync(bytesOf(base64), "");
+  withoutVertexColors(scene);
+  return scene;
 }
 
 /** Free what `scene` holds on the GPU, since each rebuild of a model replaces the whole scene. */
@@ -64,10 +86,7 @@ export function dispose(scene: Object3D): void {
     if (object instanceof SkinnedMesh) {
       object.skeleton.dispose();
     }
-    const materials: Material[] = Array.isArray(object.material)
-      ? object.material
-      : [object.material];
-    for (const material of materials) {
+    for (const material of materialsOf(object)) {
       for (const value of Object.values(material)) {
         if (value && (value as Texture).isTexture) {
           (value as Texture).dispose();
