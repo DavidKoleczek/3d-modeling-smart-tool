@@ -45,6 +45,13 @@ VIEW_TOOLS = (
     "save_app_settings",
     "read_app_folders",
     "open_app_folder",
+    "choose_reference_files",
+    "stage_reference_files",
+    "choose_reference_folder",
+    "read_app_library",
+    "save_app_pins",
+    "list_reference_folder",
+    "keep_upload",
 )
 
 
@@ -148,7 +155,10 @@ def test_an_mcp_apps_host_gets_the_view_the_tools_it_calls_and_the_model_files(w
     assert set(tools) == {"open_app", *VIEW_TOOLS}
     assert all(tools[name]["_meta"]["ui"]["visibility"] == ["app"] for name in VIEW_TOOLS)
     assert [resource["uri"] for resource in resources] == [VIEW_URI]
-    assert [template["uriTemplate"] for template in templates] == ["modeling-3d://models/{name}/{+path}"]
+    assert [template["uriTemplate"] for template in templates] == [
+        "modeling-3d://models/{name}/{+path}",
+        "modeling-3d://references/{+path}",
+    ]
     assert contents == [
         {
             "uri": VIEW_URI,

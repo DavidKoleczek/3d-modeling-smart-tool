@@ -6,7 +6,11 @@ import {
   type DragEvent,
 } from "react";
 
-import { uploadReference, type ModelSummary } from "@/lib/api";
+import {
+  uploadReference,
+  type ModelSummary,
+  type StagedReference,
+} from "@/lib/api";
 import { describe } from "@/lib/errors";
 
 // What is sent of a file at a time: a third more in base64, well under the 4 MB the server takes in one request.
@@ -17,7 +21,10 @@ const PREVIEW_BYTES = 8 * 1024 * 1024;
 // Beside hidden folders, what a folder leaves out, as `SKIPPED_FOLDERS` in create.py does for one named by path.
 const SKIPPED_FOLDERS = new Set(["node_modules", "__pycache__"]);
 
-/** Something a request works from: a file or a folder sent to the server as the person adds it, or a model here. */
+/**
+ * Something a request works from: a file or a folder sent to the server as the person drops or pastes it, one on this
+ * machine the server staged by its path, or a model here.
+ */
 export type Reference = {
   key: string;
   kind: "file" | "folder" | "model";
@@ -29,6 +36,8 @@ export type Reference = {
   bytes: number;
   sent: number;
   error: string | null;
+  /** Its path, as `pathSource` gives it, for one staged by path or kept to pin, so the library shows it picked. */
+  source: string | null;
 };
 
 export type References = {
@@ -37,10 +46,16 @@ export type References = {
   error: string | null;
   uploading: boolean;
   addFiles: (files: Iterable<File>) => void;
-  addFolder: (files: Iterable<File>) => void;
+  /**
+   * Adds files and folders the server staged as uploads from their paths, such as those chosen in the file dialog,
+   * leaving out any already added from the same path; returns the keys of those it added.
+   */
+  addStaged: (files: StagedReference[]) => string[];
   addDropped: (data: DataTransfer) => void;
   addModel: (name: string) => void;
   remove: (key: string) => void;
+  /** Marks the reference `key` as the path `source`, once it is kept to pin. */
+  tag: (key: string, source: string) => void;
   clear: () => void;
   /** Once every file has arrived, what the request names: the uploads, then the models. */
   ready: () => Promise<{ uploads: string[]; reference_models: string[] }>;
@@ -86,6 +101,16 @@ function uploadId(): string {
   ).join("");
 }
 
+/** What identifies a file or folder on this machine to the library, by its path. */
+export function pathSource(path: string): string {
+  return `path:${path}`;
+}
+
+/** What identifies a reference to the library: its path, or its own key, which a model's matches. */
+export function sourceOf(reference: Reference): string {
+  return reference.source ?? reference.key;
+}
+
 function skippedFolder(name: string): boolean {
   return name.startsWith(".") || SKIPPED_FOLDERS.has(name);
 }
@@ -93,25 +118,6 @@ function skippedFolder(name: string): boolean {
 /** The models a request can work from: those in the directory with a script to read. */
 export function referable(models: ModelSummary[]): ModelSummary[] {
   return models.filter((model) => model.files.includes("model.py"));
-}
-
-/** The files and folders the folder picker gave, by the folder they are in, without the folders a folder leaves out. */
-function pickedFolders(
-  files: Iterable<File>,
-): Map<string, { entries: Entry[]; skipped: Set<string> }> {
-  const folders = new Map<string, { entries: Entry[]; skipped: Set<string> }>();
-  for (const file of files) {
-    const parts = (file.webkitRelativePath || file.name).split("/");
-    const folder = folders.get(parts[0]) ?? { entries: [], skipped: new Set() };
-    folders.set(parts[0], folder);
-    const left = parts.slice(1, -1).find(skippedFolder);
-    if (left) {
-      folder.skipped.add(left);
-    } else {
-      folder.entries.push({ path: parts.join("/"), file });
-    }
-  }
-  return folders;
 }
 
 function entriesOf(
@@ -162,7 +168,7 @@ async function droppedFolder(
 }
 
 /**
- * The files, folders, and models a request is to work from, as the person adds them by picker, drop, paste, or menu.
+ * The files, folders, and models a request is to work from, as the person adds them by dialog, drop, paste, or menu.
  * Each file or folder is sent to the server in pieces as soon as it is added, so a large one is on its way while
  * they write, and the request names it once it has arrived.
  */
@@ -172,6 +178,9 @@ export function useReferences(): References {
   // Each upload's sending, which settles with what went wrong, if anything; removing a reference drops it here, which
   // stops its sending.
   const sending = useRef(new Map<string, Promise<string | null>>());
+  // By key, the path each reference came from, kept apart from the items so one picked twice before the next render
+  // is added once.
+  const sourced = useRef(new Map<string, string>());
 
   const update = useCallback(
     (key: string, change: (item: Reference) => Partial<Reference>) =>
@@ -229,6 +238,7 @@ export function useReferences(): References {
           bytes: file.size,
           sent: 0,
           error: null,
+          source: null,
         };
         send(reference, [{ path: name, file }]);
         if (IMAGE.test(file.type) && file.size <= PREVIEW_BYTES) {
@@ -262,6 +272,7 @@ export function useReferences(): References {
           bytes: entries.reduce((sum, entry) => sum + entry.file.size, 0),
           sent: 0,
           error: null,
+          source: null,
         },
         entries,
       );
@@ -269,15 +280,31 @@ export function useReferences(): References {
     [send],
   );
 
-  const addFolder = useCallback(
-    (files: Iterable<File>) => {
-      setError(null);
-      for (const [name, folder] of pickedFolders(files)) {
-        addEntries(name, folder.entries, folder.skipped);
-      }
-    },
-    [addEntries],
-  );
+  const addStaged = useCallback((files: StagedReference[]) => {
+    setError(null);
+    const held = new Set(sourced.current.values());
+    const added = files.filter((file) => !held.has(pathSource(file.path)));
+    for (const file of added) {
+      sending.current.set(file.upload, Promise.resolve(null));
+      sourced.current.set(file.upload, pathSource(file.path));
+    }
+    setItems((current) => [
+      ...current,
+      ...added.map((file): Reference => ({
+        key: file.upload,
+        kind: file.kind,
+        name: file.name,
+        preview: file.preview,
+        files: file.files,
+        skipped: [],
+        bytes: file.size,
+        sent: file.size,
+        error: null,
+        source: pathSource(file.path),
+      })),
+    ]);
+    return added.map((file) => file.upload);
+  }, []);
 
   const addDropped = useCallback(
     (data: DataTransfer) => {
@@ -322,6 +349,7 @@ export function useReferences(): References {
               bytes: 0,
               sent: 0,
               error: null,
+              source: null,
             },
           ],
     );
@@ -329,11 +357,21 @@ export function useReferences(): References {
 
   const remove = useCallback((key: string) => {
     sending.current.delete(key);
+    sourced.current.delete(key);
     setItems((current) => current.filter((item) => item.key !== key));
   }, []);
 
+  const tag = useCallback(
+    (key: string, source: string) => {
+      sourced.current.set(key, source);
+      update(key, () => ({ source }));
+    },
+    [update],
+  );
+
   const clear = useCallback(() => {
     sending.current.clear();
+    sourced.current.clear();
     setItems([]);
     setError(null);
   }, []);
@@ -363,10 +401,11 @@ export function useReferences(): References {
       (item) => item.kind !== "model" && !item.error && item.sent < item.bytes,
     ),
     addFiles,
-    addFolder,
+    addStaged,
     addDropped,
     addModel,
     remove,
+    tag,
     clear,
     ready,
   };

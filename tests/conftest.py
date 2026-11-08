@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 
+from fakes import FileDialog
 import pytest
 
 from modeling_3d.capabilities.app import folders, mcp_server
@@ -63,6 +64,15 @@ def opened_folders(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
     opened: list[Path] = []
     monkeypatch.setattr(folders, "open_folder", opened.append)
     return opened
+
+
+@pytest.fixture(autouse=True)
+def file_dialog(monkeypatch: pytest.MonkeyPatch) -> FileDialog:
+    """The file and folder dialogs the app shows, which give what a test sets, so no test shows a real one."""
+    dialog = FileDialog()
+    monkeypatch.setattr(folders, "choose_files", dialog.choose)
+    monkeypatch.setattr(folders, "choose_folder", dialog.choose_folder)
+    return dialog
 
 
 @pytest.fixture(autouse=True)

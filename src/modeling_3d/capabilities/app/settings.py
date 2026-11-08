@@ -45,20 +45,27 @@ def save_app_settings(settings: dict[str, Any], path: Path) -> AppSettings:
             "only where the person changed it.",
             "bad-settings",
         ) from None
-    temporary: Path | None = None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Written beside it and moved into place, so an app reading it at the same moment never sees half a file.
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
-        ) as file:
-            temporary = Path(file.name)
-            file.write(checked.model_dump_json(indent=2))
-        temporary.replace(path)
+        write_atomically(path, checked.model_dump_json(indent=2))
     except OSError as error:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
         raise Modeling3dError(
             f"Could not save the app's settings to {path}: {error}. Check that the folder can be written."
         ) from None
     return checked
+
+
+def write_atomically(path: Path, text: str) -> None:
+    """Write `text` to `path` beside it and move it into place, so an app reading it at once never sees half a file."""
+    temporary: Path | None = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
+        ) as file:
+            temporary = Path(file.name)
+            file.write(text)
+        temporary.replace(path)
+    except OSError:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        raise

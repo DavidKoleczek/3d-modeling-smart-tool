@@ -63,6 +63,7 @@ FailureReason = Literal[
     "bad-reasoning-effort",
     "bad-budget",
     "bad-settings",
+    "bad-pins",
     "no-such-check",
     "not-built",
     "bad-glb",
@@ -436,9 +437,16 @@ class BlenderOnPath(BaseModel):
 
 
 class AppState(BaseModel):
-    """.app.json in a models directory: what the person last picked in the app there."""
+    """.app.json in a models directory: what the person last picked and used in the app there."""
 
     intelligence: IntelligenceChoice | None = None
+    used: list[Path] = Field(
+        default_factory=list, description="The files and folders chosen to work from in the app there, newest first"
+    )
+    last_folder: Path | None = Field(
+        default=None, description="The folder files were last chosen from, where the file dialog opens next"
+    )
+    last_prompt: str | None = Field(default=None, description="What the last model created in the app there was asked")
 
 
 class AppIntelligence(IntelligenceModels):
@@ -486,8 +494,68 @@ class AppSettings(BaseModel):
 class AppFolders(BaseModel):
     """Where the app keeps what it remembers."""
 
-    settings: Path = Field(description="The person's settings, the same in every directory")
-    models: Path = Field(description="The models the app shows, with what the person last picked and viewed there")
+    settings: Path = Field(description="The person's settings and pins, the same in every directory")
+    models: Path = Field(
+        description="The models the app shows, with what the person last picked, viewed, and used there"
+    )
+
+
+class PinnedReference(BaseModel):
+    """A reference the person pinned in the app, by its path on this machine."""
+
+    path: Path = Field(description="Absolute: a file, a folder, or a model's folder")
+    kind: Literal["file", "folder", "model"]
+
+
+class PinnedFolder(BaseModel):
+    """A folder the person pinned in the app, to pick references from."""
+
+    path: Path = Field(description="Absolute")
+    shows: Literal["files", "dialog"] = Field(
+        description="`files` lists what is in it in the app; `dialog` opens the file dialog in it"
+    )
+
+
+class PinnedPrompt(BaseModel):
+    """A prompt the person pinned in the app, for requests in its mode."""
+
+    text: str = Field(min_length=1)
+    mode: ModelMode
+
+
+class AppPins(BaseModel):
+    """app-pins.json in the user's config directory: what the person pinned in the app, the same in every directory."""
+
+    references: list[PinnedReference] = Field(default_factory=list)
+    folders: list[PinnedFolder] = Field(default_factory=list)
+    prompts: list[PinnedPrompt] = Field(default_factory=list)
+
+
+class ReferenceEntry(BaseModel):
+    """A file or folder on this machine the app offers to work from."""
+
+    name: str
+    path: Path = Field(description="Absolute")
+    kind: Literal["file", "folder"]
+
+
+class AppLibrary(AppPins):
+    """What the app offers to start a request from: the person's pins, and what was used in its directory."""
+
+    used: list[ReferenceEntry] = Field(
+        description="What was chosen to work from in the app's directory or given to its models, newest first, each "
+        "once, of what is still there"
+    )
+    last_prompt: str | None = Field(description="What the last model created in the app's directory was asked there")
+
+
+class StagedReference(ReferenceEntry):
+    """A file or folder on this machine staged as an upload a request takes, as though the view had sent it."""
+
+    upload: str
+    size: int = Field(description="In bytes; for a folder, its files' in all")
+    files: int = Field(description="1 for a file; a folder's files")
+    preview: str | None = Field(description="A data URL of an image, when it is one the view shows and not too large")
 
 
 # endregion

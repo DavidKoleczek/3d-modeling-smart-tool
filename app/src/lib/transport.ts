@@ -7,7 +7,7 @@ import { JSONRPCMessageSchema } from "@modelcontextprotocol/core";
 
 /**
  * The ext-apps `PostMessageTransport` without its debug logging. It logs every message, and the browser keeps what a
- * page logs for DevTools to show later, so every model file read through it stayed in memory.
+ * page logs for DevTools to show later, so every model file read through it would stay in memory.
  */
 export class QuietPostMessageTransport implements Transport {
   onclose?: () => void;

@@ -10,10 +10,11 @@ import secrets
 import time
 from typing import Any
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 import detached_agent
-from fakes import run_record
+from fakes import FileDialog, run_record
 from glbs import Glb, box
 from mcp import Client, MCPError
 from mcp.types import BlobResourceContents, TextContent, TextResourceContents
@@ -22,6 +23,7 @@ import pytest
 from modeling_3d import lib
 from modeling_3d.capabilities.app import mcp_server
 from modeling_3d.capabilities.app import server as server_module
+from modeling_3d.capabilities.app.folders import choose_files
 from modeling_3d.capabilities.create_3d_model import create, intelligence_models
 from modeling_3d.capabilities.create_3d_model.record import write_record
 from modeling_3d.schemas import (
@@ -31,6 +33,8 @@ from modeling_3d.schemas import (
     AppFolders,
     AppIntelligence,
     AppLayout,
+    AppLibrary,
+    AppPins,
     AppSettings,
     AppState,
     IntelligenceChoice,
@@ -172,6 +176,7 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
         first = await activity_until(client, "cub", 1)
         monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command("works_forever"))
         await client.call_tool("create_3d_model", {"prompt": "Go on", "name": "cub", "resume_session": True})
+        library = await client.call_tool("read_app_library", {})
         cancelled = await client.call_tool("cancel_3d_model", {"name": "cub"})
         second = await activity_until(client, "cub", 2)
         since = await client.call_tool("read_3d_model_activity", {"name": "cub", "after": second.cursor})
@@ -180,6 +185,7 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
 
     summary = ModelSummary.model_validate(created.structured_content)
     assert (summary.name, summary.status, listing.last_viewed) == ("cub", "running", "cub")
+    assert AppLibrary.model_validate(library.structured_content).last_prompt == "A cub"
     assert not cancelled.is_error, text_of(cancelled)
     kinds = [(entry.kind, entry.origin, entry.text) for entry in second.entries if entry.kind != "ended"]
     assert kinds == [("request", "app", "A cub"), ("steered", "app", "Smaller."), ("request", "app", "Go on")]
@@ -547,6 +553,201 @@ async def test_settings_that_are_not_valid_are_refused_naming_the_field_and_kept
     assert "The app setting wide.models.size is not valid" in text_of(nested)
     assert untouched == "{not json"
     assert AppSettings.model_validate(earlier.structured_content) == AppSettings(theme="dark")
+
+
+async def test_files_chosen_in_the_file_dialog_are_staged_as_uploads_a_request_takes(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog, uploads_directory: Path
+) -> None:
+    pictures = tmp_path / "pictures"
+    pictures.mkdir()
+    (pictures / "bear.png").write_bytes(b"png-bytes")
+    (pictures / "notes.txt").write_text("brown fur", encoding="utf-8")
+    file_dialog.files = [pictures / "bear.png", pictures / "notes.txt"]
+    app_server = open_app(directory=tmp_path / "models")
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        result = await client.call_tool("choose_reference_files", {"directory": str(pictures)})
+        file_dialog.files = []
+        cancelled = await client.call_tool("choose_reference_files", {"directory": str(pictures)})
+
+    assert not result.is_error, text_of(result)
+    bear, notes = result.structured_content["files"]
+    assert (bear["name"], bear["path"], bear["kind"], bear["size"]) == (
+        "bear.png",
+        str((pictures / "bear.png").resolve()),
+        "file",
+        len(b"png-bytes"),
+    )
+    assert bear["preview"] == f"data:image/png;base64,{base64.b64encode(b'png-bytes').decode('ascii')}"
+    assert notes["preview"] is None
+    assert (uploads_directory / notes["upload"] / "notes.txt").read_text(encoding="utf-8") == "brown fur"
+    assert sorted(path.name for path in uploads_directory.iterdir()) == sorted([bear["upload"], notes["upload"]])
+    assert file_dialog.shown == [pictures, pictures]
+    assert cancelled.structured_content == {"files": []}
+
+
+async def test_files_and_folders_named_by_path_are_staged_as_uploads(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, uploads_directory: Path
+) -> None:
+    kit = tmp_path / "kit"
+    (kit / ".git").mkdir(parents=True)
+    (kit / ".git" / "HEAD").write_text("main", encoding="utf-8")
+    (kit / "wheel.glb").write_bytes(b"glTF")
+    (kit / "parts").mkdir()
+    (kit / "parts" / "axle.obj").write_text("v 0 0 0", encoding="utf-8")
+    app_server = open_app(directory=tmp_path / "models")
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        result = await client.call_tool("stage_reference_files", {"paths": [str(kit), str(kit / "wheel.glb")]})
+        missing = await client.call_tool("stage_reference_files", {"paths": [str(tmp_path / "gone.png")]})
+
+    assert not result.is_error, text_of(result)
+    folder, wheel = result.structured_content["files"]
+    assert (folder["kind"], folder["files"], folder["size"]) == ("folder", 2, len(b"glTF") + len("v 0 0 0"))
+    assert not (uploads_directory / folder["upload"] / "kit" / ".git").exists()
+    assert (uploads_directory / folder["upload"] / "kit" / "parts" / "axle.obj").is_file()
+    assert (wheel["kind"], wheel["preview"]) == ("file", None)
+    assert missing.structured_content == {"reason": "missing-reference", "model": None}
+    assert "is not a file or a folder on this machine" in text_of(missing)
+
+
+async def test_a_folder_chosen_in_the_folder_dialog_comes_back_by_path(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog
+) -> None:
+    file_dialog.folder = tmp_path / "pictures"
+    app_server = open_app(directory=tmp_path / "models")
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        chosen = await client.call_tool("choose_reference_folder", {})
+        file_dialog.folder = None
+        cancelled = await client.call_tool("choose_reference_folder", {})
+
+    assert chosen.structured_content == {"path": str(tmp_path / "pictures")}
+    assert cancelled.structured_content == {"path": None}
+    assert file_dialog.shown == [Path.home(), Path.home()]
+
+
+def test_the_file_dialog_names_a_folder_that_is_not_there(tmp_path: Path) -> None:
+    with pytest.raises(Modeling3dError, match="is not a folder on this machine"):
+        choose_files(tmp_path / "gone", "Choose references")
+
+
+async def test_the_person_s_pins_are_kept_for_every_directory_and_refused_when_not_valid(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
+) -> None:
+    pins = {
+        "references": [{"path": str(tmp_path / "bear.png"), "kind": "file"}],
+        "folders": [{"path": str(tmp_path / "pictures"), "shows": "dialog"}],
+        "prompts": [{"text": "A low poly fox", "mode": "shape"}],
+    }
+    here = open_app(directory=tmp_path / "here")
+    elsewhere = open_app(directory=tmp_path / "elsewhere")
+
+    async with Client(f"{here.open().url}/mcp") as client:
+        before = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+        saved = await client.call_tool("save_app_pins", {"pins": pins})
+        bad = await client.call_tool("save_app_pins", {"pins": {"prompts": [{"text": "", "mode": "shape"}]}})
+    async with Client(f"{elsewhere.open().url}/mcp") as client:
+        after = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+
+    assert before == AppLibrary(used=[], last_prompt=None)
+    assert AppPins.model_validate(saved.structured_content) == AppPins.model_validate(pins)
+    assert AppPins.model_validate(after.model_dump(include={"references", "folders", "prompts"})) == (
+        AppPins.model_validate(pins)
+    )
+    assert (config_directory / "modeling-3d" / "app-pins.json").is_file()
+    assert bad.structured_content == {"reason": "bad-pins", "model": None}
+    assert "The app pin prompts.0.text is not valid" in text_of(bad)
+
+
+async def test_what_was_chosen_or_given_to_a_model_is_used_before_newest_first_and_at_most_50(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog
+) -> None:
+    bear = model_in(tmp_path / "models", "bear", references=["references/bear.png", "references/gone.png"])
+    (bear / "references").mkdir()
+    (bear / "references" / "bear.png").write_bytes(b"png-bytes")
+    cub = model_in(tmp_path / "models", "cub", references=["references/bear.png"])
+    (cub / "references").mkdir()
+    (cub / "references" / "bear.png").write_bytes(b"png-bytes")
+    pictures = tmp_path / "pictures"
+    pictures.mkdir()
+    for index in range(60):
+        (pictures / f"{index:02}.png").write_bytes(b"png-bytes")
+    file_dialog.files = [pictures / "00.png"]
+    app_server = open_app(directory=tmp_path / "models")
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        given = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+        await client.call_tool("choose_reference_files", {})
+        await client.call_tool("choose_reference_folder", {})
+        chosen = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+        await client.call_tool("stage_reference_files", {"paths": [str(pictures / "01.png")]})
+        unremembered = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+        everything = [str(path) for path in sorted(pictures.iterdir())]
+        await client.call_tool("stage_reference_files", {"paths": everything, "remember": True})
+        capped = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+
+    assert [entry.name for entry in given.used] == ["bear.png"]
+    assert [entry.path for entry in chosen.used] == [pictures / "00.png", given.used[0].path]
+    assert file_dialog.shown == [Path.home(), pictures]
+    assert unremembered.used == chosen.used
+    assert len(capped.used) == 50
+    assert capped.used[0].path == pictures / "00.png"
+
+
+async def test_pinned_folders_list_what_is_in_them_and_only_the_library_s_images_can_be_read(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path
+) -> None:
+    pictures = tmp_path / "pictures"
+    (pictures / "sketches").mkdir(parents=True)
+    (pictures / ".cache").mkdir()
+    (pictures / "Fox.png").write_bytes(b"fox-bytes")
+    (pictures / "bear.png").write_bytes(b"bear-bytes")
+    (tmp_path / "away.png").write_bytes(b"away-bytes")
+    bear = model_in(tmp_path / "models", "bear", references=["references/bear.png"])
+    (bear / "references").mkdir()
+    (bear / "references" / "bear.png").write_bytes(b"given-bytes")
+    pins = {"folders": [{"path": str(pictures), "shows": "files"}, {"path": str(tmp_path), "shows": "dialog"}]}
+    app_server = open_app(directory=tmp_path / "models")
+
+    def uri(path: Path) -> str:
+        return f"modeling-3d://references/{quote(str(path), safe='')}"
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        await client.call_tool("save_app_pins", {"pins": pins})
+        listed = await client.call_tool("list_reference_folder", {"path": str(pictures)})
+        unlisted = await client.call_tool("list_reference_folder", {"path": str(tmp_path)})
+        fox = (await client.read_resource(uri(pictures / "Fox.png"))).contents[0]
+        given = (await client.read_resource(uri(bear / "references" / "bear.png"))).contents[0]
+        with pytest.raises(MCPError) as refused:
+            await client.read_resource(uri(tmp_path / "away.png"))
+
+    entries = [(entry["name"], entry["kind"]) for entry in listed.structured_content["entries"]]
+    assert entries == [("sketches", "folder"), ("bear.png", "file"), ("Fox.png", "file")]
+    assert "is not a folder pinned to show its files" in text_of(unlisted)
+    assert isinstance(fox, BlobResourceContents)
+    assert base64.b64decode(fox.blob) == b"fox-bytes"
+    assert isinstance(given, BlobResourceContents)
+    assert base64.b64decode(given.blob) == b"given-bytes"
+    assert "is not an image the app offers to work from" in str(refused.value)
+
+
+async def test_a_dropped_file_pinned_is_kept_beside_the_settings_until_it_is_unpinned(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
+) -> None:
+    app_server = open_app(directory=tmp_path / "models")
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        pasted = await send(client, "pasted.png", b"pasted-bytes")
+        kept = Path((await client.call_tool("keep_upload", {"upload": pasted})).structured_content["path"])
+        reference = {"path": str(kept), "kind": "file"}
+        await client.call_tool("save_app_pins", {"pins": {"references": [reference]}})
+        pinned = kept.read_bytes()
+        await client.call_tool("save_app_pins", {"pins": {}})
+
+    assert kept.is_relative_to(config_directory / "modeling-3d" / "kept")
+    assert pinned == b"pasted-bytes"
+    assert not kept.parent.exists()
 
 
 async def test_the_view_names_and_opens_the_folders_where_the_app_keeps_things(

@@ -27,9 +27,9 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
 - `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, `steer_3d_model`, and
   `cancel_3d_model`: the library's, on the app's directory with origin `app`, which the view calls
   for the person. `create_3d_model`, `rig_3d_model`, `color_3d_model`, and `detail_3d_model`, the
-  request box's Shape, Rig, Color, and Detail modes, always detach, so their runs outlive the server, and take the agent provider, model, and
-  reasoning effort the person picked, the models in the directory to work from, and the uploads to
-  work from.
+  request box's Shape, Rig, Color, and Detail modes, always detach, so their runs outlive the
+  server, and take the agent provider, model, and reasoning effort the person picked, the models in
+  the directory to work from, and the uploads to work from.
 - `check_3d_model`: the library's, against the model's own budgets. A check still going after a
   while returns `{"checking": true}`, and calling again waits on the same check, so a check that
   outlasts a host's time limit for a call still reaches the view. The view reads the report and
@@ -47,6 +47,18 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
   that is not valid fails with reason `bad-settings`.
 - `read_app_folders` and `open_app_folder`: where the app keeps the person's settings and the
   models it shows, and opening the folder of either, or of one model, in the person's file manager.
+- `read_app_library` and `save_app_pins`: what the view offers to start a request from. The
+  references, folders, and prompts the person pinned are kept for them in every directory in
+  `app-pins.json` beside their settings; pins that are not valid fail with reason `bad-pins`. The
+  last 50 files and folders used in the app's directory, chosen there or given to its models, and
+  the last prompt a model was created from there are kept in `.app.json`.
+- `choose_reference_files` and `choose_reference_folder`: the platform's file and folder dialogs,
+  opened where files were last chosen from. Files chosen are staged as uploads and remembered as
+  used.
+- `stage_reference_files`, `list_reference_folder`, and `keep_upload`: staging files and folders
+  on this machine by path as uploads, as `upload_reference` does for those the person sends; what
+  is in a folder pinned to show its files; and keeping a copy of a dropped or pasted upload to pin,
+  cleared once it is unpinned.
 
 All but `open_app` are listed only to hosts that render MCP Apps, with `visibility: ["app"]`, so
 no model sees them.
@@ -54,9 +66,12 @@ no model sees them.
 ## Resources
 
 - `ui://modeling-3d/app`: the view.
-- `modeling-3d://models/{name}/{+path}`: a model's `model.glb`, one of its renders, or a
-  reference image it was given, as a base64 blob, which the view reads to show it. Nothing else
-  in the directory can be read.
+- `modeling-3d://models/{name}/{+path}`: a model's `model.glb`, one of its renders, a reference
+  image it was given, or its latest check's report and renders, as a base64 blob, which the view
+  reads to show it. Nothing else in the directory can be read.
+- `modeling-3d://references/{+path}`: an image the view's library offers, by its absolute path, as
+  a base64 blob: one pinned, in a folder pinned to show its files, used in the app's directory, or
+  given to a model there. No other path can be read.
 
 ## What the person does in the app
 

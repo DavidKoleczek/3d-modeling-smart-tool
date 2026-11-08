@@ -6,16 +6,28 @@ import {
   type FormEvent,
 } from "react";
 
-import { AddReferences, ReferenceChips } from "@/components/References";
 import { ModelMenu } from "@/components/ModelPicker";
+import { PromptPicker } from "@/components/PromptPicker";
+import { ReferenceLibrary } from "@/components/ReferenceLibrary";
+import { ReferenceChips } from "@/components/References";
 import { Button } from "@/components/ui/button";
 import { CropMarks } from "@/components/ui/empty-state";
 import { Help } from "@/components/ui/field";
 import { Icon } from "@/components/ui/icon";
 import { LoadingMark } from "@/components/ui/loading-mark";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
-import { openAppFolder, type ModelSummary } from "@/lib/api";
+import {
+  openAppFolder,
+  stageReferenceFiles,
+  type ModelMode,
+  type ModelSummary,
+} from "@/lib/api";
 import { describe } from "@/lib/errors";
 import { shortDirectory } from "@/lib/models";
 import { takesReferences, useReferences } from "@/lib/references";
@@ -50,7 +62,9 @@ function carriesFiles(event: DragEvent) {
  * Where the person talks to a model's agent. While a run works, what they write steers it; otherwise it starts a new
  * run on the model in the mode picked, Shape, Rig, Color, or Detail, continuing its last session unless they switch
  * that off. A rig, coloring, or detailing can be sent with nothing written, for the agent to work it out. The AI model they pick runs that next run,
- * so a pick made while one works waits for it.
+ * so a pick made while one works waits for it. A switch of mode or of Continue session to a fresh session puts in the
+ * references the last fresh session started with, since the new one has not seen them, and a switch back to
+ * continuing takes them out again.
  */
 export function Composer({
   model,
@@ -58,6 +72,7 @@ export function Composer({
   next,
   handoff,
   onTaken,
+  startedWith,
   cost,
   tokens,
 }: {
@@ -67,6 +82,8 @@ export function Composer({
   /** What to put in the message from elsewhere in the app, such as marked views, once it is for this model. */
   handoff: Handoff | null;
   onTaken: (id: number) => void;
+  /** The references the model's last fresh session started with, as paths in its folder. */
+  startedWith: string[];
   /** What the agents' sessions on the model have cost, in US dollars, once any reported it. */
   cost: number | null;
   /** What the sessions of agent providers that report no cost have used in tokens, once any reported it. */
@@ -81,6 +98,8 @@ export function Composer({
   const field = useRef<HTMLTextAreaElement>(null);
   // The handoff last put in, which StrictMode's second run of the effect would otherwise put in twice.
   const taken = useRef(0);
+  // The references put in for a fresh session, by key, to take out again if the request turns back to continuing.
+  const refilled = useRef(new Set<string>());
 
   useEffect(() => {
     if (
@@ -116,12 +135,52 @@ export function Composer({
     try {
       await ask(model, next, text, await references.ready());
       references.clear();
+      refilled.current.clear();
       setDraft("");
     } catch (cause) {
       setError(describe(cause));
     } finally {
       setBusy(false);
     }
+  };
+
+  const refill = (continuing: boolean) => {
+    const held = [...refilled.current].filter((key) =>
+      references.items.some((item) => item.key === key),
+    );
+    if (continuing) {
+      for (const key of held) {
+        references.remove(key);
+      }
+      refilled.current.clear();
+      return;
+    }
+    if (held.length > 0 || startedWith.length === 0) {
+      return;
+    }
+    const paths = startedWith.map(
+      (path) => `${model.directory}/${path.replace(/\/$/, "")}`,
+    );
+    stageReferenceFiles(paths).then(
+      (staged) => {
+        for (const key of references.addStaged(staged)) {
+          refilled.current.add(key);
+        }
+      },
+      (cause: unknown) => setError(describe(cause)),
+    );
+  };
+
+  const pickMode = (picked: ModelMode) => {
+    next.onMode(picked);
+    // A switch of mode starts Continue session over: on only in the mode of the session it would continue.
+    const resume = picked === (model.last_session?.mode ?? picked);
+    refill(sessionOf(model, { ...next, mode: picked, resume }).continuing);
+  };
+
+  const pickResume = (resume: boolean) => {
+    next.onResume(resume);
+    refill(sessionOf(model, { ...next, resume }).continuing);
   };
 
   const openFolder = () => {
@@ -161,7 +220,7 @@ export function Composer({
           ref={field}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={submitsOnEnter(() => void submit())}
+          onKeyDown={(event) => submitsOnEnter(() => void submit())(event)}
           rows={2}
           placeholder={
             running
@@ -182,27 +241,56 @@ export function Composer({
         <div className="mt-1.5 flex flex-wrap items-center justify-end gap-1">
           {!running && (
             <div className="mr-auto flex shrink-0 items-center gap-1">
-              <AddReferences
-                references={references}
+              <Popover>
+                <PopoverTrigger
+                  render={
+                    <Button
+                      size="sm"
+                      icon
+                      aria-label="References"
+                      title="Pick references to work from: pinned, models here, and folders; you can also drop or paste them"
+                    />
+                  }
+                >
+                  <Icon name="attach" />
+                </PopoverTrigger>
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  label="References"
+                  className="w-[min(38rem,calc(100vw-1rem))] p-0"
+                >
+                  <ReferenceLibrary
+                    references={references}
+                    models={models}
+                    exclude={model.name}
+                    compact
+                  />
+                </PopoverContent>
+              </Popover>
+              <PromptPicker
+                mode={next.mode}
+                field={field}
+                written={draft}
                 models={models}
-                exclude={model.name}
+                onPick={setDraft}
                 trigger={
                   <Button
                     size="sm"
                     icon
-                    aria-label="Add references"
-                    title="Add images, models, or folders to work from; you can also drop or paste them"
+                    aria-label="Prompts"
+                    title={`Start from a pinned or recent ${MODE_LABELS[next.mode]} prompt`}
                   />
                 }
               >
-                <Icon name="attach" />
-              </AddReferences>
+                <Icon name="list" />
+              </PromptPicker>
               <span aria-hidden className="mx-1 h-4 w-px bg-line" />
               <Segmented
                 label="Mode"
                 size="sm"
                 value={next.mode}
-                onChange={next.onMode}
+                onChange={pickMode}
                 options={[
                   { value: "shape", label: MODE_LABELS.shape },
                   {
@@ -230,7 +318,7 @@ export function Composer({
               />
               <Switch
                 checked={session.continuing}
-                onChange={next.onResume}
+                onChange={pickResume}
                 disabled={!session.continuable}
                 title={session.hint}
               >

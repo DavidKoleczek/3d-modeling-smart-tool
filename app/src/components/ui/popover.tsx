@@ -1,5 +1,5 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 
 import { POPUP } from "@/components/ui/popup";
 import { cn } from "@/lib/utils";
@@ -13,12 +13,15 @@ export function PopoverContent({
   side = "bottom",
   align = "end",
   label,
+  finalFocus,
   className,
   children,
 }: {
   side?: "top" | "bottom" | "left" | "right";
   align?: "start" | "center" | "end";
   label?: string;
+  /** Where focus goes once it closes, when not back to its trigger. */
+  finalFocus?: RefObject<HTMLElement | null>;
   className?: string;
   children: ReactNode;
 }) {
@@ -33,6 +36,7 @@ export function PopoverContent({
       >
         <PopoverPrimitive.Popup
           aria-label={label}
+          finalFocus={finalFocus}
           className={cn(POPUP, className)}
         >
           {children}

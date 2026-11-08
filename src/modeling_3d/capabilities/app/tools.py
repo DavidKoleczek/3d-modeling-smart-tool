@@ -9,6 +9,7 @@ from modeling_3d.schemas import AGENT_PROVIDERS, REASONING_EFFORTS
 
 VIEW_URI = "ui://modeling-3d/app"
 MODEL_FILE_PREFIX = "modeling-3d://models/"
+REFERENCE_FILE_PREFIX = "modeling-3d://references/"
 APP_ONLY = {"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}}
 # Copy buttons in the view write to the clipboard, which a sandboxed frame may only do when its host allows it.
 VIEW_META = {"ui": {"permissions": {"clipboardWrite": {}}}}
@@ -259,6 +260,97 @@ OPEN_FOLDER = Tool(
     },
     _meta=APP_ONLY,
 )
+STAGED_FILES = (
+    "Return them, each with its path, whether it is a file or a folder, its size, and a preview of an image as a data "
+    "URL."
+)
+CHOOSE_FILES = Tool(
+    name="choose_reference_files",
+    description="Ask the person for files to work from in their platform's file dialog, and stage each one chosen as "
+    "an upload `create_3d_model` takes, as though the view had sent it, remembering them as used in the app's "
+    f"directory. {STAGED_FILES} None when the person cancels. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "directory": {
+                "type": "string",
+                "description": "An absolute path to the folder to open at; left out, where files were last chosen from",
+            }
+        },
+    },
+    _meta=APP_ONLY,
+)
+STAGE_FILES = Tool(
+    name="stage_reference_files",
+    description="Stage files and folders on this machine, by absolute path, each as an upload `create_3d_model` "
+    f"takes, as though the view had sent it, such as a pinned reference or one a model was given. {STAGED_FILES} "
+    "Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "remember": {
+                "type": "boolean",
+                "description": "Whether to remember them as used in the app's directory; left out, not",
+            },
+        },
+        "required": ["paths"],
+    },
+    _meta=APP_ONLY,
+)
+CHOOSE_FOLDER = Tool(
+    name="choose_reference_folder",
+    description="Ask the person for a folder in their platform's folder dialog, opened where files were last chosen "
+    "from, and return its path, or null when they cancel. Called by the view, to pin the folder or work from it.",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+READ_LIBRARY = Tool(
+    name="read_app_library",
+    description="What the app offers to start a request from: the references, folders, and prompts the person pinned, "
+    "the same in every directory; what was used in the app's directory, newest first, at most 50; and what the last "
+    "model created there was asked. Called by the view.",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+SAVE_PINS = Tool(
+    name="save_app_pins",
+    description="Keep the references, folders, and prompts the person pinned, replacing those kept before, and return "
+    "them. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "pins": {
+                "type": "object",
+                "description": "`references`, `folders`, and `prompts`, as `read_app_library` returns them",
+            }
+        },
+        "required": ["pins"],
+    },
+    _meta=APP_ONLY,
+)
+LIST_FOLDER = Tool(
+    name="list_reference_folder",
+    description="What is in a folder the person pinned to show its files: its folders, then its files, each by name, "
+    "leaving out hidden ones, at most 500. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "The pinned folder's path"}},
+        "required": ["path"],
+    },
+    _meta=APP_ONLY,
+)
+KEEP_UPLOAD = Tool(
+    name="keep_upload",
+    description="Keep a copy of an upload beside the person's settings, so a file or folder they dropped or pasted "
+    "can be pinned by its path there, and return that path. It is cleared once unpinned. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {"upload": {"type": "string", "description": "An upload whose every piece has arrived"}},
+        "required": ["upload"],
+    },
+    _meta=APP_ONLY,
+)
 VIEW_TOOLS = [
     LIST_MODELS,
     VIEW_MODEL,
@@ -278,6 +370,13 @@ VIEW_TOOLS = [
     SAVE_SETTINGS,
     READ_FOLDERS,
     OPEN_FOLDER,
+    CHOOSE_FILES,
+    STAGE_FILES,
+    CHOOSE_FOLDER,
+    READ_LIBRARY,
+    SAVE_PINS,
+    LIST_FOLDER,
+    KEEP_UPLOAD,
 ]
 VIEW = Resource(uri=VIEW_URI, name="3D Modeling app", mime_type=APP_MIME_TYPE)
 MODEL_FILE = ResourceTemplate(
@@ -285,4 +384,10 @@ MODEL_FILE = ResourceTemplate(
     uri_template=f"{MODEL_FILE_PREFIX}{{name}}/{{+path}}",
     description="A model's GLB, one of its renders, a reference image it was given, or its latest check's report or "
     "renders, as base64, for the app's view.",
+)
+REFERENCE_FILE = ResourceTemplate(
+    name="Reference file",
+    uri_template=f"{REFERENCE_FILE_PREFIX}{{+path}}",
+    description="An image the app offers to work from, by its absolute path, as base64, for the app's view: one the "
+    "person pinned, one in a folder they pinned to show its files, or one used in the app's directory.",
 )

@@ -19,6 +19,7 @@ export type FailureReason =
   | "bad-reasoning-effort"
   | "bad-budget"
   | "bad-settings"
+  | "bad-pins"
   | "no-such-check"
   | "not-built"
   | "bad-glb";
@@ -82,6 +83,8 @@ function worded(error: AppError): string | null {
       return "Budgets are whole numbers of 1 or more, or none, with the smallest size on screen first.";
     case "bad-settings":
       return "Those settings couldn't be saved. Reset the layout, or reload the app and try again.";
+    case "bad-pins":
+      return "That pin couldn't be saved. Reload the app and try again.";
     case "not-built":
       return `${model} isn't built yet, so there's nothing to rig or check. Describe it in Shape first.`;
     case "bad-glb":

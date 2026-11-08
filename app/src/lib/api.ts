@@ -21,11 +21,21 @@ const READ_SETTINGS_TOOL = "read_app_settings";
 const SAVE_SETTINGS_TOOL = "save_app_settings";
 const READ_FOLDERS_TOOL = "read_app_folders";
 const OPEN_FOLDER_TOOL = "open_app_folder";
+const CHOOSE_FILES_TOOL = "choose_reference_files";
+const STAGE_FILES_TOOL = "stage_reference_files";
+const CHOOSE_FOLDER_TOOL = "choose_reference_folder";
+const READ_LIBRARY_TOOL = "read_app_library";
+const SAVE_PINS_TOOL = "save_app_pins";
+const LIST_FOLDER_TOOL = "list_reference_folder";
+const KEEP_UPLOAD_TOOL = "keep_upload";
 const MODEL_FILE_PREFIX = "modeling-3d://models/";
+const REFERENCE_FILE_PREFIX = "modeling-3d://references/";
 // Starting a run waits for its agent to start, which can take a while on a cold machine.
 const CREATE_TIMEOUT_MS = 120_000;
 // Longer than the server waits on a check before it says the check is still going.
 const CHECK_TIMEOUT_MS = 60_000;
+// The file dialog waits on the person, who may take a while to choose.
+const CHOOSE_TIMEOUT_MS = 30 * 60_000;
 
 /** `ModelStatus` in schemas.py. */
 export type ModelStatus =
@@ -276,6 +286,46 @@ export type BuiltModelRequest = {
   uploads?: string[];
   reference_models?: string[];
 } & Partial<IntelligenceChoice>;
+
+/** `ReferenceEntry` in schemas.py: a file or folder on this machine the app offers to work from. */
+export type ReferenceEntry = {
+  name: string;
+  path: string;
+  kind: "file" | "folder";
+};
+
+/** `StagedReference` in schemas.py; `preview` is a data URL of an image. */
+export type StagedReference = ReferenceEntry & {
+  upload: string;
+  size: number;
+  files: number;
+  preview: string | null;
+};
+
+/** `PinnedReference` in schemas.py. */
+export type PinnedReference = {
+  path: string;
+  kind: "file" | "folder" | "model";
+};
+
+/** `PinnedFolder` in schemas.py. */
+export type PinnedFolder = { path: string; shows: "files" | "dialog" };
+
+/** `PinnedPrompt` in schemas.py. */
+export type PinnedPrompt = { text: string; mode: ModelMode };
+
+/** `AppPins` in schemas.py. */
+export type AppPins = {
+  references: PinnedReference[];
+  folders: PinnedFolder[];
+  prompts: PinnedPrompt[];
+};
+
+/** `AppLibrary` in schemas.py. */
+export type AppLibrary = AppPins & {
+  used: ReferenceEntry[];
+  last_prompt: string | null;
+};
 
 /** One of a model's files as the server gives it: base64, with its media type. */
 export type ModelFile = { base64: string; mimeType: string };
@@ -545,4 +595,76 @@ export async function openAppFolder(
     OPEN_FOLDER_TOOL,
     name === undefined ? { folder } : { folder, name },
   );
+}
+
+/**
+ * Ask the person for files in their file dialog, opened at `directory` or where they last chose from, each staged as
+ * an upload and remembered as used; none if they cancel.
+ */
+export async function chooseReferenceFiles(
+  directory?: string,
+): Promise<StagedReference[]> {
+  const structured = await structuredFrom(
+    CHOOSE_FILES_TOOL,
+    directory ? { directory } : {},
+    CHOOSE_TIMEOUT_MS,
+  );
+  return structured.files as StagedReference[];
+}
+
+/** Stage files and folders on this machine, by path, each as an upload, remembering them as used when `remember`. */
+export async function stageReferenceFiles(
+  paths: string[],
+  remember = false,
+): Promise<StagedReference[]> {
+  const structured = await structuredFrom(
+    STAGE_FILES_TOOL,
+    remember ? { paths, remember } : { paths },
+  );
+  return structured.files as StagedReference[];
+}
+
+/** Ask the person for a folder in their folder dialog; null if they cancel. */
+export async function chooseReferenceFolder(): Promise<string | null> {
+  const structured = await structuredFrom(
+    CHOOSE_FOLDER_TOOL,
+    {},
+    CHOOSE_TIMEOUT_MS,
+  );
+  return (structured.path as string | null) ?? null;
+}
+
+/** The person's pins, what was used in the app's directory, and what the last model created there was asked. */
+export async function readAppLibrary(): Promise<AppLibrary> {
+  return (await structuredFrom(READ_LIBRARY_TOOL, {})) as AppLibrary;
+}
+
+/** Keep the person's pins, replacing the ones kept before. */
+export async function saveAppPins(pins: AppPins): Promise<AppPins> {
+  return (await structuredFrom(SAVE_PINS_TOOL, { pins })) as AppPins;
+}
+
+/** What is in a folder the person pinned to show its files. */
+export async function listReferenceFolder(
+  path: string,
+): Promise<ReferenceEntry[]> {
+  const structured = await structuredFrom(LIST_FOLDER_TOOL, { path });
+  return structured.entries as ReferenceEntry[];
+}
+
+/** Keep a copy of an upload to pin, returning where it is kept. */
+export async function keepUpload(upload: string): Promise<string> {
+  const structured = await structuredFrom(KEEP_UPLOAD_TOOL, { upload });
+  return structured.path as string;
+}
+
+/** An image the app's library offers, by its path, as a data URL. */
+export async function readReferenceFile(path: string): Promise<string> {
+  const uri = `${REFERENCE_FILE_PREFIX}${encodeURIComponent(path)}`;
+  const result = await app.readServerResource({ uri });
+  const content = result.contents[0];
+  if (!content || !("blob" in content)) {
+    throw new AppError(`${uri} came back without its file.`);
+  }
+  return `data:${content.mimeType ?? "image/png"};base64,${content.blob}`;
 }

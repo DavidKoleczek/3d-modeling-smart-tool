@@ -7,6 +7,7 @@ import {
   type ModelMode,
   type ModelSummary,
 } from "@/lib/api";
+import type { Step } from "@/lib/activity";
 import { providerLabel, type Intelligence } from "@/lib/intelligence";
 
 /** Each mode as the app names it. */
@@ -106,4 +107,23 @@ export async function ask(
     return;
   }
   await createModel({ prompt, ...request });
+}
+
+/**
+ * The references the latest fresh session on a model started with, as paths in its folder, for the next fresh one to
+ * start with too; a session continued is given them already.
+ */
+export function referencesStartedWith(steps: Step[]): string[] {
+  for (const { entry } of [...steps].reverse()) {
+    const references = entry.data.references;
+    if (
+      entry.kind === "request" &&
+      entry.data.resumed === false &&
+      Array.isArray(references) &&
+      references.length > 0
+    ) {
+      return references as string[];
+    }
+  }
+  return [];
 }

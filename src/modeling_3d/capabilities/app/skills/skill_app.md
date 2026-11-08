@@ -22,6 +22,15 @@ beside the models; a pick made while a run works applies to the next one.
 Runs started there go on after the app stops. Nothing done in the app is sent to an agent
 session; a session sees it with `read-3d-model-activity`.
 
+New model starts from the last prompt a model was created from there, and picks references with
+a click from a library: what the person pinned, the models in the directory, the last 50 files
+and folders chosen there or given to its models, and pinned folders, each of which shows what is
+in it or opens the platform's file dialog in it. Prompts can be pinned too, and show as buttons
+under the prompt. When a change turns to a fresh agent session, by its mode or Continue session,
+the references the last fresh session started with are put in again. Pins are the person's in
+every directory, kept in `app-pins.json` beside their settings; what was used is kept for the
+directory in `.app.json`.
+
 How the person set the app up, its theme, pane sizes, viewport tools, and the steps they opened in
 each model's activity, is theirs in every directory, kept in `app-settings.json` in their config
 directory: `%APPDATA%\modeling-3d` on Windows, `~/Library/Application Support/modeling-3d` on

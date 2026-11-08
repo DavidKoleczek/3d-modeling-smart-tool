@@ -1,11 +1,18 @@
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ModelFields } from "@/components/ModelPicker";
-import { AddReferences, ReferenceTiles } from "@/components/References";
+import { PinnedPrompts, PromptPicker } from "@/components/PromptPicker";
+import { ReferenceLibrary } from "@/components/ReferenceLibrary";
+import { ReferenceTray } from "@/components/References";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog";
-import { CropMarks } from "@/components/ui/empty-state";
 import { Help, Input, Label, Textarea } from "@/components/ui/field";
 import { Icon } from "@/components/ui/icon";
 import { LoadingMark } from "@/components/ui/loading-mark";
@@ -13,6 +20,8 @@ import { createModel, type ModelRequest, type ModelSummary } from "@/lib/api";
 import { describe } from "@/lib/errors";
 import { effortLabel, useIntelligence } from "@/lib/intelligence";
 import { NAME, shortDirectory, suggestName } from "@/lib/models";
+import { refreshLibrary, useLibrary } from "@/lib/library";
+import { lastPrompt } from "@/lib/prompts";
 import { takesReferences, useReferences } from "@/lib/references";
 import { cn, submitsOnEnter } from "@/lib/utils";
 
@@ -98,7 +107,8 @@ function keptBudget(changing: boolean, budget: number | null | undefined) {
 
 /**
  * Starts a new model over the workspace, so a model being built stays in view behind it: what to build, its name, the
- * AI model, and the files, folders, and models to work from. Closing it keeps the draft until the app reloads.
+ * AI model, and the files, folders, and models to work from. It starts from the last prompt a model was created from
+ * here, selected, so typing replaces it. Closing it keeps the draft until the app reloads.
  */
 export function NewModelDialog({
   open,
@@ -115,7 +125,8 @@ export function NewModelDialog({
   directory: string | null;
   onCreated: (name: string) => void;
 }) {
-  const [prompt, setPrompt] = useState("");
+  // Null until the person writes or picks one, while the box holds the last prompt.
+  const [typedPrompt, setPrompt] = useState<string | null>(null);
   const [typedName, setTypedName] = useState<string | null>(null);
   const [typedBudgets, setTypedBudgets] = useState(NO_BUDGETS);
   const [advanced, setAdvanced] = useState(false);
@@ -126,6 +137,14 @@ export function NewModelDialog({
   const references = useReferences();
   const intelligence = useIntelligence();
   const described = useRef<HTMLTextAreaElement>(null);
+  const { library } = useLibrary();
+  const prompt = typedPrompt ?? lastPrompt(library, models);
+
+  useEffect(() => {
+    if (open && typedPrompt === null) {
+      requestAnimationFrame(() => described.current?.select());
+    }
+  }, [open, typedPrompt]);
 
   // A request to start from a model adds it once, when it arrives.
   if (request.id !== handled) {
@@ -177,7 +196,8 @@ export function NewModelDialog({
         ...intelligence.choice,
       });
       onCreated(taken?.name ?? name);
-      setPrompt("");
+      void refreshLibrary();
+      setPrompt(null);
       setTypedName(null);
       setTypedBudgets(NO_BUDGETS);
       references.clear();
@@ -196,7 +216,7 @@ export function NewModelDialog({
         subtitle={directory ? `In ${shortDirectory(directory)}` : undefined}
         initialFocus={described}
         keepMounted
-        className="sm:max-w-190"
+        className="sm:max-w-400"
       >
         <ErrorBoundary what="New model" className="p-5">
           <form
@@ -204,32 +224,35 @@ export function NewModelDialog({
             {...takesReferences(references)}
             className="flex min-h-0 flex-1 flex-col"
           >
-            <div className="grid min-h-0 flex-1 overflow-y-auto sm:grid-cols-[300px_minmax(0,1fr)]">
-              <div className="order-last border-line bg-canvas p-5 max-sm:border-t sm:order-0 sm:border-r">
-                <div className="relative flex h-full min-h-60 flex-col gap-3 p-4">
-                  <CropMarks />
-                  <span className="text-label">References</span>
-                  <ReferenceTiles references={references} models={models} />
-                  <span className="flex-1" />
-                  <p className="text-center text-caption text-ink-muted">
-                    Drop or paste images, models, and folders here
-                  </p>
-                  <div className="flex justify-center">
-                    <AddReferences
-                      references={references}
-                      models={models}
-                      trigger={<Button variant="secondary" size="sm" />}
-                    >
-                      <Icon name="add" />
-                      Add references
-                      <Icon name="chevron" className="text-ink-muted" />
-                    </AddReferences>
-                  </div>
-                </div>
-              </div>
-              <div className="flex flex-col gap-4 p-5">
+            <div className="grid min-h-0 flex-1 overflow-y-auto sm:basis-240 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] sm:overflow-hidden">
+              <section
+                aria-label="Library"
+                className="order-last flex min-h-96 flex-col border-line bg-canvas max-sm:border-t sm:order-0 sm:min-h-0 sm:border-r"
+              >
+                <ReferenceLibrary references={references} models={models} />
+              </section>
+              <div className="flex flex-col gap-4 p-5 sm:overflow-y-auto">
                 <div>
-                  <Label htmlFor="new-model-prompt">Describe it</Label>
+                  <div className="mb-1.5 flex items-center justify-between gap-2">
+                    <label htmlFor="new-model-prompt" className="text-label">
+                      Describe it
+                    </label>
+                    <PromptPicker
+                      mode="shape"
+                      field={described}
+                      written={prompt}
+                      models={models}
+                      onPick={(value) => {
+                        setPrompt(value);
+                        setMissing(false);
+                      }}
+                      trigger={<Button size="sm" className="-my-1" />}
+                    >
+                      <Icon name="list" className="text-ink-muted" />
+                      Prompts
+                      <Icon name="chevron" className="text-ink-muted" />
+                    </PromptPicker>
+                  </div>
                   <Textarea
                     ref={described}
                     id="new-model-prompt"
@@ -249,6 +272,35 @@ export function NewModelDialog({
                   {missing && (
                     <Help error>Describe the model you want built.</Help>
                   )}
+                  <PinnedPrompts
+                    mode="shape"
+                    field={described}
+                    written={prompt}
+                    onPick={(value) => {
+                      setPrompt(value);
+                      setMissing(false);
+                    }}
+                  />
+                </div>
+                <div>
+                  <div className="mb-1.5 flex h-5 items-center gap-2">
+                    <span className="text-label">References</span>
+                    {count > 0 && (
+                      <>
+                        <span className="mono-annotation text-ink-muted">
+                          {count}
+                        </span>
+                        <Button
+                          size="sm"
+                          onClick={() => references.clear()}
+                          className="-my-1 ml-auto text-ink-muted"
+                        >
+                          Clear
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  <ReferenceTray references={references} models={models} />
                 </div>
                 <div>
                   <Label htmlFor="new-model-name">Name</Label>
@@ -265,14 +317,13 @@ export function NewModelDialog({
                       Use letters, digits, dots, dashes, and underscores,
                       starting with a letter or digit.
                     </Help>
-                  ) : taken ? (
-                    <Help>
-                      {taken.name} already exists, so this changes it, in a
-                      fresh agent session.
-                    </Help>
                   ) : (
-                    typedName === null &&
-                    name !== "" && <Help>Suggested from the description.</Help>
+                    taken && (
+                      <Help>
+                        {taken.name} already exists, so this changes it, in a
+                        fresh agent session.
+                      </Help>
+                    )
                   )}
                 </div>
                 <div>

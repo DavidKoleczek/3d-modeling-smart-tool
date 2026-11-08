@@ -42,16 +42,29 @@ from mcp.types import (
     Tool,
 )
 
+from modeling_3d.capabilities.app.pins import (
+    keep,
+    list_folder,
+    pins_path,
+    read_app_pins,
+    remember,
+    save_app_pins,
+    used_here,
+)
 from modeling_3d.capabilities.app.server import App, serve_app, view
-from modeling_3d.capabilities.app.settings import read_app_settings, save_app_settings
+from modeling_3d.capabilities.app.settings import read_app_settings, save_app_settings, write_atomically
 from modeling_3d.capabilities.app.tools import (
     APP_ONLY,
     CANCEL_MODEL,
     CHECK_MODEL,
+    CHOOSE_FILES,
+    CHOOSE_FOLDER,
     CHOOSE_INTELLIGENCE,
     COLOR_MODEL,
     DETAIL_MODEL,
     CREATE_MODEL,
+    KEEP_UPLOAD,
+    LIST_FOLDER,
     LIST_INTELLIGENCE,
     LIST_MODELS,
     MODEL_FILE,
@@ -60,10 +73,15 @@ from modeling_3d.capabilities.app.tools import (
     OPEN_FOLDER,
     READ_ACTIVITY,
     READ_FOLDERS,
+    READ_LIBRARY,
     READ_SETTINGS,
     READ_TOOL_CALL,
+    REFERENCE_FILE,
+    REFERENCE_FILE_PREFIX,
     RIG_MODEL,
+    SAVE_PINS,
     SAVE_SETTINGS,
+    STAGE_FILES,
     STEER_MODEL,
     UPLOAD_REFERENCE,
     VIEW,
@@ -79,6 +97,7 @@ from modeling_3d.schemas import (
     REASONING_EFFORTS,
     AppFolders,
     AppIntelligence,
+    AppLibrary,
     AppState,
     IntelligenceChoice,
     IntelligenceModels,
@@ -88,6 +107,8 @@ from modeling_3d.schemas import (
     ModelListing,
     ModelMode,
     ModelSummary,
+    ReferenceEntry,
+    StagedReference,
     ToolCall,
 )
 
@@ -120,6 +141,15 @@ UPLOAD_ID = re.compile(r"[0-9a-f]{16,64}")
 UPLOAD_LIFETIME_SECONDS = 24 * 60 * 60
 # A model's own files that stand for it as a reference, beside its first render: its script and its GLB.
 REFERENCE_TYPES = (".py", ".glb")
+# A file chosen in the file dialog comes back with a preview when it is an image the view shows, up to this size, as
+# the view previews one it sends.
+PREVIEW_TYPES = {**{suffix: kind for suffix, kind in MODEL_FILE_TYPES.items() if kind.startswith("image/")}, ".gif": "image/gif"}
+PREVIEW_BYTES = 8 * 1024 * 1024
+CHOOSE_TITLE = "Choose references"
+CHOOSE_FOLDER_TITLE = "Choose a folder to pin"
+# What a folder staged from this machine leaves out: what a folder reference leaves out when it is copied in, hidden
+# folders and tool caches, along with hidden files.
+STAGE_SKIPPED = shutil.ignore_patterns(".*", "node_modules", "__pycache__")
 # endregion
 
 # region: What the app keeps and who it acts as
@@ -177,10 +207,17 @@ class AppServer:
         list_intelligence: Callable[[], IntelligenceModels],
         settings_path: Path,
         open_folder: Callable[[Path], None],
+        choose_files: Callable[[Path, str], list[Path]],
+        choose_folder: Callable[[Path, str], Path | None],
     ) -> None:
         self.directory = directory
         self.settings_path = settings_path
+        self.pins_path = pins_path(settings_path)
         self._open_folder = open_folder
+        self._choose_files = choose_files
+        self._choose_folder = choose_folder
+        # Whether a file or folder dialog is showing, so a second click doesn't show another.
+        self._choosing = False
         self._list_models = list_models
         self._view_model = view_model
         # What starts a run in each mode.
@@ -246,7 +283,8 @@ class AppServer:
     async def _list_resource_templates(
         self, ctx: ServerRequestContext[Any], params: PaginatedRequestParams | None
     ) -> ListResourceTemplatesResult:
-        return ListResourceTemplatesResult(resource_templates=[MODEL_FILE] if client_supports_apps(ctx) else [])
+        templates = [MODEL_FILE, REFERENCE_FILE] if client_supports_apps(ctx) else []
+        return ListResourceTemplatesResult(resource_templates=templates)
 
     async def _read_resource(
         self, ctx: ServerRequestContext[Any], params: ReadResourceRequestParams
@@ -254,15 +292,17 @@ class AppServer:
         if params.uri == VIEW_URI:
             contents = TextResourceContents(uri=VIEW_URI, mime_type=APP_MIME_TYPE, text=view(), _meta=VIEW_META)
             return ReadResourceResult(contents=[contents])
-        if params.uri.startswith(MODEL_FILE_PREFIX):
-            try:
-                return await asyncio.to_thread(self._model_file, params.uri)
-            except Modeling3dError as error:
-                raise MCPError(INVALID_PARAMS, str(error)) from None
+        for prefix, read in ((MODEL_FILE_PREFIX, self._model_file), (REFERENCE_FILE_PREFIX, self._reference_file)):
+            if params.uri.startswith(prefix):
+                try:
+                    return await asyncio.to_thread(read, params.uri)
+                except Modeling3dError as error:
+                    raise MCPError(INVALID_PARAMS, str(error)) from None
         raise MCPError(
             INVALID_PARAMS,
-            f"'{params.uri}' is not a resource of this server. It has {VIEW_URI}, and each model's GLB, renders, and "
-            f"reference images at {MODEL_FILE.uri_template}.",
+            f"'{params.uri}' is not a resource of this server. It has {VIEW_URI}, each model's GLB, renders, and "
+            f"reference images at {MODEL_FILE.uri_template}, and the images the app offers to work from at "
+            f"{REFERENCE_FILE.uri_template}.",
         )
 
     def _model_file(self, uri: str) -> ReadResourceResult:
@@ -280,6 +320,38 @@ class AppServer:
         data = base64.b64encode((summary.directory / path).read_bytes()).decode("ascii")
         mime_type = MODEL_FILE_TYPES.get(PurePosixPath(path).suffix.lower(), "application/json")
         return ReadResourceResult(contents=[BlobResourceContents(uri=uri, mime_type=mime_type, blob=data)])
+
+    def _reference_file(self, uri: str) -> ReadResourceResult:
+        path = Path(unquote(uri.removeprefix(REFERENCE_FILE_PREFIX)))
+        kind = PREVIEW_TYPES.get(path.suffix.lower())
+        if kind is None or not self._in_library(path):
+            raise Modeling3dError(
+                f"{path} is not an image the app offers to work from. Pin it, pin the folder it is in, or choose it."
+            )
+        try:
+            if path.stat().st_size > PREVIEW_BYTES:
+                raise Modeling3dError(f"{path} is too large to preview; it can still be worked from.")
+            data = base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError as error:
+            raise Modeling3dError(
+                f"Could not read {path}: {error}. If it moved, add it again from where it is now.", "missing-reference"
+            ) from None
+        return ReadResourceResult(contents=[BlobResourceContents(uri=uri, mime_type=kind, blob=data)])
+
+    def _in_library(self, path: Path) -> bool:
+        """Whether the app's library offers `path`: pinned, in a folder pinned to show its files, used here, or given
+        to a model here, in its references/."""
+        pins = read_app_pins(self.pins_path)
+        if any(reference.path == path for reference in pins.references):
+            return True
+        if any(folder.shows == "files" and folder.path == path.parent for folder in pins.folders):
+            return True
+        if path in self._app_state().used:
+            return True
+        if not path.is_relative_to(self.directory):
+            return False
+        parts = path.relative_to(self.directory).parts
+        return len(parts) > 2 and parts[1] == "references"
 
     async def _call_tool_or_explain(
         self, ctx: ServerRequestContext[Any], params: CallToolRequestParams
@@ -357,6 +429,36 @@ class AppServer:
             folder = await asyncio.to_thread(self._folder, arguments["folder"], arguments.get("name"))
             await asyncio.to_thread(self._open_folder, folder)
             return _structured({"opened": str(folder)})
+        if params.name == CHOOSE_FILES.name:
+            directory = arguments.get("directory")
+            opened = Path(directory).expanduser() if directory else await asyncio.to_thread(self._last_folder)
+            chosen = await self._in_dialog(self._choose_files, opened, CHOOSE_TITLE)
+            staged = await self._staged_references(chosen)
+            if chosen:
+                await asyncio.to_thread(self._remember, chosen, chosen[0].parent)
+            return staged
+        if params.name == STAGE_FILES.name:
+            paths = [Path(path) for path in arguments["paths"]]
+            staged = await self._staged_references(paths)
+            if arguments.get("remember"):
+                await asyncio.to_thread(self._remember, paths)
+            return staged
+        if params.name == CHOOSE_FOLDER.name:
+            opened = await asyncio.to_thread(self._last_folder)
+            folder = await self._in_dialog(self._choose_folder, opened, CHOOSE_FOLDER_TITLE)
+            return _structured({"path": str(folder.resolve()) if folder else None})
+        if params.name == READ_LIBRARY.name:
+            library = await asyncio.to_thread(self._library)
+            return _structured(library.model_dump(mode="json"))
+        if params.name == SAVE_PINS.name:
+            pins = await asyncio.to_thread(save_app_pins, arguments["pins"], self.pins_path)
+            return _structured(pins.model_dump(mode="json"))
+        if params.name == LIST_FOLDER.name:
+            entries = await asyncio.to_thread(self._pinned_folder, Path(arguments["path"]))
+            return _structured({"entries": [entry.model_dump(mode="json") for entry in entries]})
+        if params.name == KEEP_UPLOAD.name:
+            kept = await asyncio.to_thread(self._keep, arguments["upload"])
+            return _structured({"path": str(kept)})
         known = ", ".join(tool.name for tool in [OPEN_APP, *VIEW_TOOLS])
         raise Modeling3dError(f"'{params.name}' is not a tool of this server. The tools are: {known}.")
 
@@ -366,6 +468,7 @@ class AppServer:
         references = [await asyncio.to_thread(_staged, upload) for upload in uploads]
         references += await asyncio.to_thread(self._model_references, arguments.get("reference_models") or [])
         start = self._starts[mode]
+        created = mode == "shape" and not (self.directory / arguments["name"]).exists()
         # Only shaping takes budgets; the other modes work to the model's own.
         budgets: dict[str, Any] = {}
         if mode == "shape":
@@ -391,6 +494,8 @@ class AppServer:
         # Cleared only once the run has started, having copied them into the model: a request that is refused is
         # usually sent again, with the same references.
         await self._clear(uploads)
+        if created:
+            await asyncio.to_thread(self._update_state, lambda _: {"last_prompt": arguments["prompt"]})
         summary = await asyncio.to_thread(self._view_model, run.name, self.directory)
         return _structured(summary.model_dump(mode="json"))
 
@@ -428,6 +533,108 @@ class AppServer:
         # As for a request: kept until the message has them, since one that is refused is usually sent again.
         await self._clear(uploads)
         return _text("Sent; the model's activity shows it once its agent has it.")
+
+    async def _in_dialog[Chosen](self, ask: Callable[[Path, str], Chosen], directory: Path, title: str) -> Chosen:
+        """What the person chose in the dialog `ask` shows, one dialog at a time."""
+        with self._lock:
+            if self._choosing:
+                raise Modeling3dError("A file dialog is already showing. Choose there or cancel it, then try again.")
+            self._choosing = True
+        try:
+            return await asyncio.to_thread(ask, directory, title)
+        finally:
+            with self._lock:
+                self._choosing = False
+
+    async def _staged_references(self, paths: list[Path]) -> CallToolResult:
+        files = [await asyncio.to_thread(self._stage, path) for path in paths]
+        return _structured({"files": [file.model_dump(mode="json") for file in files]})
+
+    def _library(self) -> AppLibrary:
+        state = self._app_state()
+        return AppLibrary(
+            **dict(read_app_pins(self.pins_path)),
+            used=used_here(state.used, self._list_models(self.directory).models),
+            last_prompt=state.last_prompt,
+        )
+
+    def _pinned_folder(self, path: Path) -> list[ReferenceEntry]:
+        pinned = [folder.path for folder in read_app_pins(self.pins_path).folders if folder.shows == "files"]
+        if path not in pinned:
+            raise Modeling3dError(
+                f"{path} is not a folder pinned to show its files. Those pinned so are: "
+                f"{', '.join(str(folder) for folder in pinned) or 'none'}."
+            )
+        return list_folder(path)
+
+    def _keep(self, upload: str) -> Path:
+        return keep(_staged(upload), self.settings_path)
+
+    def _last_folder(self) -> Path:
+        """Where the file dialogs open: where files were last chosen from, while it is there, else the home folder."""
+        folder = self._app_state().last_folder
+        return folder if folder is not None and folder.is_dir() else Path.home()
+
+    def _remember(self, chosen: list[Path], folder: Path | None = None) -> None:
+        """Remember `chosen` as used in the app's directory, and `folder` as where files were last chosen from."""
+        resolved = [path.expanduser().resolve() for path in chosen]
+        self._update_state(
+            lambda state: {
+                "used": remember(state.used, resolved),
+                **({"last_folder": folder.resolve()} if folder is not None else {}),
+            }
+        )
+
+    def _update_state(self, change: Callable[[AppState], dict[str, Any]]) -> None:
+        """Change what the app remembers in its directory, one change at a time."""
+        path = self.directory / APP_STATE
+        with self._lock:
+            state = self._app_state()
+            try:
+                write_atomically(path, state.model_copy(update=change(state)).model_dump_json(indent=2))
+            except OSError as error:
+                raise Modeling3dError(
+                    f"Could not save what the app remembers to {path}: {error}. Check that the folder can be written."
+                ) from None
+
+    def _stage(self, path: Path) -> StagedReference:
+        """Stage a file or folder on this machine as an upload of its own, with a preview when it is an image."""
+        source = path.expanduser().resolve()
+        if not source.is_file() and not source.is_dir():
+            raise Modeling3dError(
+                f"{path} is not a file or a folder on this machine. If it moved, add it again from where it is now.",
+                "missing-reference",
+            )
+        upload = uuid.uuid4().hex
+        target = _upload_folder(upload) / source.name
+        try:
+            target.parent.mkdir(parents=True)
+            with self._lock:
+                self._uploads.add(upload)
+            if source.is_dir():
+                shutil.copytree(source, target, ignore=STAGE_SKIPPED)
+                held = [file for file in target.rglob("*") if file.is_file()]
+                size, files, preview = sum(file.stat().st_size for file in held), len(held), None
+            else:
+                shutil.copy2(source, target)
+                size, files = target.stat().st_size, 1
+                kind = PREVIEW_TYPES.get(source.suffix.lower())
+                preview = (
+                    f"data:{kind};base64,{base64.b64encode(target.read_bytes()).decode('ascii')}"
+                    if kind and size <= PREVIEW_BYTES
+                    else None
+                )
+        except OSError as error:
+            raise Modeling3dError(f"Could not take {path}: {error}. Add it again, or drop it onto the app.") from None
+        return StagedReference(
+            upload=upload,
+            name=source.name,
+            path=source,
+            kind="folder" if source.is_dir() else "file",
+            size=size,
+            files=files,
+            preview=preview,
+        )
 
     async def _clear(self, uploads: list[str]) -> None:
         for upload in uploads:
@@ -500,9 +707,7 @@ class AppServer:
                 "bad-reasoning-effort",
             )
         choice = IntelligenceChoice(agent_provider=picked.agent_provider, model=picked.id, reasoning_effort=effort)
-        self.directory.mkdir(parents=True, exist_ok=True)
-        state = self._app_state().model_copy(update={"intelligence": choice})
-        (self.directory / APP_STATE).write_text(state.model_dump_json(indent=2), encoding="utf-8")
+        self._update_state(lambda _: {"intelligence": choice})
         return self._intelligence()
 
     def _app_state(self) -> AppState:

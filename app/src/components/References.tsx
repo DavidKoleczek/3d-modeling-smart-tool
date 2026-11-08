@@ -1,104 +1,15 @@
-import { useRef, useState, type ReactElement, type ReactNode } from "react";
+import { useState } from "react";
 
 import { HeldImageDialog, type HeldImage } from "@/components/ImageDialog";
 import { ModelThumb } from "@/components/ModelThumb";
-import { Button } from "@/components/ui/button";
+import { Help } from "@/components/ui/field";
 import { Icon } from "@/components/ui/icon";
-import {
-  Menu,
-  MenuContent,
-  MenuGroup,
-  MenuGroupLabel,
-  MenuItem,
-  MenuSeparator,
-  MenuTrigger,
-} from "@/components/ui/menu";
 import type { ModelSummary } from "@/lib/api";
-import { referable, type Reference, type References } from "@/lib/references";
+import { describe } from "@/lib/errors";
+import { pinnedKeys, togglePinOf, useLibrary } from "@/lib/library";
+import { sourceOf, type Reference, type References } from "@/lib/references";
 import { counted } from "@/lib/stats";
 import { cn } from "@/lib/utils";
-
-/**
- * The menu that adds what a request works from: files, a folder, or one of the models here. `trigger` is the button
- * that opens it, holding `children`.
- */
-export function AddReferences({
-  references,
-  models,
-  exclude,
-  trigger,
-  children,
-}: {
-  references: References;
-  models: ModelSummary[];
-  exclude?: string;
-  trigger: ReactElement;
-  children: ReactNode;
-}) {
-  const files = useRef<HTMLInputElement>(null);
-  const folder = useRef<HTMLInputElement>(null);
-  const choices = referable(models).filter(
-    (model) =>
-      model.name !== exclude && !references.models.includes(model.name),
-  );
-
-  return (
-    <>
-      <input
-        ref={files}
-        type="file"
-        multiple
-        hidden
-        onChange={(event) => {
-          const picked = Array.from(event.target.files ?? []);
-          event.target.value = "";
-          references.addFiles(picked);
-        }}
-      />
-      <input
-        ref={folder}
-        type="file"
-        hidden
-        {...{ webkitdirectory: "" }}
-        onChange={(event) => {
-          const picked = Array.from(event.target.files ?? []);
-          event.target.value = "";
-          references.addFolder(picked);
-        }}
-      />
-      <Menu>
-        <MenuTrigger render={trigger}>{children}</MenuTrigger>
-        <MenuContent className="max-h-(--available-height) overflow-y-auto">
-          <MenuItem onClick={() => files.current?.click()}>
-            <Icon name="file" className="text-ink-muted" />
-            Files...
-          </MenuItem>
-          <MenuItem onClick={() => folder.current?.click()}>
-            <Icon name="folder" className="text-ink-muted" />
-            Folder...
-          </MenuItem>
-          {choices.length > 0 && (
-            <>
-              <MenuSeparator />
-              <MenuGroup>
-                <MenuGroupLabel>Models here</MenuGroupLabel>
-                {choices.map((model) => (
-                  <MenuItem
-                    key={model.name}
-                    onClick={() => references.addModel(model.name)}
-                  >
-                    <ModelThumb model={model} size={20} />
-                    {model.name}
-                  </MenuItem>
-                ))}
-              </MenuGroup>
-            </>
-          )}
-        </MenuContent>
-      </Menu>
-    </>
-  );
-}
 
 function sending(reference: Reference): boolean {
   return (
@@ -223,75 +134,127 @@ export function ReferenceChips({ references }: { references: References }) {
   );
 }
 
-/** What a new model will work from, as tiles with a picture of each, each of which can be taken off again. */
-export function ReferenceTiles({
+/** What a new model will work from, as a row of tiles with a picture of each, each of which can be pinned or taken off. */
+export function ReferenceTray({
   references,
   models,
 }: {
   references: References;
   models: ModelSummary[];
 }) {
+  const { library } = useLibrary();
+  const [opened, setOpened] = useState<HeldImage | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
   if (references.items.length === 0) {
-    return null;
+    return (
+      <p className="rounded-sm border border-dashed border-line-control p-3 text-center text-caption text-ink-muted">
+        Nothing yet. Pick from the library, or drop or paste images, models, and
+        folders anywhere here.
+      </p>
+    );
   }
   const byName = new Map(models.map((model) => [model.name, model]));
+  const pinned = pinnedKeys(library, models);
+
+  const togglePin = (reference: Reference) => {
+    setProblem(null);
+    togglePinOf(reference, models).then(
+      (kept) => kept && references.tag(reference.key, kept),
+      (cause: unknown) => setProblem(describe(cause)),
+    );
+  };
+
   return (
-    <ul className="grid grid-cols-2 gap-2">
-      {references.items.map((reference) => {
-        const model =
-          reference.kind === "model" ? byName.get(reference.name) : undefined;
-        return (
-          <li
-            key={reference.key}
-            title={explanation(reference)}
-            className="relative min-w-0"
-          >
-            <div
-              className={cn(
-                "relative h-22 overflow-hidden rounded-sm border bg-field",
-                reference.error ? "border-danger" : "border-line",
-              )}
+    <>
+      <ul className="flex flex-wrap gap-2">
+        {references.items.map((reference) => {
+          const model =
+            reference.kind === "model" ? byName.get(reference.name) : undefined;
+          const preview = reference.preview;
+          const isPinned = pinned.has(sourceOf(reference));
+          return (
+            <li
+              key={reference.key}
+              title={explanation(reference)}
+              className="group/ref relative w-18 min-w-0"
             >
-              {reference.preview ? (
-                <img
-                  src={reference.preview}
-                  alt=""
-                  className="size-full object-cover"
-                />
-              ) : model ? (
-                <ModelThumb model={model} size="fill" />
-              ) : (
-                <span className="grid size-full place-items-center text-ink-muted">
-                  <Icon name={ICONS[reference.kind]} size={24} />
-                </span>
+              <div
+                className={cn(
+                  "relative size-18 overflow-hidden rounded-sm border bg-field",
+                  reference.error ? "border-danger" : "border-line",
+                )}
+              >
+                {preview ? (
+                  <button
+                    type="button"
+                    aria-label={`See ${reference.name} large`}
+                    onClick={() =>
+                      setOpened({ name: reference.name, url: preview })
+                    }
+                    className="block size-full cursor-zoom-in"
+                  >
+                    <img
+                      src={preview}
+                      alt=""
+                      className="size-full object-cover"
+                    />
+                  </button>
+                ) : model ? (
+                  <ModelThumb model={model} size="fill" />
+                ) : (
+                  <span className="grid size-full place-items-center text-ink-muted">
+                    <Icon name={ICONS[reference.kind]} size={24} />
+                  </span>
+                )}
+                <Progress reference={reference} />
+              </div>
+              <p
+                className={cn(
+                  "mt-1 flex min-w-0 items-center gap-1 mono-annotation",
+                  reference.error ? "text-danger" : "text-ink-muted",
+                )}
+              >
+                <span className="truncate">{reference.name}</span>
+                {detail(reference) && (
+                  <span className="ml-auto shrink-0">{detail(reference)}</span>
+                )}
+              </p>
+              {!reference.error && !sending(reference) && (
+                <button
+                  type="button"
+                  aria-pressed={isPinned}
+                  aria-label={
+                    isPinned
+                      ? `Unpin ${reference.name}`
+                      : `Pin ${reference.name}`
+                  }
+                  title={isPinned ? "Unpin" : "Pin, to find it in Pinned"}
+                  onClick={() => togglePin(reference)}
+                  className={cn(
+                    "shadow-sm absolute top-1 left-1 grid size-5 place-items-center rounded-sm bg-panel/90 hover:text-ink",
+                    isPinned
+                      ? "text-accent-ink"
+                      : "text-ink-muted opacity-0 group-focus-within/ref:opacity-100 group-hover/ref:opacity-100",
+                  )}
+                >
+                  <Icon name={isPinned ? "pinned" : "pin"} />
+                </button>
               )}
-              <Progress reference={reference} />
-            </div>
-            <p
-              className={cn(
-                "mt-1 flex min-w-0 items-center gap-1 mono-annotation",
-                reference.error ? "text-danger" : "text-ink-muted",
-              )}
-            >
-              {reference.kind === "model" && <Icon name="model" />}
-              <span className="truncate">{reference.name}</span>
-              {detail(reference) && (
-                <span className="ml-auto shrink-0">{detail(reference)}</span>
-              )}
-            </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              icon
-              aria-label={`Remove ${reference.name}`}
-              onClick={() => references.remove(reference.key)}
-              className="absolute top-1 right-1"
-            >
-              <Icon name="close" />
-            </Button>
-          </li>
-        );
-      })}
-    </ul>
+              <button
+                type="button"
+                aria-label={`Remove ${reference.name}`}
+                title="Remove"
+                onClick={() => references.remove(reference.key)}
+                className="shadow-sm absolute top-1 right-1 grid size-5 place-items-center rounded-sm bg-panel/90 text-ink-muted hover:text-ink"
+              >
+                <Icon name="close" />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {problem && <Help error>{problem}</Help>}
+      <HeldImageDialog image={opened} onClose={() => setOpened(null)} />
+    </>
   );
 }

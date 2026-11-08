@@ -147,6 +147,14 @@ modeling-3d view-3d-model --name <name> [--directory <dir>]
 
 `lib.view_3d_model()`, the model's summary printed as JSON. Exits 1 when there is no model by that name.
 
+## modeling-3d list-intelligence-models
+
+```bash
+modeling-3d list-intelligence-models
+```
+
+`lib.list_intelligence_models()`, printed as JSON.
+
 ## modeling-3d add-blender-to-path
 
 ```bash

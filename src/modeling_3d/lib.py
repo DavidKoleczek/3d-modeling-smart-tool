@@ -61,8 +61,8 @@ def app_server(directory: Path | None = None) -> AppServer:
     in `AppServer.directory`, and creates, changes, rigs, colors, details, checks, steers, and stops them through this library's
     capabilities, as from `app`. Nothing done in it is sent to an agent session; a session sees it with
     `read_3d_model_activity`.
-    How the person set up the app, such as its theme and pane sizes, is theirs in every directory, kept in
-    `app-settings.json` in their config directory.
+    How the person set up the app, such as its theme and pane sizes, and what they pinned in it, are theirs in every
+    directory, kept in `app-settings.json` and `app-pins.json` in their config directory.
 
     Args:
         directory: Where the models the app shows are kept; `.modeling-3d` in the working directory when omitted.
@@ -85,6 +85,8 @@ def app_server(directory: Path | None = None) -> AppServer:
         list_intelligence=intelligence_models.list_intelligence_models,
         settings_path=app_settings.settings_path(),
         open_folder=app_folders.open_folder,
+        choose_files=app_folders.choose_files,
+        choose_folder=app_folders.choose_folder,
     )
 
 

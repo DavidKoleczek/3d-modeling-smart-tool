@@ -14,7 +14,11 @@ import { Notice } from "@/components/ui/notice";
 import { useActivity } from "@/lib/activity";
 import { cancelModel, type ModelSummary } from "@/lib/api";
 import { AppError, describe } from "@/lib/errors";
-import type { Handoff, NextRequest } from "@/lib/requests";
+import {
+  referencesStartedWith,
+  type Handoff,
+  type NextRequest,
+} from "@/lib/requests";
 import { currentCall, runsOf, totalCost, totalTokens } from "@/lib/runs";
 import { statusLabel } from "@/lib/status";
 import { updateSettings, useSettings } from "@/lib/settings";
@@ -265,6 +269,7 @@ export function ActivityPanel({
           next={next}
           handoff={handoff}
           onTaken={onTaken}
+          startedWith={referencesStartedWith(steps)}
           cost={totalCost(steps)}
           tokens={totalTokens(steps)}
         />

@@ -1,5 +1,5 @@
-"""An agent faked by a script, so neither credentials nor a model are needed to run a model's request, and the runs a
-model's record keeps, written directly."""
+"""An agent faked by a script, so neither credentials nor a model are needed to run a model's request, the runs a
+model's record keeps, written directly, and the file dialog, which no test shows."""
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
@@ -184,3 +184,20 @@ async def run_to_end(
 
 def record_of(directory: Path) -> ModelRecord:
     return load_record(directory)
+
+
+class FileDialog:
+    """The platform's file and folder dialogs as a test sets them up: what they give, and the folders they opened at."""
+
+    def __init__(self) -> None:
+        self.files: list[Path] = []
+        self.folder: Path | None = None
+        self.shown: list[Path] = []
+
+    def choose(self, directory: Path, title: str) -> list[Path]:
+        self.shown.append(directory)
+        return list(self.files)
+
+    def choose_folder(self, directory: Path, title: str) -> Path | None:
+        self.shown.append(directory)
+        return self.folder
