@@ -146,7 +146,8 @@ async def create_3d_model(
             without a session, starts a fresh one. A model's sessions are the `session_id` of each run in its
             runs.json; `read_3d_model_activity` gives each request's, and `list_3d_models` gives the last run's. A
             session that last worked in another mode, such as rigging, is told this one's instructions as it goes on.
-        agent_provider: The first installed when omitted; the session's own when continuing one.
+        agent_provider: The mode's in `MODE_AGENT_PROVIDERS` when omitted, `codex` to shape, or the first installed
+            when it is not; the session's own when continuing one.
         model: The agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS` when omitted.
         reasoning_effort: How hard the model thinks; one the model takes, as `list_intelligence_models` lists.
         timeout_seconds: How long the run may take before it is stopped; its session can still be resumed.

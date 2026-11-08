@@ -22,6 +22,7 @@ from modeling_3d.adapters import mcp as mcp_adapter
 from modeling_3d.core.skill import DISTRIBUTION
 from modeling_3d.schemas import (
     DEFAULT_REASONING_EFFORT,
+    MODE_AGENT_PROVIDERS,
     NOT_GIVEN,
     AgentProvider,
     ModelEvent,
@@ -197,7 +198,10 @@ def create_3d_model(
         ),
     ] = "false",
     agent_provider: Annotated[
-        AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
+        AgentProvider | None,
+        typer.Option(
+            "--agent-provider", help=f"{MODE_AGENT_PROVIDERS['shape']} when omitted, else the first installed."
+        ),
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
     reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,
@@ -260,7 +264,8 @@ def rig_3d_model(
         ),
     ] = "false",
     agent_provider: Annotated[
-        AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
+        AgentProvider | None,
+        typer.Option("--agent-provider", help=f"{MODE_AGENT_PROVIDERS['rig']} when omitted, else the first installed."),
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
     reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,
@@ -320,7 +325,10 @@ def color_3d_model(
         ),
     ] = "false",
     agent_provider: Annotated[
-        AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
+        AgentProvider | None,
+        typer.Option(
+            "--agent-provider", help=f"{MODE_AGENT_PROVIDERS['color']} when omitted, else the first installed."
+        ),
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
     reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,
@@ -382,7 +390,10 @@ def detail_3d_model(
         ),
     ] = "false",
     agent_provider: Annotated[
-        AgentProvider | None, typer.Option("--agent-provider", help="The first installed when omitted.")
+        AgentProvider | None,
+        typer.Option(
+            "--agent-provider", help=f"{MODE_AGENT_PROVIDERS['detail']} when omitted, else the first installed."
+        ),
     ] = None,
     model: Annotated[str | None, typer.Option("--model", help="The agent provider's default when omitted.")] = None,
     reasoning_effort: Annotated[ReasoningEffort, typer.Option("--reasoning-effort")] = DEFAULT_REASONING_EFFORT,

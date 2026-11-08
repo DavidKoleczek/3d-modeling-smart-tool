@@ -108,7 +108,8 @@ function keptBudget(changing: boolean, budget: number | null | undefined) {
 /**
  * Starts a new model over the workspace, so a model being built stays in view behind it: what to build, its name, the
  * AI model, and the files, folders, and models to work from. It starts from the last prompt a model was created from
- * here, selected, so typing replaces it. Closing it keeps the draft until the app reloads.
+ * here, selected, so typing replaces it. Closing it keeps the draft until the app reloads, and leaves a model it has
+ * asked for to start without taking the view to it.
  */
 export function NewModelDialog({
   open,
@@ -123,6 +124,7 @@ export function NewModelDialog({
   request: NewModelRequest;
   models: ModelSummary[];
   directory: string | null;
+  /** Called once the model asked for starts, while this is still open. */
   onCreated: (name: string) => void;
 }) {
   // Null until the person writes or picks one, while the box holds the last prompt.
@@ -135,10 +137,16 @@ export function NewModelDialog({
   const [missing, setMissing] = useState(false);
   const [handled, setHandled] = useState(request.id);
   const references = useReferences(models);
-  const intelligence = useIntelligence();
+  const intelligence = useIntelligence(null, "shape");
   const described = useRef<HTMLTextAreaElement>(null);
+  // Read once a model it asked for starts, which can be seconds after the person closed it and moved on.
+  const shown = useRef(open);
   const { library } = useLibrary();
   const prompt = typedPrompt ?? lastPrompt(library, models);
+
+  useEffect(() => {
+    shown.current = open;
+  }, [open]);
 
   useEffect(() => {
     if (open && typedPrompt === null) {
@@ -195,7 +203,9 @@ export function NewModelDialog({
         ...(await references.ready()),
         ...intelligence.choice,
       });
-      onCreated(taken?.name ?? name);
+      if (shown.current) {
+        onCreated(taken?.name ?? name);
+      }
       void refreshLibrary();
       setPrompt(null);
       setTypedName(null);

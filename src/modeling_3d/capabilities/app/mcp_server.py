@@ -425,7 +425,9 @@ class AppServer:
             options = await asyncio.to_thread(self._intelligence)
             return _structured(options.model_dump(mode="json"))
         if params.name == CHOOSE_INTELLIGENCE.name:
-            options = await asyncio.to_thread(self._choose, arguments["model"], arguments["reasoning_effort"])
+            options = await asyncio.to_thread(
+                self._choose, arguments["mode"], arguments["model"], arguments["reasoning_effort"]
+            )
             return _structured(options.model_dump(mode="json"))
         if params.name == READ_SETTINGS.name:
             settings = await asyncio.to_thread(read_app_settings, self.settings_path)
@@ -507,7 +509,8 @@ class AppServer:
         await self._clear(uploads)
         if created:
             await asyncio.to_thread(self._update_state, lambda _: {"last_prompt": arguments["prompt"]})
-        summary = await asyncio.to_thread(self._view_model, run.name, self.directory)
+        # Not recorded as viewed: the run starts long after it is asked for, by when the person may be viewing another.
+        summary = await asyncio.to_thread(self._summary, run.name)
         return _structured(summary.model_dump(mode="json"))
 
     async def _check(self, name: str) -> CallToolResult:
@@ -715,17 +718,17 @@ class AppServer:
 
     def _intelligence(self) -> AppIntelligence:
         options = self._list_intelligence()
-        chosen = self._app_state().intelligence
-        offered = chosen is not None and any(
-            model.id == chosen.model and chosen.reasoning_effort in model.reasoning_efforts for model in options.models
-        )
-        return AppIntelligence(
-            models=options.models,
-            default=options.default,
-            chosen=chosen if offered else None,
-        )
+        offered = {
+            mode: choice
+            for mode, choice in self._app_state().last_intelligence.items()
+            if any(
+                model.id == choice.model and choice.reasoning_effort in model.reasoning_efforts
+                for model in options.models
+            )
+        }
+        return AppIntelligence(models=options.models, defaults=options.defaults, chosen=offered)
 
-    def _choose(self, model: str, reasoning_effort: str) -> AppIntelligence:
+    def _choose(self, mode: ModelMode, model: str, reasoning_effort: str) -> AppIntelligence:
         options = self._list_intelligence()
         picked = next((candidate for candidate in options.models if candidate.id == model), None)
         if picked is None:
@@ -741,7 +744,7 @@ class AppServer:
                 "bad-reasoning-effort",
             )
         choice = IntelligenceChoice(agent_provider=picked.agent_provider, model=picked.id, reasoning_effort=effort)
-        self._update_state(lambda _: {"intelligence": choice})
+        self._update_state(lambda state: {"last_intelligence": {**state.last_intelligence, mode: choice}})
         return self._intelligence()
 
     def _app_state(self) -> AppState:

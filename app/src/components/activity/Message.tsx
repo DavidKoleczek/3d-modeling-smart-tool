@@ -80,7 +80,6 @@ export function Message({
         title={entry.origin ?? undefined}
       >
         {sender(entry.origin)}
-        {steering && ", steering"}
       </span>
       <p
         className={cn(

@@ -11,6 +11,7 @@ from modeling_3d.schemas import (
     DEFAULT_INTELLIGENCE_MODELS,
     DEFAULT_REASONING_EFFORT,
     INTELLIGENCE_MODELS,
+    MODES,
     PROVIDER_REASONING_EFFORTS,
     REASONING_EFFORTS,
     AgentProvider,
@@ -19,22 +20,31 @@ from modeling_3d.schemas import (
     ReasoningEffort,
 )
 
+# By mode, in `MODES` order: shape, rig, color, and detail.
+OWN: tuple[AgentProvider, ...] = ("codex", "codex", "claude", "claude")
+
 
 @pytest.mark.parametrize(
-    "providers", [("claude",), ("claude", "codex"), ("codex",), ()], ids=["claude", "both", "codex", "none"]
+    ("providers", "by_mode"),
+    [(("claude",), ("claude",) * 4), (AGENT_PROVIDERS, OWN), (("codex",), ("codex",) * 4), ((), OWN)],
+    ids=["claude", "both", "codex", "none"],
 )
-def test_it_offers_the_models_of_the_installed_agent_providers_and_defaults_to_the_first_s(
-    monkeypatch: pytest.MonkeyPatch, providers: tuple[AgentProvider, ...]
+def test_it_offers_the_models_of_the_installed_agent_providers_and_defaults_each_mode_to_its_own_when_installed(
+    monkeypatch: pytest.MonkeyPatch, providers: tuple[AgentProvider, ...], by_mode: tuple[AgentProvider, ...]
 ) -> None:
     monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: agent_provider in providers)
 
     options = lib.list_intelligence_models()
 
     assert options.models == [model for model in INTELLIGENCE_MODELS if model.agent_provider in providers]
-    first = providers[0] if providers else AGENT_PROVIDERS[0]
-    assert options.default == IntelligenceChoice(
-        agent_provider=first, model=DEFAULT_INTELLIGENCE_MODELS[first], reasoning_effort=DEFAULT_REASONING_EFFORT
-    )
+    assert options.defaults == {
+        mode: IntelligenceChoice(
+            agent_provider=provider,
+            model=DEFAULT_INTELLIGENCE_MODELS[provider],
+            reasoning_effort=DEFAULT_REASONING_EFFORT,
+        )
+        for mode, provider in zip(MODES, by_mode, strict=True)
+    }
 
 
 async def test_a_reasoning_effort_that_is_not_one_names_the_ones_that_are() -> None:

@@ -544,10 +544,12 @@ def test_the_cli_takes_the_budgets_and_starts_a_fresh_session_unless_given_true_
 ) -> None:
     monkeypatch.setattr(interface, "resolve_intelligence", lambda *arguments: FakeIntelligence(builds))
     budgets = ["--max-triangles", "none", "--max-draw-calls", "2", "--screen-size", "40-240"]
+    # Whose sessions any fake id names can be continued on this machine.
+    claude = ["--agent-provider", "claude"]
 
     results = [
-        runner.invoke(app, ["create-3d-model", "A bear", "--name", "bear", *budgets]),
-        runner.invoke(app, ["create-3d-model", "Taller", "--name", "bear"]),
+        runner.invoke(app, ["create-3d-model", "A bear", "--name", "bear", *budgets, *claude]),
+        runner.invoke(app, ["create-3d-model", "Taller", "--name", "bear", *claude]),
         runner.invoke(app, ["create-3d-model", "Wider", "--name", "bear", "--resume-session", SESSION]),
         runner.invoke(app, ["create-3d-model", "Rounder", "--name", "bear", "--resume-session", "true"]),
     ]

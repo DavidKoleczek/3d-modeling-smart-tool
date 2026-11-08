@@ -1,13 +1,23 @@
 """Picks the agent provider and the model with the installed SDKs faked, so it runs on a bare install."""
 
 from importlib.machinery import ModuleSpec
+from pathlib import Path
 
+import fakes
 import pytest
 
+from modeling_3d import lib
+from modeling_3d.capabilities.create_3d_model.record import load_record
 from modeling_3d.intelligence import interface
 from modeling_3d.intelligence.interface import AgentRun, resolve_agent_provider, select_intelligence
 from modeling_3d.intelligence.schemas import AgentRequest, Steering
-from modeling_3d.schemas import AGENT_PROVIDERS, DEFAULT_INTELLIGENCE_MODELS, AgentProvider, Modeling3dError
+from modeling_3d.schemas import (
+    AGENT_PROVIDERS,
+    DEFAULT_INTELLIGENCE_MODELS,
+    DEFAULT_REASONING_EFFORT,
+    AgentProvider,
+    Modeling3dError,
+)
 
 
 class FakeIntelligence:
@@ -39,6 +49,31 @@ def test_a_named_agent_provider_wins_else_the_first_installed_in_order(
 
     assert resolve_agent_provider() == AGENT_PROVIDERS[first]
     assert resolve_agent_provider(AGENT_PROVIDERS[-1]) == AGENT_PROVIDERS[-1]
+
+
+@pytest.mark.parametrize(
+    ("providers", "shaped_on", "colored_on"),
+    [(AGENT_PROVIDERS, "codex", "claude"), (("claude",), "claude", "claude"), (("codex",), "codex", "codex")],
+    ids=["both", "claude", "codex"],
+)
+@pytest.mark.usefixtures("working_directory")
+async def test_a_run_takes_its_mode_s_agent_provider_when_none_is_named_else_the_first_installed(
+    monkeypatch: pytest.MonkeyPatch,
+    providers: tuple[AgentProvider, ...],
+    shaped_on: AgentProvider,
+    colored_on: AgentProvider,
+) -> None:
+    only_installed(monkeypatch, *providers)
+    monkeypatch.setattr(interface, "resolve_intelligence", lambda *arguments: fakes.FakeIntelligence(fakes.builds))
+
+    await (await lib.create_3d_model("A bear", name="bear")).result()
+    await (await lib.color_3d_model("bear")).result()
+
+    runs = load_record(Path(".modeling-3d") / "bear").runs
+    assert [(run.mode, run.agent_provider, run.model, run.reasoning_effort) for run in runs] == [
+        ("shape", shaped_on, DEFAULT_INTELLIGENCE_MODELS[shaped_on], DEFAULT_REASONING_EFFORT),
+        ("color", colored_on, DEFAULT_INTELLIGENCE_MODELS[colored_on], DEFAULT_REASONING_EFFORT),
+    ]
 
 
 @pytest.mark.parametrize(

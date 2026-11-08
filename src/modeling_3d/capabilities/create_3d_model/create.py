@@ -21,7 +21,7 @@ from modeling_3d.capabilities.create_3d_model import prompting
 from modeling_3d.capabilities.create_3d_model.budgets import require_budgets, resolved
 from modeling_3d.capabilities.create_3d_model.check import check
 from modeling_3d.capabilities.create_3d_model.constants import KEPT, MODE_CAPABILITIES
-from modeling_3d.capabilities.create_3d_model.intelligence_models import require_reasoning_effort
+from modeling_3d.capabilities.create_3d_model.intelligence_models import mode_agent_provider, require_reasoning_effort
 from modeling_3d.capabilities.create_3d_model.record import (
     DEFAULT_DIRECTORY,
     GLB,
@@ -309,7 +309,7 @@ async def start_run(
             target.name,
         )
     if intelligence is None:
-        agent_provider = resolve_agent_provider(agent_provider)
+        agent_provider = resolve_agent_provider(agent_provider or mode_agent_provider(mode))
         if resumed is not None and not can_resume(resumed.agent_provider, resumed.session_id):
             raise Modeling3dError(
                 f"Model {target.name}'s session {resumed.session_id} is not among the sessions "

@@ -31,10 +31,10 @@ function selectedIn(
 /**
  * The models in the app's directory, polled, which one is in view, and renaming and deleting them.
  *
- * The view opens on the model viewed last. After that it switches when the model viewed last changes to one it did
- * not pick itself, so `modeling-3d view-3d-model` from the host session brings a model up, and when a new model
- * appears, so a model the agent starts shows as it is built. It follows the model in view by its id, so a rename,
- * from here or anywhere else, keeps it in view.
+ * The view opens on the model viewed last. After that it switches only when the person picks a model, or when the
+ * model viewed last changes to one it did not pick itself, so `modeling-3d view-3d-model` from the host session brings
+ * a model up. A model created or changed anywhere else never takes the view, so several can be worked on at once. It
+ * follows the model in view by its id, so a rename, from here or anywhere else, keeps it in view.
  */
 export function useModels(): {
   listing: ModelListing | null;
@@ -49,8 +49,6 @@ export function useModels(): {
   const [error, setError] = useState<string | null>(null);
   // The last `last_viewed` the view saw or set; undefined before the first listing.
   const followed = useRef<string | null | undefined>(undefined);
-  // By id, so a model renamed is never taken for a new one.
-  const known = useRef<Set<string> | null>(null);
   // A listing asked for before or while a pick is recorded still carries the old `last_viewed`, which must not undo it.
   const picks = useRef({ pending: 0, generation: 0 });
   // Counts the renames and deletes made here, so a listing asked for before one never brings back what it changed.
@@ -61,19 +59,13 @@ export function useModels(): {
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const apply = (fresh: ModelListing, canFollow: boolean) => {
-      const before = known.current;
-      known.current = new Set(fresh.models.map((model) => model.id));
-      const named = (name: string | null) =>
-        fresh.models.find((model) => model.name === name);
       let target: ModelSummary | undefined;
-      if (before === null) {
+      if (
+        followed.current === undefined ||
+        (canFollow && fresh.last_viewed !== followed.current)
+      ) {
         followed.current = fresh.last_viewed;
-        target = named(fresh.last_viewed);
-      } else if (canFollow && fresh.last_viewed !== followed.current) {
-        followed.current = fresh.last_viewed;
-        target = named(fresh.last_viewed);
-      } else {
-        target = fresh.models.find((model) => !before.has(model.id));
+        target = fresh.models.find((model) => model.name === fresh.last_viewed);
       }
       setListing(fresh);
       setError(null);

@@ -137,11 +137,12 @@ budgets when they are left out, and `none` removes one.
   the model's budgets. See Budgets.
 - `--resume-session S`: for a model that exists, `false` (the default) for a fresh session, `true`
   to continue its last one, or the id of one of its sessions. See Changing a model.
-- `--agent-provider P`: `claude` or `codex`; the first installed when omitted, and the session's
-  own when continuing one.
+- `--agent-provider P`: `claude` or `codex`; `codex` when omitted, or the first installed without
+  it, and the session's own when continuing one. Rigging is the same; coloring and detailing take
+  `claude` first.
 - `--model M`: the agent provider's default when omitted. `list-intelligence-models` lists the
   ones to pick from.
-- `--reasoning-effort E`: `low`, `medium` (the default), `high`, `xhigh`, or `max`; codex
+- `--reasoning-effort E`: `low`, `medium`, `high`, `xhigh` (the default), or `max`; codex
   models also take `ultra`. `list-intelligence-models` lists each model's.
 - `--timeout-seconds N`: how long the run may take before it is stopped; 3600 by default. A
   stopped run's session can still be resumed.

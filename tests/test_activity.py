@@ -12,7 +12,15 @@ from typer.testing import CliRunner
 from modeling_3d import lib
 from modeling_3d.capabilities.create_3d_model.record import load_record, write_record
 from modeling_3d.cli import app
-from modeling_3d.schemas import ModelActivity, Modeling3dError, ModelRecord, ModelRunRecord, ToolCall
+from modeling_3d.schemas import (
+    DEFAULT_INTELLIGENCE_MODELS,
+    DEFAULT_REASONING_EFFORT,
+    ModelActivity,
+    Modeling3dError,
+    ModelRecord,
+    ModelRunRecord,
+    ToolCall,
+)
 
 START = datetime(2026, 10, 17, 10, tzinfo=UTC)
 # What Claude Code sends back for a render the agent reads: the image, as base64.
@@ -135,8 +143,8 @@ def test_the_activity_reads_every_run_in_order_beside_the_model_s_summary(bear: 
         "references": ["references/bear.png"],
         "resumed": False,
         "agent_provider": "claude",
-        "model": "claude-sonnet-5-5",
-        "reasoning_effort": "medium",
+        "model": DEFAULT_INTELLIGENCE_MODELS["claude"],
+        "reasoning_effort": DEFAULT_REASONING_EFFORT,
         "session_id": "session",
     }
     assert new.data["resumed"]

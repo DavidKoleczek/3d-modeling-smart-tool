@@ -15,12 +15,9 @@ REFERENCES = [
     "https://github.com/anthropics/claude-agent-sdk-python",
     "https://github.com/agentskills/agentskills",
     "https://github.com/anthropics/claude-plugins-official",
-    "https://github.com/modelcontextprotocol/typescript-sdk",
     "https://github.com/modelcontextprotocol/python-sdk",
-    "https://github.com/agentclientprotocol/agent-client-protocol",
     "https://github.com/modelcontextprotocol/ext-apps",
     "https://github.com/microsoft/amplifier-smart-tool-creator",
-    "https://github.com/microsoft/amplifier-smart-tool-digital-twin-universe",
     "https://github.com/microsoft/amplifier-smart-tool-reality-check",
     "https://github.com/astral-sh/uv",
 ]

@@ -7,14 +7,26 @@ from pydantic import BaseModel, Field
 
 ReasoningEffort = Literal["low", "medium", "high", "xhigh", "max", "ultra"]
 AgentProvider = Literal["claude", "codex"]
-# Also the order an agent provider is picked in when none is named.
+# Also the order an agent provider is picked in when none is named and a mode's own is not installed.
 AGENT_PROVIDERS: tuple[AgentProvider, ...] = ("claude", "codex")
+# The stages of the workflow an agent works on a model in, each run by a capability of its own: `shape` by
+# create_3d_model, `rig` by rig_3d_model, `color` by color_3d_model, and `detail` by detail_3d_model. A run never moves
+# on to the next by itself.
+ModelMode = Literal["shape", "rig", "color", "detail"]
+MODES: tuple[ModelMode, ...] = get_args(ModelMode)
 
 DEFAULT_INTELLIGENCE_MODELS: dict[AgentProvider, str] = {
-    "claude": "claude-sonnet-5-5",
-    "codex": "gpt-6.1-sol",
+    "claude": "claude-opus-5-5",
+    "codex": "gpt-6-astra",
 }
-DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium"
+# The agent provider each mode runs on when none is named, the one whose default AI model does that stage best.
+MODE_AGENT_PROVIDERS: dict[ModelMode, AgentProvider] = {
+    "shape": "codex",
+    "rig": "codex",
+    "color": "claude",
+    "detail": "claude",
+}
+DEFAULT_REASONING_EFFORT: ReasoningEffort = "xhigh"
 REASONING_EFFORTS: tuple[ReasoningEffort, ...] = get_args(ReasoningEffort)
 # What a model the tool does not list may be asked for, by its agent provider.
 PROVIDER_REASONING_EFFORTS: dict[AgentProvider, tuple[ReasoningEffort, ...]] = {
@@ -179,7 +191,9 @@ class IntelligenceModels(BaseModel):
     """The AI models to pick from, each with its reasoning efforts."""
 
     models: list[IntelligenceModel] = Field(description="Those of the agent providers that are installed")
-    default: IntelligenceChoice = Field(description="What `create_3d_model` runs with when given neither")
+    defaults: dict[ModelMode, IntelligenceChoice] = Field(
+        description="What each mode's capability runs with when given no agent provider, AI model, or reasoning effort"
+    )
 
 
 # endregion
@@ -188,11 +202,6 @@ class IntelligenceModels(BaseModel):
 
 ModelRunStatus = Literal["running", "done", "failed", "cancelled", "timed-out"]
 ModelEventKind = Literal["started", "agent", "steered", "checked", "finished", "failed"]
-# The stages of the workflow an agent works on a model in, each run by a capability of its own: `shape` by
-# create_3d_model, `rig` by rig_3d_model, `color` by color_3d_model, and `detail` by detail_3d_model. A run never moves
-# on to the next by itself.
-ModelMode = Literal["shape", "rig", "color", "detail"]
-MODES: tuple[ModelMode, ...] = get_args(ModelMode)
 
 
 class ModelRunRecord(BaseModel):
@@ -344,7 +353,10 @@ class ModelSummary(BaseModel):
     id: str
     directory: Path
     created: datetime
-    updated: datetime = Field(description="The latest time its last run started, sent an event, or finished")
+    updated: datetime = Field(
+        description="When its last run started, or once that run has ended, when it ended; when it was created if it "
+        "never ran"
+    )
     built: datetime | None = Field(description="When model.glb was last written; None before the first build")
     checked: datetime | None = Field(
         description="When its latest check, checks/report.json, was written; None before the first"
@@ -445,7 +457,11 @@ class BlenderOnPath(BaseModel):
 class AppState(BaseModel):
     """.app.json in a models directory: what the person last picked and used in the app there."""
 
-    intelligence: IntelligenceChoice | None = None
+    # Kept by mode, under a name of its own, so the one pick kept for every mode before is left behind rather than
+    # holding every mode to it.
+    last_intelligence: dict[ModelMode, IntelligenceChoice] = Field(
+        default_factory=dict, description="The AI model and reasoning effort picked last for each mode"
+    )
     used: list[Path] = Field(
         default_factory=list, description="The files and folders chosen to work from in the app there, newest first"
     )
@@ -458,7 +474,9 @@ class AppState(BaseModel):
 class AppIntelligence(IntelligenceModels):
     """What the app's picker offers, and what the person picked last in its directory."""
 
-    chosen: IntelligenceChoice | None = Field(description="None when nothing was picked, or it is no longer offered")
+    chosen: dict[ModelMode, IntelligenceChoice] = Field(
+        description="What was picked last for each mode, apart from modes with no pick, or one no longer offered"
+    )
 
 
 ThemePreference = Literal["system", "light", "dark"]

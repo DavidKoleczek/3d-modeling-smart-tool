@@ -38,7 +38,7 @@ Setting `AgentRequest.resume` to an earlier `session_id` continues that session 
 - `claude`: `ClaudeIntelligence`, built on the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) and run with the user's Claude Code settings and any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart). Steering is `queued`. It gets only the file and shell tools a run needs, so not Claude Code's tool for asking the user questions. Skills come as a local plugin named `modeling-3d`, with the `Skill` tool added and Claude Code's user, project, and local settings loaded. Sessions are kept where Claude Code keeps them; a plain completion runs in the platform's per-user state directory, in `modeling-3d/claude`.
 - `codex`: `CodexIntelligence`, built on the [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/python) and run with the user's Codex sign-in and configuration. Steering is `mid-turn`. A writable workspace runs without a sandbox and without approval prompts, as the agent runs tools such as Blender that write elsewhere. Its tool for asking the user questions is turned off. Skills come through the runtime's `skills/extraRoots/set`, which lasts as long as the run's own runtime, so nothing is written into the workspace. Sessions are kept where Codex keeps them, and copied into `session_directory` after each turn; a plain completion runs read-only in the platform's per-user state directory, in `modeling-3d/codex`.
 
-Without an agent provider named, the first installed in that order is used; one that is not installed raises `Modeling3dError` with the command that installs it.
+Without an agent provider named, a run uses its mode's in `MODE_AGENT_PROVIDERS`, `codex` to shape and rig and `claude` to color and detail, or the first installed in that order when that one is not; one named that is not installed raises `Modeling3dError` with the command that installs it.
 `select_intelligence(intelligence, agent_provider, model, DEFAULT_INTELLIGENCE_MODELS)` is what a capability calls: an injected `intelligence` wins, and `model` falls back to the agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS`.
 
 ## Create a 3D model
@@ -64,7 +64,7 @@ async def create_3d_model(
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
     model: str | None = None,
-    reasoning_effort: ReasoningEffort = "medium",
+    reasoning_effort: ReasoningEffort = "xhigh",
     timeout_seconds: int = 3600,
     origin: str | None = None,
     detach: bool = False,
@@ -91,10 +91,10 @@ async def create_3d_model(
   If the model does not have the session ID, the request stops before the agent starts.
   A session that last worked in another mode can go on, and is told this mode's instructions, which it has not had.
 - `agent_provider`: The service that runs the agent: `claude` or `codex`.
-  If you do not give an agent provider, the tool uses the first one that is installed.
+  If you do not give an agent provider, the tool uses `codex`, or the first one that is installed when it is not.
   When the agent continues a session, the tool uses the agent provider of that session, and another one raises `Modeling3dError`. Another model of the same agent provider can continue it.
 - `model`: The AI model that the agent uses. If you do not give a model, the tool uses the default for the agent provider, from `DEFAULT_INTELLIGENCE_MODELS`.
-- `reasoning_effort`: How much the AI model thinks before it acts: `low`, `medium`, `high`, `xhigh`, or `max`, and also `ultra` on `codex` models. The default is `medium`. `list_intelligence_models` gives the efforts each model takes; one the model does not take raises `Modeling3dError`.
+- `reasoning_effort`: How much the AI model thinks before it acts: `low`, `medium`, `high`, `xhigh`, or `max`, and also `ultra` on `codex` models. The default is `xhigh`. `list_intelligence_models` gives the efforts each model takes; one the model does not take raises `Modeling3dError`.
 - `timeout_seconds`: The maximum time for the run, in seconds. After this time, the tool stops the run.
   You can continue the session of a stopped run later. The default is 3600, one hour.
 - `origin`: A label that tells who sent the request. The tool keeps the label with the run. The activity of the model shows the label with the request.
@@ -148,7 +148,7 @@ async def rig_3d_model(
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
     model: str | None = None,
-    reasoning_effort: ReasoningEffort = "medium",
+    reasoning_effort: ReasoningEffort = "xhigh",
     timeout_seconds: int = 3600,
     origin: str | None = None,
     detach: bool = False,
@@ -179,7 +179,7 @@ async def color_3d_model(
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
     model: str | None = None,
-    reasoning_effort: ReasoningEffort = "medium",
+    reasoning_effort: ReasoningEffort = "xhigh",
     timeout_seconds: int = 3600,
     origin: str | None = None,
     detach: bool = False,
@@ -210,7 +210,7 @@ async def detail_3d_model(
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
     model: str | None = None,
-    reasoning_effort: ReasoningEffort = "medium",
+    reasoning_effort: ReasoningEffort = "xhigh",
     timeout_seconds: int = 3600,
     origin: str | None = None,
     detach: bool = False,
@@ -272,7 +272,7 @@ def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary
 - `name`: For `view_3d_model`, the name of the model to record. It must be the same as the name of its directory, with the same upper case and lower case letters.
 
 `list_3d_models` only reads, so it is safe while runs write. `ModelListing` has the resolved `directory`, its `models` most recently updated first, `last_viewed`, and `unreadable`, one message for each model whose `model.json` or `runs.json` could not be read, naming what is wrong. A file in place of the directory raises `Modeling3dError`.
-Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run last started, sent an event, or finished), `built` (when `model.glb` was last written, `None` before the first build), `checked` (when its latest check, `checks/report.json`, was written, `None` before the first), `status`, `last_run` (that run's entry in `runs.json`), `last_session` (the entry of the latest run with a session, the one `resume_session=True` continues), `resumable` (whether a run on this machine can continue that session), `files`, and `references`, every reference its runs were given. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. `status`, `last_run`, and `last_session` are `None` for a model that never ran, and `resumable` is false.
+Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run started, or once it has ended, when it ended, so a model moves up the list as a run on it starts and ends but not as it works), `built` (when `model.glb` was last written, `None` before the first build), `checked` (when its latest check, `checks/report.json`, was written, `None` before the first), `status`, `last_run` (that run's entry in `runs.json`), `last_session` (the entry of the latest run with a session, the one `resume_session=True` continues), `resumable` (whether a run on this machine can continue that session), `files`, and `references`, every reference its runs were given. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. `status`, `last_run`, and `last_session` are `None` for a model that never ran, and `resumable` is false.
 
 `view_3d_model` records the model as viewed last in `.state.json` in the models directory, and returns its summary. An unknown name raises `Modeling3dError` naming the models there. `last_viewed` is `None` when nothing was viewed, or that model is gone.
 
@@ -325,13 +325,13 @@ The activity names each call only by what it works on. `ToolCall` is the call in
 
 ## List AI models
 
-Deterministic. The AI models to pick from for the model-backed capabilities, each with the reasoning efforts it takes, and what a run uses given neither.
+Deterministic. The AI models to pick from for the model-backed capabilities, each with the reasoning efforts it takes, and what a run in each mode uses given none of them.
 
 ```python
 def list_intelligence_models() -> IntelligenceModels
 ```
 
-`IntelligenceModels` has `models`, those of the installed agent providers in the order a picker offers them, each with its `agent_provider`, `id`, `label`, and `reasoning_efforts`, and `default`, the `agent_provider`, `model`, and `reasoning_effort` a run uses when given neither: the first installed agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS`, at `DEFAULT_REASONING_EFFORT`. The model-backed capabilities also take any other model by name, with any reasoning effort its agent provider has.
+`IntelligenceModels` has `models`, those of the installed agent providers in the order a picker offers them, each with its `agent_provider`, `id`, `label`, and `reasoning_efforts`, and `defaults`, by mode, the `agent_provider`, `model`, and `reasoning_effort` a run in it uses when given none of them: its agent provider's entry in `DEFAULT_INTELLIGENCE_MODELS`, at `DEFAULT_REASONING_EFFORT`. The model-backed capabilities also take any other model by name, with any reasoning effort its agent provider has.
 
 ## Blender on PATH
 
@@ -354,7 +354,7 @@ def app_view() -> str
 ```
 
 The view's HTML, compiled from `app/` and offered as the `ui://modeling-3d/app` resource in the MCP server. Raises `Modeling3dError` naming the build command when the view is not compiled.
-It shows the models in the server's directory: it polls `list_3d_models`, opens on `last_viewed`, and renders the model in view in 3D, reading its GLB again whenever `built` changes. Picking a model calls `view_3d_model`. It switches models on its own when `last_viewed` changes to one it did not pick, so `view_3d_model` from anywhere brings a model up, and when a new model appears. It follows the model in view, and what the person has started for it, by its `id`, so a rename from anywhere keeps them.
+It shows the models in the server's directory: it polls `list_3d_models`, opens on `last_viewed`, and renders the model in view in 3D, reading its GLB again whenever `built` changes. Picking a model calls `view_3d_model`. It switches models on its own only when `last_viewed` changes to one it did not pick, so `view_3d_model` from anywhere brings a model up. A run starting or working on a model never takes the view to it, apart from the person creating a model in the view, which picks it. It follows the model in view, and what the person has started for it, by its `id`, so a rename from anywhere keeps them.
 It can also show the renders the agent made, in a strip with the one picked large below; the model's latest check, read again whenever `checked` changes, by group, with each check's renders, whether `model.glb` changed since, and a button that checks it again; and the model's size and makeup, computed from the loaded GLB for display only.
 Its rig view marks each marker and the pivot of each part that slides or turns, draws the path of each slide and the axis of each turn, and poses the model: a slider for each slide, hinge, and spin over its range, a switch for each part that can be hidden, and a pick of the part each swap group shows. A part a bone moves is hidden by shrinking its bone, since hiding a bone leaves the mesh skinned to it drawn.
 A detail texture the model's materials declare shades it as a renderer would, its base color times twice the detail, whichever view is on.
@@ -367,7 +367,7 @@ def app_server(directory: Path | None = None) -> AppServer
 
 - `directory`: The directory that holds the models that the app shows. If you do not give a directory, the tool uses `.modeling-3d` in the working directory. The `open_app` tool can change it.
 
-The app's MCP server: `open_app`; the app-only `list_3d_models`, `view_3d_model`, `rename_3d_model`, `delete_3d_model`, `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, `steer_3d_model`, `cancel_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`, each the library's on the app's directory with origin `app`; the app-only `check_3d_model`, the library's against the model's own budgets, which returns `{"checking": true}` for a check still going after a while, so that a call never outlasts what a host waits for, and waits on the same check when called again; the app-only `list_intelligence_models` and `choose_intelligence_model`, the picker's options and the person's last pick, kept in `.app.json` in the app's directory; the app-only `read_app_settings` and `save_app_settings`, the person's theme, pane sizes, viewport tools, and the groups of steps they opened or closed in each model's activity, kept for every directory in `app-settings.json` in their config directory; the app-only `read_app_folders` and `open_app_folder`, which name where those are kept and open the settings folder, the app's directory, or a model's folder in the person's file manager; the app-only `read_app_library` and `save_app_pins`, the references, folders, and prompts the person pinned, kept for every directory in `app-pins.json` beside their settings, with the last 50 files and folders used in the app's directory, chosen there or given to its models, and the last prompt a model was created from there, both kept in `.app.json`; the app-only `choose_reference_files` and `choose_reference_folder`, the platform's file and folder dialogs, opened where files were last chosen from; the app-only `list_reference_folder`, what is in a folder pinned to show its files; the view; each model's GLB, renders, and reference images as base64 blob resources at `modeling-3d://models/{name}/{+path}`; and the images the library offers, pinned, in a pinned folder, or used in the app's directory, at `modeling-3d://references/{+path}`. Only the files a model's summary lists in `files` and `references`, and the files in the folders it lists there, and of those only the GLB and images, can be read, along with its latest check's `checks/report.json` and the renders beside it. Its `create_3d_model`, `rig_3d_model`, `color_3d_model`, and `detail_3d_model` always detach, so runs outlive the server. Its `rename_3d_model` and `delete_3d_model` raise `model-busy` while its own check of the model runs. The app-only `upload_reference` takes each file or folder the person adds in pieces, under an upload id of the view's, and `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, and `steer_3d_model` name the uploads to send, so no request outgrows what the transport takes. The app-only `choose_reference_files` and `stage_reference_files` stage files and folders on this machine by path as uploads the same way, and the app-only `keep_upload` keeps a copy of a dropped or pasted upload beside the person's settings to pin, cleared once it is unpinned. Uploads no request took are cleared when the server closes, or a day on by the next to start.
+The app's MCP server: `open_app`; the app-only `list_3d_models`, `view_3d_model`, `rename_3d_model`, `delete_3d_model`, `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, `steer_3d_model`, `cancel_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`, each the library's on the app's directory with origin `app`; the app-only `check_3d_model`, the library's against the model's own budgets, which returns `{"checking": true}` for a check still going after a while, so that a call never outlasts what a host waits for, and waits on the same check when called again; the app-only `list_intelligence_models` and `choose_intelligence_model`, the picker's options and the person's last pick for each mode, kept in `.app.json` in the app's directory; the app-only `read_app_settings` and `save_app_settings`, the person's theme, pane sizes, viewport tools, and the groups of steps they opened or closed in each model's activity, kept for every directory in `app-settings.json` in their config directory; the app-only `read_app_folders` and `open_app_folder`, which name where those are kept and open the settings folder, the app's directory, or a model's folder in the person's file manager; the app-only `read_app_library` and `save_app_pins`, the references, folders, and prompts the person pinned, kept for every directory in `app-pins.json` beside their settings, with the last 50 files and folders used in the app's directory, chosen there or given to its models, and the last prompt a model was created from there, both kept in `.app.json`; the app-only `choose_reference_files` and `choose_reference_folder`, the platform's file and folder dialogs, opened where files were last chosen from; the app-only `list_reference_folder`, what is in a folder pinned to show its files; the view; each model's GLB, renders, and reference images as base64 blob resources at `modeling-3d://models/{name}/{+path}`; and the images the library offers, pinned, in a pinned folder, or used in the app's directory, at `modeling-3d://references/{+path}`. Only the files a model's summary lists in `files` and `references`, and the files in the folders it lists there, and of those only the GLB and images, can be read, along with its latest check's `checks/report.json` and the renders beside it. Its `create_3d_model`, `rig_3d_model`, `color_3d_model`, and `detail_3d_model` always detach, so runs outlive the server. Its `rename_3d_model` and `delete_3d_model` raise `model-busy` while its own check of the model runs. The app-only `upload_reference` takes each file or folder the person adds in pieces, under an upload id of the view's, and `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, and `steer_3d_model` name the uploads to send, so no request outgrows what the transport takes. The app-only `choose_reference_files` and `stage_reference_files` stage files and folders on this machine by path as uploads the same way, and the app-only `keep_upload` keeps a copy of a dropped or pasted upload beside the person's settings to pin, cleared once it is unpinned. Uploads no request took are cleared when the server closes, or a day on by the next to start.
 
 ```python
 class AppServer:

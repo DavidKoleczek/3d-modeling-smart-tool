@@ -243,8 +243,8 @@ export type IntelligenceChoice = {
 /** `AppIntelligence` in schemas.py. */
 export type AppIntelligence = {
   models: IntelligenceModel[];
-  default: IntelligenceChoice;
-  chosen: IntelligenceChoice | null;
+  defaults: Record<ModelMode, IntelligenceChoice>;
+  chosen: Partial<Record<ModelMode, IntelligenceChoice>>;
 };
 
 /** `PaneLayout` in schemas.py. */
@@ -578,12 +578,14 @@ export async function listIntelligenceModels(): Promise<AppIntelligence> {
   return (await structuredFrom(LIST_INTELLIGENCE_TOOL, {})) as AppIntelligence;
 }
 
-/** Remember the model and effort as the ones picked last, so the app starts on them next time. */
+/** Remember the model and effort as the ones picked last for `mode`, so the app starts it on them next time. */
 export async function chooseIntelligenceModel(
+  mode: ModelMode,
   model: string,
   reasoningEffort: ReasoningEffort,
 ): Promise<AppIntelligence> {
   return (await structuredFrom(CHOOSE_INTELLIGENCE_TOOL, {
+    mode,
     model,
     reasoning_effort: reasoningEffort,
   })) as AppIntelligence;

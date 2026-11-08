@@ -1,6 +1,6 @@
 `list-intelligence-models` lists the AI models to pick from for `create-3d-model`, each with the
-reasoning efforts it takes, and the default it runs with when given neither. The app's picker offers the
-same. Pass a pick to `create-3d-model` as `--agent-provider`, `--model`, and `--reasoning-effort`.
+reasoning efforts it takes, and the default each mode runs with when given none of them. The app's
+picker offers the same. Pass a pick to `create-3d-model` as `--agent-provider`, `--model`, and `--reasoning-effort`.
 
 ```bash
 modeling-3d list-intelligence-models
@@ -31,6 +31,11 @@ JSON on stdout:
     {"agent_provider": "codex", "id": "gpt-6-astra", "label": "Astra 6",
      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]}
   ],
-  "default": {"agent_provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium"}
+  "defaults": {
+    "shape": {"agent_provider": "codex", "model": "gpt-6-astra", "reasoning_effort": "xhigh"},
+    "rig": {"agent_provider": "codex", "model": "gpt-6-astra", "reasoning_effort": "xhigh"},
+    "color": {"agent_provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "xhigh"},
+    "detail": {"agent_provider": "claude", "model": "claude-opus-5-5", "reasoning_effort": "xhigh"}
+  }
 }
 ```

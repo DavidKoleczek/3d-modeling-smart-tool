@@ -118,6 +118,28 @@ def test_models_list_newest_first_with_their_files_and_folders_without_a_record_
     assert listing.unreadable == []
 
 
+def test_a_model_moves_up_as_a_run_on_it_starts_and_ends_and_holds_still_as_it_works() -> None:
+    bear = make_model("bear", minutes=0, status="running", pid=os.getpid())
+    make_model("fox", minutes=30)
+    make_model("crashed", minutes=10, status="running", pid=GONE_PID)
+    record = load_record(bear)
+    record.runs[-1].last_event = START + timedelta(hours=1)
+    write_record(bear, record)
+    working = lib.list_3d_models()
+    record.runs[-1] = record.runs[-1].model_copy(update={"status": "done", "finished": START + timedelta(hours=2)})
+    write_record(bear, record)
+
+    ended = lib.list_3d_models()
+
+    assert [(model.name, model.updated) for model in working.models] == [
+        ("fox", START + timedelta(minutes=31)),
+        ("crashed", START + timedelta(minutes=11)),
+        ("bear", START),
+    ]
+    assert [model.name for model in ended.models] == ["bear", "fox", "crashed"]
+    assert ended.models[0].updated == START + timedelta(hours=2)
+
+
 @pytest.mark.parametrize(
     ("agent_provider", "rollout", "resumable"),
     [

@@ -17,8 +17,8 @@ references: files, folders, and models in the directory. With a model in view, w
 asks for a change, continuing the model's session unless they switch that off or pick a model of
 another agent provider, or steers the run working on it, which Stop ends.
 Both pick the AI model and reasoning effort the next run uses, from those
-`list-intelligence-models` offers. The app remembers the pick for the directory in `.app.json`
-beside the models; a pick made while a run works applies to the next one.
+`list-intelligence-models` offers, starting on the mode's default. The app remembers the pick for
+each mode in the directory in `.app.json` beside the models; a pick made while a run works applies to the next one.
 Runs started there go on after the app stops. Nothing done in the app is sent to an agent
 session; a session sees it with `read-3d-model-activity`.
 Each model's menu in the list renames it in place, or deletes it, each after the person

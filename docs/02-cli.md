@@ -40,7 +40,7 @@ modeling-3d app [--port <n>] [--directory <dir>]
 modeling-3d create-3d-model PROMPT --name <name> [--directory <dir>] [--reference <path>]...
     [--max-triangles <n|none>] [--max-draw-calls <n|none>] [--screen-size <smallest-largest|none>]
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
-    [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
+    [--reasoning-effort xhigh] [--timeout-seconds 3600] [--detach]
 ```
 
 `lib.create_3d_model()`, run to its end. Each event is printed to stdout as one JSON line; the last is `finished` or `failed`, carrying the result in `data`. Exits 0 when the result's `status` is `done`, otherwise 1. A failure before the agent starts exits 1 with its message on stderr.
@@ -65,7 +65,7 @@ An agent harness with its own way to run a command in the background can use tha
 ```bash
 modeling-3d rig-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
-    [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
+    [--reasoning-effort xhigh] [--timeout-seconds 3600] [--detach]
 ```
 
 `lib.rig_3d_model()`, run to its end, printed and exited as for `create-3d-model`, with the same signals, `--resume-session` values, `--detach`, and origin. `PROMPT` may be left out. It takes no budget options, since a rig works to the model's own. Exits 1 with its message on stderr when the model does not exist or is not built yet.
@@ -75,7 +75,7 @@ modeling-3d rig-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference
 ```bash
 modeling-3d color-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
-    [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
+    [--reasoning-effort xhigh] [--timeout-seconds 3600] [--detach]
 ```
 
 `lib.color_3d_model()`, run and exited as `rig-3d-model` is, taking the same options. `PROMPT` may be left out, and the agent works out the roles and colors.
@@ -85,7 +85,7 @@ modeling-3d color-3d-model [PROMPT] --name <name> [--directory <dir>] [--referen
 ```bash
 modeling-3d detail-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
-    [--reasoning-effort medium] [--timeout-seconds 3600] [--detach]
+    [--reasoning-effort xhigh] [--timeout-seconds 3600] [--detach]
 ```
 
 `lib.detail_3d_model()`, run and exited as `rig-3d-model` is, taking the same options. `PROMPT` may be left out, and the agent works out what to paint.

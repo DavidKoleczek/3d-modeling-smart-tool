@@ -190,7 +190,7 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
         render = (await client.read_resource("modeling-3d://models/cub/references/front%20view.png")).contents[0]
 
     summary = ModelSummary.model_validate(created.structured_content)
-    assert (summary.name, summary.status, listing.last_viewed) == ("cub", "running", "cub")
+    assert (summary.name, summary.status, listing.last_viewed) == ("cub", "running", None)
     assert AppLibrary.model_validate(library.structured_content).last_prompt == "A cub"
     assert not cancelled.is_error, text_of(cancelled)
     kinds = [(entry.kind, entry.origin, entry.text) for entry in second.entries if entry.kind != "ended"]
@@ -474,39 +474,50 @@ async def test_only_a_model_s_glb_renders_and_reference_images_can_be_read(
             assert message in str(failure.value), uri
 
 
-async def test_the_view_remembers_the_ai_model_picked_in_the_app_directory_until_it_is_no_longer_offered(
+async def test_the_view_remembers_the_ai_model_picked_for_each_mode_in_the_app_directory_until_it_is_not_offered(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: agent_provider == "claude")
     directory = tmp_path / "models"
+    directory.mkdir()
+    # As kept before picks were by mode: one for every mode, which none is held to now.
+    old = {"agent_provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium"}
+    (directory / ".app.json").write_text(json.dumps({"intelligence": old, "last_prompt": "A cub"}), encoding="utf-8")
     app_server = open_app(directory=directory)
     options = lib.list_intelligence_models()
     picked = IntelligenceChoice(agent_provider="claude", model=options.models[-1].id, reasoning_effort="high")
+    shaped = picked.model_copy(update={"model": options.models[0].id})
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         before = await client.call_tool("list_intelligence_models", {})
         chosen = await client.call_tool(
-            "choose_intelligence_model", {"model": picked.model, "reasoning_effort": "high"}
+            "choose_intelligence_model", {"mode": "color", "model": picked.model, "reasoning_effort": "high"}
+        )
+        await client.call_tool(
+            "choose_intelligence_model", {"mode": "shape", "model": shaped.model, "reasoning_effort": "high"}
         )
         after = await client.call_tool("list_intelligence_models", {})
-        unknown = await client.call_tool("choose_intelligence_model", {"model": "nope", "reasoning_effort": "high"})
+        unknown = await client.call_tool(
+            "choose_intelligence_model", {"mode": "color", "model": "nope", "reasoning_effort": "high"}
+        )
         ultra = await client.call_tool(
-            "choose_intelligence_model", {"model": picked.model, "reasoning_effort": "ultra"}
+            "choose_intelligence_model", {"mode": "color", "model": picked.model, "reasoning_effort": "ultra"}
         )
         monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: False)
         gone = await client.call_tool("list_intelligence_models", {})
 
     assert AppIntelligence.model_validate(before.structured_content) == AppIntelligence(
-        **options.model_dump(), chosen=None
+        **options.model_dump(), chosen={}
     )
-    assert AppIntelligence.model_validate(chosen.structured_content).chosen == picked
-    assert AppIntelligence.model_validate(after.structured_content).chosen == picked
-    assert AppState.model_validate_json((directory / ".app.json").read_text(encoding="utf-8")).intelligence == picked
+    assert AppIntelligence.model_validate(chosen.structured_content).chosen == {"color": picked}
+    assert AppIntelligence.model_validate(after.structured_content).chosen == {"color": picked, "shape": shaped}
+    state = AppState.model_validate_json((directory / ".app.json").read_text(encoding="utf-8"))
+    assert (state.last_intelligence, state.last_prompt) == ({"color": picked, "shape": shaped}, "A cub")
     assert unknown.structured_content == {"reason": "no-such-intelligence-model", "model": None}
     assert ", ".join(model.id for model in options.models) in text_of(unknown)
     assert ultra.structured_content == {"reason": "bad-reasoning-effort", "model": None}
     assert ", ".join(PROVIDER_REASONING_EFFORTS["claude"]) in text_of(ultra)
-    assert AppIntelligence.model_validate(gone.structured_content).chosen is None
+    assert AppIntelligence.model_validate(gone.structured_content).chosen == {}
 
 
 async def test_the_view_keeps_the_person_s_settings_in_their_config_directory_for_every_directory(

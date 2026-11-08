@@ -5,7 +5,7 @@ from typing import Any
 from mcp.server.apps import APP_MIME_TYPE
 from mcp.types import Resource, ResourceTemplate, Tool
 
-from modeling_3d.schemas import AGENT_PROVIDERS, REASONING_EFFORTS
+from modeling_3d.schemas import AGENT_PROVIDERS, MODES, REASONING_EFFORTS
 
 VIEW_URI = "ui://modeling-3d/app"
 MODEL_FILE_PREFIX = "modeling-3d://models/"
@@ -83,8 +83,7 @@ RUN_PROPERTIES: dict[str, Any] = {
 CREATE_MODEL = Tool(
     name="create_3d_model",
     description="Create a model in the app's directory, or change the shape of the one by that name, in a run of its "
-    "own that outlives this server; return the model's summary once its agent runs, and record it as viewed last. "
-    "Called by the view.",
+    "own that outlives this server; return the model's summary once its agent runs. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
@@ -108,7 +107,7 @@ CREATE_MODEL = Tool(
 RIG_MODEL = Tool(
     name="rig_3d_model",
     description="Rig a built model in the app's directory, to its own budgets, in a run of its own that outlives this "
-    "server; return the model's summary once its agent runs, and record it as viewed last. Called by the view.",
+    "server; return the model's summary once its agent runs. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
@@ -122,8 +121,7 @@ RIG_MODEL = Tool(
 COLOR_MODEL = Tool(
     name="color_3d_model",
     description="Color a built model in the app's directory by role, to its own budgets, in a run of its own that "
-    "outlives this server; return the model's summary once its agent runs, and record it as viewed last. Called by the "
-    "view.",
+    "outlives this server; return the model's summary once its agent runs. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
@@ -137,8 +135,7 @@ COLOR_MODEL = Tool(
 DETAIL_MODEL = Tool(
     name="detail_3d_model",
     description="Paint the surface detail of a built model in the app's directory, to its own budgets, in a run of its "
-    "own that outlives this server; return the model's summary once its agent runs, and record it as viewed last. "
-    "Called by the view.",
+    "own that outlives this server; return the model's summary once its agent runs. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
@@ -221,22 +218,23 @@ READ_TOOL_CALL = Tool(
 )
 LIST_INTELLIGENCE = Tool(
     name="list_intelligence_models",
-    description="The AI models and reasoning efforts to pick from, and the ones the person picked last in the app's "
-    "directory. Called by the view.",
+    description="The AI models and reasoning efforts to pick from, what each mode runs with when given none, and what "
+    "the person picked last for each mode in the app's directory. Called by the view.",
     input_schema={"type": "object", "properties": {}},
     _meta=APP_ONLY,
 )
 CHOOSE_INTELLIGENCE = Tool(
     name="choose_intelligence_model",
-    description="Remember an AI model and reasoning effort as the ones the person picked last in the app's "
-    "directory, and return what can be picked. Called by the view.",
+    description="Remember an AI model and reasoning effort as the ones the person picked last for the mode in the "
+    "app's directory, and return what can be picked. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
+            "mode": {"type": "string", "enum": list(MODES)},
             "model": {"type": "string"},
             "reasoning_effort": {"type": "string", "enum": list(REASONING_EFFORTS)},
         },
-        "required": ["model", "reasoning_effort"],
+        "required": ["mode", "model", "reasoning_effort"],
     },
     _meta=APP_ONLY,
 )

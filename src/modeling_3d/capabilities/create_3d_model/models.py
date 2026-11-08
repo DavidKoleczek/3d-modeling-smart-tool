@@ -167,7 +167,15 @@ def model_summary(target: Path, record: ModelRecord) -> ModelSummary:
     if run is not None:
         # Left as it is on disk: the next run on the model marks it failed, and a listing never races a writer.
         status = "crashed" if run.status == "running" and not alive(run.pid) else run.status
-    times = [record.created] if run is None else [run.started, run.last_event, run.finished]
+    if run is None:
+        times = [record.created]
+    elif status == "running":
+        # Its events leave it be, so a gallery ordered by it holds still while runs work and moves only as they start
+        # and end.
+        times = [run.started]
+    else:
+        # One that ended without recording when, as one whose process is gone, ended with its last event.
+        times = [run.started, run.last_event, run.finished]
     session = last_session(record)
     return ModelSummary(
         name=target.name,

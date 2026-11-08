@@ -50,7 +50,7 @@ function App() {
   const handoffs = useRef(0);
   const mode = (model && modes[model.id]) || model?.last_run?.mode || "shape";
   const next: NextRequest = {
-    intelligence: useIntelligence(model),
+    intelligence: useIntelligence(model, mode),
     mode,
     onMode: (picked) => {
       if (!model) {

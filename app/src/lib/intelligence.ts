@@ -6,6 +6,7 @@ import {
   type IntelligenceChoice,
   type IntelligenceModel,
   type AppIntelligence,
+  type ModelMode,
   type ModelSummary,
   type ReasoningEffort,
 } from "@/lib/api";
@@ -78,8 +79,8 @@ export function providerLabel(provider: string): string {
 export type Intelligence = {
   options: AppIntelligence | null;
   /**
-   * What the next request runs with: the person's pick, else what the model in view last ran with, else their last
-   * pick in the directory, else the default; null until read.
+   * What the next request runs with: the person's pick in its mode, else what the model in view last ran with when that
+   * was in the same mode, else their last pick for the mode in the directory, else the mode's default; null until read.
    */
   choice: IntelligenceChoice | null;
   error: string | null;
@@ -91,16 +92,19 @@ export type Intelligence = {
 };
 
 /**
- * The AI models and reasoning efforts to pick from, and the pick, remembered in the app's directory. For a request on
- * `shown`, the pick starts on what its last run used, so a request goes on in that session unless the person picks
- * otherwise, and a pick they make lasts while that model is in view.
+ * The AI models and reasoning efforts to pick from, and the pick for a request in `mode`, remembered for that mode in
+ * the app's directory. For a request on `shown`, the pick starts on what its last run used when that run was in `mode`,
+ * so a request goes on in that session unless the person picks otherwise, and a pick they make lasts while that model
+ * is in view in that mode. In another mode a request starts a fresh session, so it starts on that mode's own.
  */
 export function useIntelligence(
-  shown: ModelSummary | null = null,
+  shown: ModelSummary | null,
+  mode: ModelMode,
 ): Intelligence {
   const [options, setOptions] = useState<AppIntelligence | null>(null);
   const [picked, setPicked] = useState<{
     model: string | null;
+    mode: ModelMode;
     choice: IntelligenceChoice;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -134,6 +138,7 @@ export function useIntelligence(
     const effort = nearestEffort(reasoningEffort, offered.reasoning_efforts);
     setPicked({
       model: shown?.name ?? null,
+      mode,
       choice: {
         agent_provider: offered.agent_provider,
         model,
@@ -142,7 +147,7 @@ export function useIntelligence(
     });
     setError(null);
     recording.current = recording.current.then(() =>
-      chooseIntelligenceModel(model, effort).then(
+      chooseIntelligenceModel(mode, model, effort).then(
         setOptions,
         (cause: unknown) => setError(describe(cause)),
       ),
@@ -150,14 +155,16 @@ export function useIntelligence(
   };
 
   const last =
-    shown?.last_run && options
+    shown?.last_run?.mode === mode && options
       ? asOffered(shown.last_run, options.models)
       : null;
   const choice =
-    (picked?.model === (shown?.name ?? null) ? picked.choice : null) ??
+    (picked?.model === (shown?.name ?? null) && picked.mode === mode
+      ? picked.choice
+      : null) ??
     last ??
-    options?.chosen ??
-    options?.default ??
+    options?.chosen[mode] ??
+    options?.defaults[mode] ??
     null;
   return {
     options,
