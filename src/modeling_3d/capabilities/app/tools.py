@@ -44,6 +44,24 @@ VIEW_MODEL = Tool(
     input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
     _meta=APP_ONLY,
 )
+RENAME_MODEL = Tool(
+    name="rename_3d_model",
+    description="Rename a model in the app's directory: its folder, the records that name it, and the person's pins "
+    "of it, and return its summary under the new name. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {"name": {"type": "string"}, "new_name": {"type": "string"}},
+        "required": ["name", "new_name"],
+    },
+    _meta=APP_ONLY,
+)
+DELETE_MODEL = Tool(
+    name="delete_3d_model",
+    description="Delete a model in the app's directory and everything in its folder, for good, stopping a run working "
+    "on it first. Called by the view.",
+    input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    _meta=APP_ONLY,
+)
 # What every request that starts a run on a model takes, whatever its mode.
 RUN_PROPERTIES: dict[str, Any] = {
     "name": {"type": "string"},
@@ -354,6 +372,8 @@ KEEP_UPLOAD = Tool(
 VIEW_TOOLS = [
     LIST_MODELS,
     VIEW_MODEL,
+    RENAME_MODEL,
+    DELETE_MODEL,
     CREATE_MODEL,
     RIG_MODEL,
     COLOR_MODEL,

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  deleteModel,
   listModels,
+  renameModel,
   viewModel,
   type ModelListing,
   type ModelSummary,
@@ -10,63 +12,85 @@ import { describe } from "@/lib/errors";
 
 const POLL_MS = 1000;
 
+/** The model in view: by its id, which a rename keeps, once a listing has it, and by its name until then. */
+type Selection = { id: string | null; name: string };
+
+function selectedIn(
+  listing: ModelListing,
+  selection: Selection | null,
+): ModelSummary | undefined {
+  if (selection === null) {
+    return undefined;
+  }
+  return (
+    listing.models.find((model) => model.id === selection.id) ??
+    listing.models.find((model) => model.name === selection.name)
+  );
+}
+
 /**
- * The models in the app's directory, polled, and which one is in view.
+ * The models in the app's directory, polled, which one is in view, and renaming and deleting them.
  *
  * The view opens on the model viewed last. After that it switches when the model viewed last changes to one it did
  * not pick itself, so `modeling-3d view-3d-model` from the host session brings a model up, and when a new model
- * appears, so a model the agent starts shows as it is built.
+ * appears, so a model the agent starts shows as it is built. It follows the model in view by its id, so a rename,
+ * from here or anywhere else, keeps it in view.
  */
 export function useModels(): {
   listing: ModelListing | null;
   model: ModelSummary | null;
   error: string | null;
   pick: (name: string) => Promise<void>;
+  rename: (name: string, newName: string) => Promise<void>;
+  remove: (name: string) => Promise<void>;
 } {
   const [listing, setListing] = useState<ModelListing | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Selection | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The last `last_viewed` the view saw or set; undefined before the first listing.
   const followed = useRef<string | null | undefined>(undefined);
+  // By id, so a model renamed is never taken for a new one.
   const known = useRef<Set<string> | null>(null);
   // A listing asked for before or while a pick is recorded still carries the old `last_viewed`, which must not undo it.
   const picks = useRef({ pending: 0, generation: 0 });
+  // Counts the renames and deletes made here, so a listing asked for before one never brings back what it changed.
+  const edits = useRef(0);
 
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const apply = (fresh: ModelListing, canFollow: boolean) => {
-      const names = fresh.models.map((model) => model.name);
       const before = known.current;
-      known.current = new Set(names);
-      let target: string | null | undefined;
+      known.current = new Set(fresh.models.map((model) => model.id));
+      const named = (name: string | null) =>
+        fresh.models.find((model) => model.name === name);
+      let target: ModelSummary | undefined;
       if (before === null) {
         followed.current = fresh.last_viewed;
-        target = fresh.last_viewed;
+        target = named(fresh.last_viewed);
       } else if (canFollow && fresh.last_viewed !== followed.current) {
         followed.current = fresh.last_viewed;
-        target = fresh.last_viewed ?? undefined;
+        target = named(fresh.last_viewed);
       } else {
-        target = names.find((name) => !before.has(name));
+        target = fresh.models.find((model) => !before.has(model.id));
       }
       setListing(fresh);
       setError(null);
       setSelected((current) => {
-        const next = target ?? current;
-        return next !== null && names.includes(next)
-          ? next
-          : (names[0] ?? null);
+        const next = target ?? selectedIn(fresh, current) ?? fresh.models[0];
+        return next ? { id: next.id, name: next.name } : null;
       });
     };
 
     const poll = async () => {
       const asked = picks.current.generation;
+      const edited = edits.current;
       try {
         const fresh = await listModels();
         const canFollow =
           picks.current.pending === 0 && asked === picks.current.generation;
-        if (!stopped) {
+        if (!stopped && edited === edits.current) {
           apply(fresh, canFollow);
         }
       } catch (cause) {
@@ -88,7 +112,7 @@ export function useModels(): {
   const pick = useCallback(async (name: string) => {
     picks.current.pending += 1;
     followed.current = name;
-    setSelected(name);
+    setSelected({ id: null, name });
     try {
       await viewModel(name);
     } catch (cause) {
@@ -99,9 +123,45 @@ export function useModels(): {
     }
   }, []);
 
-  const model =
-    listing?.models.find((entry) => entry.name === selected) ?? null;
-  return { listing, model, error, pick };
+  // Each shows at once, ahead of the next listing, and throws what refused it for the caller to show.
+  const rename = useCallback(async (name: string, newName: string) => {
+    const renamed = await renameModel(name, newName);
+    edits.current += 1;
+    if (followed.current === name) {
+      followed.current = newName;
+    }
+    setListing(
+      (current) =>
+        current && {
+          ...current,
+          models: current.models.map((model) =>
+            model.id === renamed.id ? renamed : model,
+          ),
+          last_viewed:
+            current.last_viewed === name ? newName : current.last_viewed,
+        },
+    );
+  }, []);
+
+  const remove = useCallback(async (name: string) => {
+    await deleteModel(name);
+    edits.current += 1;
+    if (followed.current === name) {
+      followed.current = null;
+    }
+    setListing(
+      (current) =>
+        current && {
+          ...current,
+          models: current.models.filter((model) => model.name !== name),
+          last_viewed:
+            current.last_viewed === name ? null : current.last_viewed,
+        },
+    );
+  }, []);
+
+  const model = (listing && selectedIn(listing, selected)) ?? null;
+  return { listing, model, error, pick, rename, remove };
 }
 
 /** A directory as the app shows it, by its last two folders, such as `toys\.modeling-3d`. */
@@ -138,7 +198,7 @@ export function pastelFor(name: string): string {
   return PASTELS[hash % PASTELS.length];
 }
 
-// `NAME_PATTERN` in create.py.
+// `NAME_PATTERN` in record.py.
 export const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const FILLER = new Set(
   "a an and the of with like in on for to from make me create build model 3d please this that it".split(
@@ -160,4 +220,24 @@ export function suggestName(prompt: string, models: ModelSummary[]): string {
     name = `${base}-${suffix}`;
   }
   return name;
+}
+
+/** What is wrong with `name` as the new name of the model named `current`, for the person; null when nothing is. */
+export function renameProblem(
+  name: string,
+  current: string,
+  models: ModelSummary[],
+): string | null {
+  if (!name) {
+    return "Type a name.";
+  }
+  if (!NAME.test(name)) {
+    return "Use letters, digits, dots, dashes, and underscores, starting with a letter or digit.";
+  }
+  // Ignoring case, as the directory does on Windows and macOS, apart from the model itself, which may change its case.
+  const taken = models.find(
+    (model) =>
+      model.name !== current && model.name.toLowerCase() === name.toLowerCase(),
+  );
+  return taken ? `${taken.name} is already taken.` : null;
 }

@@ -19,6 +19,7 @@ from modeling_3d.capabilities.create_3d_model.constants import (
     KEPT,
     MODE_CAPABILITIES,
     MODE_PROMPTS,
+    MOVED,
     NO_BUDGET,
     ON_SCREEN,
     READ_GUIDANCE,
@@ -59,7 +60,11 @@ def prompt(
     if resumed is not None:
         mode = "" if resumed.mode == run.mode else f"\n{CHANGED_MODE}\n\n{instructions}\n"
         return template("resume.md").format(
-            request=request, mode=mode, budgets=budgets, references=listed(run.references, ADDED_REFERENCES)
+            moved=_moved(resumed, target, root),
+            request=request,
+            mode=mode,
+            budgets=budgets,
+            references=listed(run.references, ADDED_REFERENCES),
         )
     existing = ""
     if not created:
@@ -78,6 +83,16 @@ def prompt(
         references=listed(run.references, REFERENCES),
         existing=existing,
     )
+
+
+def _moved(resumed: ModelRunRecord, target: Path, root: Path) -> str:
+    """Where the model is now, for a session that last worked on it elsewhere; nothing for one that did not."""
+    # Compared as text: a rename that changes only the case moves the model for its session, whose check names it
+    # exactly, though Windows paths that differ only in case are equal.
+    if resumed.directory is None or str(resumed.directory) == str(target):
+        return ""
+    moved = MOVED.format(old=resumed.directory.name, name=target.name, directory=target, models=root)
+    return f"{moved}\n\n"
 
 
 def _joined(items: list[str]) -> str:

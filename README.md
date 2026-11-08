@@ -106,6 +106,10 @@ modeling-3d read-3d-model-tool-call --name bear --run 20261017-100000-ab12cd --i
 modeling-3d list-3d-models
 modeling-3d view-3d-model --name bear
 
+# Rename a model, its folder and what names it, or delete it for good, stopping a run on it first
+modeling-3d rename-3d-model --name bear --new-name grizzly
+modeling-3d delete-3d-model --name grizzly
+
 # Optionally, make `blender` run your installed Blender, for opening models in it
 modeling-3d add-blender-to-path
 

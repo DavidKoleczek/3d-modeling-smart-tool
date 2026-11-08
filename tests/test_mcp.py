@@ -29,6 +29,8 @@ MCP_APPS_HOST = {"extensions": {EXTENSION_ID: {"mimeTypes": [APP_MIME_TYPE]}}}
 VIEW_TOOLS = (
     "list_3d_models",
     "view_3d_model",
+    "rename_3d_model",
+    "delete_3d_model",
     "create_3d_model",
     "rig_3d_model",
     "color_3d_model",

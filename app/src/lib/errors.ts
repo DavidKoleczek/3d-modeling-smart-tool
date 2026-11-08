@@ -9,6 +9,7 @@ export type FailureReason =
   | "no-reference-model"
   | "already-running"
   | "not-running"
+  | "model-busy"
   | "provider-mismatch"
   | "agent-unavailable"
   | "start-failed"
@@ -50,7 +51,7 @@ function worded(error: AppError): string | null {
     case "invalid-name":
       return "A name can use letters, digits, dots, dashes, and underscores, and starts with a letter or digit.";
     case "name-in-use":
-      return `Something that isn't a model is already named ${model} in this folder. Choose another name.`;
+      return `${model} is already taken in this folder. Choose another name.`;
     case "no-such-model":
       return `${model} isn't in this folder anymore.`;
     case "no-such-session":
@@ -65,6 +66,8 @@ function worded(error: AppError): string | null {
       return `${model} is already being worked on. Steer it, or stop it before asking for something new.`;
     case "not-running":
       return `${model} isn't being worked on anymore, so that wasn't sent. Send it again to ask for it as a change.`;
+    case "model-busy":
+      return `${model} is being worked on or checked right now. Wait for it to finish, or stop it, then try again.`;
     case "provider-mismatch":
       return `${model}'s last session ran on another agent. Switch off Continue session to change it in a fresh one.`;
     case "agent-unavailable":

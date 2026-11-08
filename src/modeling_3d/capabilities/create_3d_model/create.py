@@ -31,6 +31,7 @@ from modeling_3d.capabilities.create_3d_model.record import (
     load_record,
     make_models_directory,
     missing_model,
+    require_name,
     write_record,
     write_runs,
 )
@@ -62,7 +63,6 @@ from modeling_3d.schemas import (
     ReasoningEffort,
 )
 
-NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # The agent's own timeout outlasts the run's, so the run is what stops it and can say it timed out.
 AGENT_TIMEOUT_GRACE_SECONDS = 60
 # What starts a detached run, given its request on stdin. Tests swap it for a command that fakes the agent.
@@ -360,6 +360,7 @@ async def start_run(
             screen_size=on_screen,
             session_id=resumed.session_id if resumed is not None else None,
             origin=origin,
+            directory=target,
             pid=os.getpid(),
             started=now,
         )
@@ -497,13 +498,7 @@ def _running_run(name: str, directory: Path | None) -> Path:
 
 def _model_directory(root: Path, name: str) -> tuple[Path, ModelRecord | None]:
     """The model's directory, and its record when a model by that name exists already, ignoring case."""
-    if not NAME_PATTERN.match(name):
-        raise Modeling3dError(
-            f"{name!r} cannot name a model. Use letters, digits, '.', '_', and '-', starting with a letter or "
-            "digit, such as 'bear' or 'bear-2'.",
-            "invalid-name",
-            name,
-        )
+    require_name(name)
     # Listed rather than probed, since Windows and macOS find `Bear` when only `bear` exists.
     taken = {path.name.lower(): path for path in root.iterdir()} if root.is_dir() else {}
     found = taken.get(name.lower())

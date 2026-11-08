@@ -263,7 +263,7 @@ export function ActivityPanel({
       {stopError && <Notice className="mx-3 mt-2 shrink-0">{stopError}</Notice>}
       {shown && (
         <Composer
-          key={shown.name}
+          key={shown.id}
           model={shown}
           models={models}
           next={next}

@@ -86,7 +86,14 @@ import { cn } from "@/lib/utils";
 export type ViewMode = "3d" | "renders" | "checks";
 
 /** The model's scene as loaded, from the build at `built`; `rebuilt` once it replaced an earlier build in view. */
-type Shown = { name: string; scene: Object3D; built: string; rebuilt: boolean };
+/** The model in view by its id, which a rename keeps, and the name its GLB was read under. */
+type Shown = {
+  id: string;
+  name: string;
+  scene: Object3D;
+  built: string;
+  rebuilt: boolean;
+};
 
 /** What the viewport needs of drei's OrbitControls, which `makeDefault` puts in the store untyped. */
 type Orbit = {
@@ -285,9 +292,7 @@ export function Viewport({
   onCompose: (text: string, files: File[], mode?: ModelMode) => void;
 }) {
   const [shown, setShown] = useState<Shown | null>(null);
-  const [error, setError] = useState<{ name: string; text: string } | null>(
-    null,
-  );
+  const [error, setError] = useState<{ id: string; text: string } | null>(null);
   const { settings } = useSettings();
   const colors = useSceneColors();
   const dark = useTheme() === "dark";
@@ -297,11 +302,12 @@ export function Viewport({
   const capture = useRef<CaptureApi | null>(null);
   // By model, what the person is marking up, which outlasts looking at another model or the renders for a while.
   const [markups, setMarkups] = useState<Record<string, MarkupDraft>>({});
+  const id = model?.id;
   const name = model?.name;
   const built = model?.built;
 
   useEffect(() => {
-    if (!name || !built) {
+    if (!id || !name || !built) {
       return;
     }
     let current = true;
@@ -311,10 +317,11 @@ export function Viewport({
         (scene) => {
           if (current) {
             setShown((before) => ({
+              id,
               name,
               scene,
               built,
-              rebuilt: before?.name === name,
+              rebuilt: before?.id === id,
             }));
             setError(null);
           } else {
@@ -323,19 +330,19 @@ export function Viewport({
         },
         (cause) => {
           if (current) {
-            setError({ name, text: describe(cause) });
+            setError({ id, text: describe(cause) });
           }
         },
       );
     return () => {
       current = false;
     };
-  }, [name, built]);
+  }, [id, name, built]);
 
   const scene = shown?.scene;
 
-  const showing = shown !== null && shown.name === name;
-  const failure = error !== null && error.name === name ? error.text : null;
+  const showing = shown !== null && shown.id === id;
+  const failure = error !== null && error.id === id ? error.text : null;
   const loading = useDelayed(Boolean(model?.built) && !showing && !failure);
   const looking = useDelayed(listing === null);
 
@@ -348,7 +355,7 @@ export function Viewport({
     updateSettings((current) => ({ ...current, [tool]: !current[tool] }));
 
   const in3d = mode === "3d";
-  const markup = (name && markups[name]) || NO_MARKUP;
+  const markup = (id && markups[id]) || NO_MARKUP;
   const locked = in3d && markup.viewing !== null;
 
   // Where the person set each motion of the scene in view; a new build starts at rest.
@@ -442,15 +449,15 @@ export function Viewport({
   // Forgets a model's markup once nothing is left in it.
   const changeMarkup = (change: (markup: MarkupDraft) => MarkupDraft) =>
     setMarkups((current) => {
-      if (!name) {
+      if (!id) {
         return current;
       }
       const next = { ...current };
-      const after = change(current[name] ?? NO_MARKUP);
+      const after = change(current[id] ?? NO_MARKUP);
       if (after.snapshots.length || after.message || after.marking) {
-        next[name] = after;
+        next[id] = after;
       } else {
-        delete next[name];
+        delete next[id];
       }
       return next;
     });
@@ -593,7 +600,7 @@ export function Viewport({
             <RoomLighting />
             <directionalLight position={[3, 6, 4]} intensity={1.5} />
             {/* Keyed by model, so switching models frames the new one however the camera was left. */}
-            <group key={shown.name}>
+            <group key={shown.id}>
               <primitive
                 object={shown.scene}
                 onPointerMove={coloring ? pointAt : undefined}

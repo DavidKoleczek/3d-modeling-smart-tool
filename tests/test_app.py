@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import threading
 import time
 from typing import Any
 from urllib.error import HTTPError
@@ -25,6 +26,7 @@ from modeling_3d.capabilities.app import mcp_server
 from modeling_3d.capabilities.app import server as server_module
 from modeling_3d.capabilities.app.folders import choose_files
 from modeling_3d.capabilities.create_3d_model import create, intelligence_models
+from modeling_3d.capabilities.create_3d_model.check import check
 from modeling_3d.capabilities.create_3d_model.record import write_record
 from modeling_3d.schemas import (
     DEFAULT_INTELLIGENCE_MODELS,
@@ -39,12 +41,16 @@ from modeling_3d.schemas import (
     AppState,
     IntelligenceChoice,
     ModelActivity,
+    ModelCheck,
     ModelEvent,
     Modeling3dError,
     ModelListing,
     ModelRecord,
     ModelSummary,
     PaneLayout,
+    PinnedFolder,
+    PinnedPrompt,
+    PinnedReference,
     ToolCall,
 )
 
@@ -748,6 +754,91 @@ async def test_a_dropped_file_pinned_is_kept_beside_the_settings_until_it_is_unp
     assert kept.is_relative_to(config_directory / "modeling-3d" / "kept")
     assert pinned == b"pasted-bytes"
     assert not kept.parent.exists()
+
+
+async def test_the_view_renames_and_deletes_models_but_not_one_the_app_is_checking(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_in(tmp_path, "bear", references=[])
+    model_in(tmp_path, "fox", references=[])
+    released = threading.Event()
+
+    def held_check(name: str, directory: Path) -> ModelCheck:
+        released.wait(TIMEOUT_SECONDS)
+        raise Modeling3dError(f"The check of {name} was stopped.")
+
+    monkeypatch.setattr(check, "check_3d_model", held_check)
+    monkeypatch.setattr(mcp_server, "CHECK_WAIT_SECONDS", 0)
+    app_server = open_app(directory=tmp_path)
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        checking = await client.call_tool("check_3d_model", {"name": "bear"})
+        held_rename = await client.call_tool("rename_3d_model", {"name": "bear", "new_name": "grizzly"})
+        held_delete = await client.call_tool("delete_3d_model", {"name": "bear"})
+        released.set()
+        monkeypatch.setattr(mcp_server, "CHECK_WAIT_SECONDS", TIMEOUT_SECONDS)
+        stopped = await client.call_tool("check_3d_model", {"name": "bear"})
+        renamed = await client.call_tool("rename_3d_model", {"name": "bear", "new_name": "grizzly"})
+        taken = await client.call_tool("rename_3d_model", {"name": "grizzly", "new_name": "Fox"})
+        deleted = await client.call_tool("delete_3d_model", {"name": "fox"})
+        listing = ModelListing.model_validate((await client.call_tool("list_3d_models", {})).structured_content)
+
+    assert checking.structured_content == {"checking": True}
+    for held in (held_rename, held_delete):
+        assert held.structured_content == {"reason": "model-busy", "model": "bear"}
+        assert "being checked in the app" in text_of(held)
+    assert stopped.is_error
+    assert ModelSummary.model_validate(renamed.structured_content).directory == tmp_path / "grizzly"
+    assert taken.structured_content == {"reason": "name-in-use", "model": "fox"}
+    assert (deleted.is_error, text_of(deleted)) == (False, "Deleted fox.")
+    assert [model.name for model in listing.models] == ["grizzly"]
+
+
+def test_renaming_or_deleting_a_model_moves_or_drops_the_person_s_pins_of_it_and_what_was_used_from_it(
+    tmp_path: Path, config_directory: Path
+) -> None:
+    root = tmp_path / "models"
+    bear = model_in(root, "bear", references=[])
+    model_in(root, "fox", references=[])
+    pictures = tmp_path / "pictures"
+    pins = AppPins(
+        references=[
+            PinnedReference(path=bear, kind="model"),
+            PinnedReference(path=bear / "renders" / "front view.png", kind="file"),
+            PinnedReference(path=root / "fox", kind="model"),
+            PinnedReference(path=root / "bearish", kind="folder"),
+        ],
+        folders=[PinnedFolder(path=bear / "renders", shows="files"), PinnedFolder(path=pictures, shows="dialog")],
+        prompts=[PinnedPrompt(text="A bear", mode="shape")],
+    )
+    pinned = config_directory / "modeling-3d" / "app-pins.json"
+    pinned.parent.mkdir(parents=True)
+    pinned.write_text(pins.model_dump_json(), encoding="utf-8")
+    state = AppState(used=[bear / "renders" / "front view.png", pictures / "cub.png"], last_folder=bear / "renders")
+    (root / ".app.json").write_text(state.model_dump_json(), encoding="utf-8")
+
+    lib.rename_3d_model("bear", "grizzly", root)
+    renamed = AppPins.model_validate_json(pinned.read_text(encoding="utf-8"))
+    renamed_state = AppState.model_validate_json((root / ".app.json").read_text(encoding="utf-8"))
+    lib.delete_3d_model("grizzly", root)
+    deleted = AppPins.model_validate_json(pinned.read_text(encoding="utf-8"))
+    deleted_state = AppState.model_validate_json((root / ".app.json").read_text(encoding="utf-8"))
+
+    grizzly = root / "grizzly"
+    assert [reference.path for reference in renamed.references] == [
+        grizzly,
+        grizzly / "renders" / "front view.png",
+        root / "fox",
+        root / "bearish",
+    ]
+    assert [folder.path for folder in renamed.folders] == [grizzly / "renders", pictures]
+    assert renamed.prompts == pins.prompts
+    assert renamed_state == AppState(
+        used=[grizzly / "renders" / "front view.png", pictures / "cub.png"], last_folder=grizzly / "renders"
+    )
+    assert [reference.path for reference in deleted.references] == [root / "fox", root / "bearish"]
+    assert [folder.path for folder in deleted.folders] == [pictures]
+    assert deleted_state == AppState(used=[pictures / "cub.png"], last_folder=None)
 
 
 async def test_the_view_names_and_opens_the_folders_where_the_app_keeps_things(

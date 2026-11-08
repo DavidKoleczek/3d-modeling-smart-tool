@@ -93,7 +93,7 @@ export function Composer({
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const references = useReferences();
+  const references = useReferences(models);
   const { addFiles } = references;
   const field = useRef<HTMLTextAreaElement>(null);
   // The handoff last put in, which StrictMode's second run of the effect would otherwise put in twice.
@@ -104,7 +104,7 @@ export function Composer({
   useEffect(() => {
     if (
       !handoff ||
-      handoff.model !== model.name ||
+      handoff.model !== model.id ||
       handoff.id === taken.current
     ) {
       return;
@@ -116,7 +116,7 @@ export function Composer({
     addFiles(handoff.files);
     field.current?.focus();
     onTaken(handoff.id);
-  }, [handoff, model.name, addFiles, onTaken]);
+  }, [handoff, model.id, addFiles, onTaken]);
   const running = model.status === "running";
   const { intelligence } = next;
   const session = sessionOf(model, next);

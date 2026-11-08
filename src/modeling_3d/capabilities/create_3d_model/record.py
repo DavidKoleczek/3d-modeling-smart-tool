@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -13,6 +14,8 @@ from modeling_3d.schemas import ModelEvent, Modeling3dError, ModelRecord, ModelR
 
 # region: A models directory
 DEFAULT_DIRECTORY = Path(".modeling-3d")
+# What a model the tool makes or renames is named, which is its directory's name.
+NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Written into a models directory the tool makes. Its patterns start with / so they reach only that directory, and
 # being the deepest .gitignore, it decides over the project's own for the files in it.
 GITIGNORE = Path(__file__).parent / "models.gitignore"
@@ -160,7 +163,33 @@ def model_files(target: Path) -> list[str]:
 
 
 def model_names(root: Path) -> list[str]:
-    return sorted(path.parent.name for path in root.glob(f"*/{RECORD}"))
+    # Hidden ones are the tool's own, such as a model being deleted. A name the tool would not choose, such as one a
+    # person gave its folder by hand, still lists.
+    return sorted(path.parent.name for path in root.glob(f"*/{RECORD}") if not path.parent.name.startswith("."))
+
+
+def require_name(name: str) -> None:
+    """Refuse a name the tool would not give a model's directory."""
+    if not NAME_PATTERN.match(name):
+        raise Modeling3dError(
+            f"{name!r} cannot name a model. Use letters, digits, '.', '_', and '-', starting with a letter or "
+            "digit, such as 'bear' or 'bear-2'.",
+            "invalid-name",
+            name,
+        )
+
+
+def move_directory(source: Path, target: Path) -> None:
+    # Windows refuses to move a directory while another process has a file in it open, which a reader such as the
+    # app does only briefly.
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            source.rename(target)
+            return
+        except PermissionError:
+            if attempt == REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(REPLACE_WAIT_SECONDS)
 
 
 def missing_model(root: Path, name: str) -> Modeling3dError:

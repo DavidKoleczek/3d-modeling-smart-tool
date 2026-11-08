@@ -53,6 +53,7 @@ FailureReason = Literal[
     "no-reference-model",
     "already-running",
     "not-running",
+    "model-busy",
     "provider-mismatch",
     "agent-unavailable",
     "start-failed",
@@ -214,6 +215,11 @@ class ModelRunRecord(BaseModel):
     )
     session_id: str | None = None
     origin: str | None = Field(default=None, description="Who asked: `app`, `claude-code:<session id>`, or unknown")
+    directory: Path | None = Field(
+        default=None,
+        description="The model's directory as the run worked in it, which a session resumed after a rename is told it "
+        "moved from; None for runs from before it was kept",
+    )
     status: ModelRunStatus = "running"
     pid: int = Field(description="The process running it; a `running` run whose process is gone has crashed")
     started: datetime

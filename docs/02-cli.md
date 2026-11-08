@@ -147,6 +147,22 @@ modeling-3d view-3d-model --name <name> [--directory <dir>]
 
 `lib.view_3d_model()`, the model's summary printed as JSON. Exits 1 when there is no model by that name.
 
+## modeling-3d rename-3d-model
+
+```bash
+modeling-3d rename-3d-model --name <name> --new-name <new-name> [--directory <dir>]
+```
+
+`lib.rename_3d_model()`, the model's summary under its new name printed as JSON. Exits 1 when there is no model by that name, the new name is not one the tool gives or is held, or a run is working on the model.
+
+## modeling-3d delete-3d-model
+
+```bash
+modeling-3d delete-3d-model --name <name> [--directory <dir>]
+```
+
+`lib.delete_3d_model()`, which stops a run working on the model first. Prints nothing; exits 1 when there is no model by that name, or its run has not ended in time.
+
 ## modeling-3d list-intelligence-models
 
 ```bash

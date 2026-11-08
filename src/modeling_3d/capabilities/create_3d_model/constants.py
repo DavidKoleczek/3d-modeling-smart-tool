@@ -51,6 +51,12 @@ REFERENCES = "References for this request, copied into the model's directory, wi
 CHANGED_MODE = (
     "This request moves on to another stage of the work, whose instructions take the place of the last stage's:"
 )
+# {moved} in resume.md, before the request, for a session that last worked on the model in another directory, as
+# after a rename: {old} is the name it knew, {name} and {directory} the model's own, and {models} its models directory.
+MOVED = (
+    "Since you last worked on it, the model was renamed from {old} to {name}, and its model directory is now "
+    "{directory}. Work there from now on, and pass `--name {name} --directory {models}` to the check-3d-model skill."
+)
 # {references} in resume.md, and after a steering message, heading the references that came with it.
 ADDED_REFERENCES = "Additional references the user has attached, with paths from the model directory:"
 # endregion

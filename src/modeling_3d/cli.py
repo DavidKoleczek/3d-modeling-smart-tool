@@ -545,6 +545,29 @@ def view_3d_model(
 
 
 @app.command()
+def rename_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The model to rename.")],
+    new_name: Annotated[str, typer.Option("--new-name", help="Its new name, which its directory takes.")],
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """Rename a model, its directory and what names it, printing its summary as JSON. Deterministic."""
+    typer.echo(lib.rename_3d_model(name=name, new_name=new_name, directory=directory).model_dump_json(indent=2))
+
+
+@app.command()
+def delete_3d_model(
+    name: Annotated[str, typer.Option("--name", help="The model to delete.")],
+    directory: Annotated[
+        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    ] = None,
+) -> None:
+    """Delete a model and everything in its directory, stopping a run working on it first. Deterministic."""
+    lib.delete_3d_model(name=name, directory=directory)
+
+
+@app.command()
 def list_intelligence_models() -> None:
     """List the AI models and reasoning efforts to pick from, printed as JSON. Deterministic."""
     typer.echo(lib.list_intelligence_models().model_dump_json(indent=2))

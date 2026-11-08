@@ -39,16 +39,16 @@ function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("3d");
   const [fits, setFits] = useState(0);
   const [stats, setStats] = useState<SceneStats | null>(null);
-  const { listing, model, error, pick } = useModels();
-  // By model, the mode the person picked, and whether they switched Continue session on or off since, which the
-  // composer's requests follow.
+  const { listing, model, error, pick, rename, remove } = useModels();
+  // By model id, which a rename keeps, the mode the person picked, and whether they switched Continue session on or
+  // off since, which the composer's requests follow.
   const [modes, setModes] = useState<Record<string, ModelMode>>({});
   const [resumes, setResumes] = useState<Record<string, boolean>>({});
   // Marked views on their way into a model's composer, which may not be showing until its pane opens.
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   // Only ever counts up, so a composer that took one handoff never mistakes the next for it.
   const handoffs = useRef(0);
-  const mode = (model && modes[model.name]) || model?.last_run?.mode || "shape";
+  const mode = (model && modes[model.id]) || model?.last_run?.mode || "shape";
   const next: NextRequest = {
     intelligence: useIntelligence(model),
     mode,
@@ -56,21 +56,21 @@ function App() {
       if (!model) {
         return;
       }
-      setModes((current) => ({ ...current, [model.name]: picked }));
+      setModes((current) => ({ ...current, [model.id]: picked }));
       // Back to what the mode starts with, until the person switches it themselves.
       setResumes((current) => {
         const kept = { ...current };
-        delete kept[model.name];
+        delete kept[model.id];
         return kept;
       });
     },
     // On only in the mode of the session it would continue, so switching mode starts a fresh session by default.
     resume:
-      (model && resumes[model.name]) ??
+      (model && resumes[model.id]) ??
       mode === (model?.last_session?.mode ?? mode),
     onResume: (resume) => {
       if (model) {
-        setResumes((current) => ({ ...current, [model.name]: resume }));
+        setResumes((current) => ({ ...current, [model.id]: resume }));
       }
     },
   };
@@ -152,7 +152,7 @@ function App() {
       next.onMode(mode);
     }
     handoffs.current += 1;
-    setHandoff({ id: handoffs.current, model: model.name, text, files });
+    setHandoff({ id: handoffs.current, model: model.id, text, files });
     const activity = panes.activity.current;
     if (breakpoint === "narrow") {
       setNarrowPane("activity");
@@ -287,6 +287,8 @@ function App() {
                   error={error}
                   search={search}
                   onWorkFrom={startNew}
+                  onRename={rename}
+                  onDelete={remove}
                 />
               }
               viewport={viewport}

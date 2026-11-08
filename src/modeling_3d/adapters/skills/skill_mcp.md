@@ -30,6 +30,9 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
   request box's Shape, Rig, Color, and Detail modes, always detach, so their runs outlive the
   server, and take the agent provider, model, and reasoning effort the person picked, the models in
   the directory to work from, and the uploads to work from.
+- `rename_3d_model` and `delete_3d_model`: the library's, on the app's directory, which the view
+  calls once the person confirms. Delete stops a run working on the model first. Both refuse while
+  the app's own check of the model runs.
 - `check_3d_model`: the library's, against the model's own budgets. A check still going after a
   while returns `{"checking": true}`, and calling again waits on the same check, so a check that
   outlasts a host's time limit for a call still reaches the view. The view reads the report and

@@ -87,6 +87,7 @@ async def test_a_new_model_is_built_and_recorded_in_its_own_directory(working_di
     assert "runs" not in json.loads((directory / "model.json").read_text(encoding="utf-8"))
     [entry] = record.runs
     assert (entry.id, entry.status, entry.session_id, entry.pid) == (run.run_id, "done", SESSION, os.getpid())
+    assert entry.directory == directory
     assert (entry.mode, events[0].data["mode"]) == ("shape", "shape")
     assert (entry.agent_provider, entry.origin) == ("claude", "claude-code:abc")
     started = events[0].data
@@ -256,6 +257,29 @@ async def test_a_name_a_model_has_changes_it_in_a_fresh_session_unless_told_to_r
     assert resume.resume == SESSION
     assert resume.prompt.strip() == "And the ears rounder"
     assert [entry.resumed for entry in record_of(first.directory).runs] == [False, False, True]
+
+
+async def test_a_session_continued_after_a_rename_is_told_once_where_the_model_is_now(working_directory: Path) -> None:
+    _, first, _, _ = await run_to_end(name="bear")
+    record = record_of(first.directory)
+    # As a run from before runs kept their directory.
+    record.runs[0].directory = None
+    write_record(first.directory, record)
+
+    lib.rename_3d_model("bear", "grizzly")
+    _, renamed, resuming, _ = await run_to_end(prompt="Rounder ears", name="grizzly", resume_session=True)
+    _, _, going_on, _ = await run_to_end(prompt="And a tail", name="grizzly", resume_session=True)
+
+    models = working_directory / ".modeling-3d"
+    moved = constants.MOVED.format(old="bear", name="grizzly", directory=models / "grizzly", models=models)
+    assert resuming.runs[0].request.resume == SESSION
+    assert resuming.runs[0].request.prompt.startswith(f"{moved}\n\nRounder ears")
+    assert going_on.runs[0].request.prompt.strip() == "And a tail"
+    assert [run.directory for run in record_of(renamed.directory).runs] == [
+        models / "bear",
+        models / "grizzly",
+        models / "grizzly",
+    ]
 
 
 async def test_budgets_are_given_to_the_agent_kept_by_a_change_and_sent_to_a_session_only_when_set() -> None:

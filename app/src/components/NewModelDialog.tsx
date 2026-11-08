@@ -134,7 +134,7 @@ export function NewModelDialog({
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [handled, setHandled] = useState(request.id);
-  const references = useReferences();
+  const references = useReferences(models);
   const intelligence = useIntelligence();
   const described = useRef<HTMLTextAreaElement>(null);
   const { library } = useLibrary();

@@ -1,16 +1,26 @@
-import { useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
+import {
+  ConfirmModelChange,
+  type Asked,
+} from "@/components/ConfirmModelChange";
 import { ModelThumb } from "@/components/ModelThumb";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Kbd } from "@/components/ui/kbd";
-import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "@/components/ui/menu";
 import { Notice } from "@/components/ui/notice";
 import { StatusMark } from "@/components/ui/status-mark";
 import { Tooltip } from "@/components/ui/tooltip";
-import type { ModelListing } from "@/lib/api";
+import type { ModelListing, ModelSummary } from "@/lib/api";
 import { referable } from "@/lib/references";
-import { matching, shortDirectory } from "@/lib/models";
+import { matching, renameProblem, shortDirectory } from "@/lib/models";
 import { ago } from "@/lib/time";
 import { cn, copyText } from "@/lib/utils";
 
@@ -21,7 +31,7 @@ export type Picker = {
   onNew: () => void;
 };
 
-/** Your models: every model in the app's directory, newest first, to search and pick from. */
+/** Your models: every model in the app's directory, newest first, to search, pick from, rename, and delete. */
 export function ModelList({
   listing,
   selected,
@@ -30,18 +40,58 @@ export function ModelList({
   error,
   search,
   onWorkFrom,
+  onRename,
+  onDelete,
 }: Picker & {
   error: string | null;
   search?: RefObject<HTMLInputElement | null>;
   /** Starts a new model from the one named. */
   onWorkFrom: (name: string) => void;
+  /** Each resolves once done, and rejects with what refused it. */
+  onRename: (name: string, newName: string) => Promise<void>;
+  onDelete: (name: string) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
+  // The id of the model whose name is being edited, which a rename from elsewhere keeps.
+  const [editing, setEditing] = useState<string | null>(null);
+  // The change being confirmed, kept while its dialog closes so it does not empty as it goes.
+  const [asked, setAsked] = useState<Asked | null>(null);
+  const [asking, setAsking] = useState(false);
+  // Set as soon as a rename is asked for, ahead of the render that opens its dialog and takes the focus.
+  const confirming = useRef(false);
+  // The model to edit the name of once its menu has closed and given the focus back.
+  const opening = useRef<string | null>(null);
+  const nameInput = useRef<HTMLInputElement>(null);
   const models = matching(listing, query);
   const workable = new Set(
     referable(listing?.models ?? []).map((model) => model.name),
   );
   const problems = [...(error ? [error] : []), ...(listing?.unreadable ?? [])];
+
+  const ask = (change: Asked) => {
+    confirming.current = change.kind === "rename";
+    setAsked(change);
+    setAsking(true);
+  };
+  const closeAsking = () => {
+    confirming.current = false;
+    setAsking(false);
+  };
+  const confirm = async (change: Asked) => {
+    if (change.kind === "rename") {
+      await onRename(change.model.name, change.newName);
+      setEditing(null);
+    } else {
+      const all = listing?.models ?? [];
+      const index = all.findIndex((model) => model.id === change.model.id);
+      const neighbor = all[index + 1] ?? all[index - 1];
+      await onDelete(change.model.name);
+      if (change.model.name === selected && neighbor) {
+        onSelect(neighbor.name);
+      }
+    }
+    closeAsking();
+  };
 
   return (
     <nav
@@ -102,61 +152,104 @@ export function ModelList({
           </li>
         )}
         {models.map((model) => (
-          <li key={model.name} className="group/row relative">
-            <button
-              type="button"
-              onClick={() => onSelect(model.name)}
-              aria-current={model.name === selected ? "true" : undefined}
-              className={cn(
-                "flex w-full min-w-0 items-center gap-2.5 rounded-sm py-1.5 pr-9 pl-2 text-left -outline-offset-2",
-                model.name === selected ? "bg-accent-soft" : "hover:bg-hover",
-              )}
-            >
-              <ModelThumb model={model} />
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="truncate font-medium">{model.name}</span>
-                <span className="flex min-w-0 items-center gap-1.5">
-                  {model.status !== "done" && (
-                    <StatusMark
-                      status={model.status}
-                      since={model.last_run?.started}
-                    />
-                  )}
-                  {model.status !== "running" && (
-                    <span className="truncate mono-annotation text-ink-muted">
-                      {ago(model.updated)}
-                    </span>
-                  )}
-                </span>
-              </span>
-            </button>
-            <div className="absolute top-1/2 right-1.5 -translate-y-1/2 opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 has-data-popup-open:opacity-100">
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <Button
-                      size="sm"
-                      icon
-                      aria-label={`More for ${model.name}`}
-                    />
+          <li key={model.id} className="group/row relative">
+            {editing === model.id ? (
+              <NameEditor
+                model={model}
+                models={listing?.models ?? []}
+                inputRef={nameInput}
+                onAsk={(newName) => ask({ kind: "rename", model, newName })}
+                onLeave={() => {
+                  if (!confirming.current) {
+                    setEditing(null);
                   }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => onSelect(model.name)}
+                aria-current={model.name === selected ? "true" : undefined}
+                className={cn(
+                  "flex w-full min-w-0 items-center gap-2.5 rounded-sm py-1.5 pr-9 pl-2 text-left -outline-offset-2",
+                  model.name === selected ? "bg-accent-soft" : "hover:bg-hover",
+                )}
+              >
+                <ModelThumb model={model} />
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="truncate font-medium">{model.name}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {model.status !== "done" && (
+                      <StatusMark
+                        status={model.status}
+                        since={model.last_run?.started}
+                      />
+                    )}
+                    {model.status !== "running" && (
+                      <span className="truncate mono-annotation text-ink-muted">
+                        {ago(model.updated)}
+                      </span>
+                    )}
+                  </span>
+                </span>
+              </button>
+            )}
+            {editing !== model.id && (
+              <div className="absolute top-1/2 right-1.5 -translate-y-1/2 opacity-0 group-focus-within/row:opacity-100 group-hover/row:opacity-100 has-data-popup-open:opacity-100">
+                <Menu
+                  onOpenChangeComplete={(open) => {
+                    if (!open && opening.current === model.id) {
+                      opening.current = null;
+                      setEditing(model.id);
+                    }
+                  }}
                 >
-                  <Icon name="more" />
-                </MenuTrigger>
-                <MenuContent align="end">
-                  <MenuItem onClick={() => void copyText(model.name)}>
-                    <Icon name="copy" className="text-ink-muted" />
-                    Copy name
-                  </MenuItem>
-                  {workable.has(model.name) && (
-                    <MenuItem onClick={() => onWorkFrom(model.name)}>
-                      <Icon name="model" className="text-ink-muted" />
-                      Use in a new model
+                  <MenuTrigger
+                    render={
+                      <Button
+                        size="sm"
+                        icon
+                        aria-label={`More for ${model.name}`}
+                      />
+                    }
+                  >
+                    <Icon name="more" />
+                  </MenuTrigger>
+                  <MenuContent align="end">
+                    <MenuItem onClick={() => void copyText(model.name)}>
+                      <Icon name="copy" className="text-ink-muted" />
+                      Copy name
                     </MenuItem>
-                  )}
-                </MenuContent>
-              </Menu>
-            </div>
+                    {workable.has(model.name) && (
+                      <MenuItem onClick={() => onWorkFrom(model.name)}>
+                        <Icon name="model" className="text-ink-muted" />
+                        Use in a new model
+                      </MenuItem>
+                    )}
+                    <MenuSeparator />
+                    <MenuItem
+                      disabled={model.status === "running"}
+                      onClick={() => {
+                        opening.current = model.id;
+                      }}
+                    >
+                      <Icon name="rename" className="text-ink-muted" />
+                      <span className="flex-1">Rename</span>
+                      {model.status === "running" && (
+                        <span className="pl-3 text-caption">Stop it first</span>
+                      )}
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => ask({ kind: "delete", model })}
+                      className="text-danger"
+                    >
+                      <Icon name="delete" />
+                      Delete
+                    </MenuItem>
+                  </MenuContent>
+                </Menu>
+              </div>
+            )}
           </li>
         ))}
       </ol>
@@ -168,6 +261,83 @@ export function ModelList({
           {shortDirectory(listing.directory)}
         </footer>
       )}
+      <ConfirmModelChange
+        asked={asked}
+        open={asking}
+        onConfirm={confirm}
+        onClose={closeAsking}
+        finalFocus={asked?.kind === "rename" ? nameInput : undefined}
+      />
     </nav>
+  );
+}
+
+/**
+ * A model's name being edited in its row, checked as it is typed. Enter asks to rename it to what was typed, and
+ * Escape or leaving the field ends editing with nothing changed.
+ */
+function NameEditor({
+  model,
+  models,
+  inputRef,
+  onAsk,
+  onLeave,
+}: {
+  model: ModelSummary;
+  models: ModelSummary[];
+  inputRef: RefObject<HTMLInputElement | null>;
+  onAsk: (newName: string) => void;
+  onLeave: () => void;
+}) {
+  const [value, setValue] = useState(model.name);
+  const name = value.trim();
+  const problem = renameProblem(name, model.name, models);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [inputRef]);
+
+  return (
+    <div className="flex min-w-0 items-start gap-2.5 rounded-sm bg-accent-soft px-2 py-1.5">
+      <ModelThumb model={model} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onLeave();
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              if (name === model.name) {
+                onLeave();
+              } else if (!problem) {
+                onAsk(name);
+              }
+            }
+          }}
+          onBlur={onLeave}
+          aria-label={`New name for ${model.name}`}
+          aria-invalid={problem ? true : undefined}
+          spellCheck={false}
+          className={cn(
+            "h-6 min-w-0 rounded-sm border bg-field px-1.5 font-medium text-ink outline-none focus:bg-panel",
+            problem ? "border-danger" : "border-line-control focus:border-ink",
+          )}
+        />
+        {problem ? (
+          <span role="alert" className="text-caption text-danger">
+            {problem}
+          </span>
+        ) : (
+          <span className="text-caption text-ink-muted">
+            Enter to rename, Esc to cancel
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

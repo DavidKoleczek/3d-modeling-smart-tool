@@ -5,6 +5,7 @@ from pathlib import Path
 
 from modeling_3d.capabilities.app import folders as app_folders
 from modeling_3d.capabilities.app import mcp_server as app_server_module
+from modeling_3d.capabilities.app import pins as app_pins
 from modeling_3d.capabilities.app import server as app_module
 from modeling_3d.capabilities.app import settings as app_settings
 from modeling_3d.capabilities.app.mcp_server import AppServer
@@ -58,9 +59,9 @@ def app_server(directory: Path | None = None) -> AppServer:
 
     Serve `AppServer.server` over any MCP transport. `AppServer.open` serves the browser host page, which renders
     the view for agents that cannot embed it and reaches the same server at its own `/mcp`. The view shows the models
-    in `AppServer.directory`, and creates, changes, rigs, colors, details, checks, steers, and stops them through this library's
-    capabilities, as from `app`. Nothing done in it is sent to an agent session; a session sees it with
-    `read_3d_model_activity`.
+    in `AppServer.directory`, and creates, changes, rigs, colors, details, checks, steers, stops, renames, and deletes them
+    through this library's capabilities, as from `app`. Nothing done in it is sent to an agent session; a session sees
+    it with `read_3d_model_activity`.
     How the person set up the app, such as its theme and pane sizes, and what they pinned in it, are theirs in every
     directory, kept in `app-settings.json` and `app-pins.json` in their config directory.
 
@@ -73,6 +74,8 @@ def app_server(directory: Path | None = None) -> AppServer:
         (directory or DEFAULT_DIRECTORY).resolve(),
         list_models=models.list_3d_models,
         view_model=models.view_3d_model,
+        rename_model=rename_3d_model,
+        delete_model=delete_3d_model,
         create_model=create.create_3d_model,
         rig_model=create.rig_3d_model,
         color_model=create.color_3d_model,
@@ -466,6 +469,46 @@ def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary:
         directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
     """
     return models.view_3d_model(name=name, directory=directory)
+
+
+def rename_3d_model(name: str, new_name: str, directory: Path | None = None) -> ModelSummary:
+    """Rename a model: move its directory, and point what names it at the new name, then return its summary there.
+
+    Its model.json, its latest check's report, `.state.json`, and the lines of the models directory's .gitignore that opt
+    it in follow the name, as do the person's pins of it in the app and what they used from it there. Its history, such
+    as each run's prompt and events, and its agent's own sources, such as model.py, are left as they are. A session
+    continued after the rename is told where the model is now. A run working on the model, or a name another entry in
+    the directory holds, ignoring case, refuses it.
+
+    Args:
+        name: The model's name, exactly as its directory is named.
+        new_name: Its new name, which its directory takes: letters, digits, '.', '_', and '-', starting with a letter or
+            digit. One that differs only in case renames it too.
+        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+    """
+    summary = models.rename_3d_model(name=name, new_name=new_name, directory=directory)
+    if new_name != name:
+        _app_paths_moved(summary.directory.with_name(name), summary.directory)
+    return summary
+
+
+def delete_3d_model(name: str, directory: Path | None = None) -> None:
+    """Delete a model and everything in its directory, for good, stopping a run working on it first.
+
+    It waits up to `STOP_WAIT_SECONDS` in models.py for the run to end, and leaves the model whole when it has not. Its
+    `.state.json` entry, the lines of the models directory's .gitignore that opt it in, and the person's pins of it in
+    the app go with it. Copies other models took of its files as references stay theirs.
+
+    Args:
+        name: The model's name, exactly as its directory is named.
+        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+    """
+    _app_paths_moved(models.delete_3d_model(name=name, directory=directory), None)
+
+
+def _app_paths_moved(old: Path, new: Path | None) -> None:
+    """Point the app's pins, and what it used in the models directory, at a model's new directory, or forget them."""
+    app_pins.moved(old, new, app_pins.pins_path(app_settings.settings_path()), old.parent / app_pins.APP_STATE)
 
 
 def list_intelligence_models() -> IntelligenceModels:

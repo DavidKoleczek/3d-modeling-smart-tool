@@ -12,6 +12,7 @@ export function DialogContent({
   title,
   subtitle,
   initialFocus,
+  finalFocus,
   keepMounted = false,
   className,
   children,
@@ -19,6 +20,8 @@ export function DialogContent({
   title: string;
   subtitle?: ReactNode;
   initialFocus?: RefObject<HTMLElement | null>;
+  /** Where focus goes once it closes, in place of what opened it. */
+  finalFocus?: RefObject<HTMLElement | null>;
   /** Keeps what is in it, such as a draft, while it is closed. */
   keepMounted?: boolean;
   className?: string;
@@ -30,6 +33,7 @@ export function DialogContent({
       <DialogPrimitive.Viewport className="fixed inset-0 z-50 flex items-center justify-center sm:p-6">
         <DialogPrimitive.Popup
           initialFocus={initialFocus}
+          finalFocus={finalFocus}
           className={cn(
             "flex max-h-full w-full flex-col overflow-hidden bg-raised text-ink shadow-popover transition-[opacity,scale] outline-none data-ending-style:scale-98 data-ending-style:opacity-0 data-starting-style:scale-98 data-starting-style:opacity-0 max-sm:h-full sm:rounded-lg",
             className,

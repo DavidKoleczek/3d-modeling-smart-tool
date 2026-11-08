@@ -89,6 +89,18 @@ CAPABILITIES = (
         skill="capabilities/create_3d_model/skills/skill_view_3d_model.md",
     ),
     Capability(
+        "rename-3d-model",
+        "Rename a model: its directory, the records that name it, and the app's pins of it; prints its summary as JSON.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skills/skill_rename_3d_model.md",
+    ),
+    Capability(
+        "delete-3d-model",
+        "Delete a model and everything in its directory, for good, stopping a run working on it first.",
+        model_backed=False,
+        skill="capabilities/create_3d_model/skills/skill_delete_3d_model.md",
+    ),
+    Capability(
         "list-intelligence-models",
         "List the AI models and reasoning efforts to pick from for create-3d-model; prints JSON.",
         model_backed=False,

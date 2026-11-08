@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type ClipboardEvent,
@@ -38,6 +39,8 @@ export type Reference = {
   error: string | null;
   /** Its path, as `pathSource` gives it, for one staged by path or kept to pin, so the library shows it picked. */
   source: string | null;
+  /** For a model, its id, which a rename keeps, so it goes by the name the model has now. */
+  model?: string;
 };
 
 export type References = {
@@ -170,10 +173,11 @@ async function droppedFolder(
 /**
  * The files, folders, and models a request is to work from, as the person adds them by dialog, drop, paste, or menu.
  * Each file or folder is sent to the server in pieces as soon as it is added, so a large one is on its way while
- * they write, and the request names it once it has arrived.
+ * they write, and the request names it once it has arrived. A model it works from, of `listed`, follows a rename
+ * by its id, and says so once it is deleted.
  */
-export function useReferences(): References {
-  const [items, setItems] = useState<Reference[]>([]);
+export function useReferences(listed: ModelSummary[]): References {
+  const [added, setItems] = useState<Reference[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Each upload's sending, which settles with what went wrong, if anything; removing a reference drops it here, which
   // stops its sending.
@@ -181,6 +185,12 @@ export function useReferences(): References {
   // By key, the path each reference came from, kept apart from the items so one picked twice before the next render
   // is added once.
   const sourced = useRef(new Map<string, string>());
+  // The models as last listed, for a model added by name to be kept by its id.
+  const known = useRef(listed);
+
+  useEffect(() => {
+    known.current = listed;
+  }, [listed]);
 
   const update = useCallback(
     (key: string, change: (item: Reference) => Partial<Reference>) =>
@@ -334,8 +344,13 @@ export function useReferences(): References {
   );
 
   const addModel = useCallback((name: string) => {
+    const id = known.current.find((model) => model.name === name)?.id;
     setItems((current) =>
-      current.some((item) => item.kind === "model" && item.name === name)
+      current.some(
+        (item) =>
+          item.kind === "model" &&
+          (item.name === name || (id !== undefined && item.model === id)),
+      )
         ? current
         : [
             ...current,
@@ -350,6 +365,7 @@ export function useReferences(): References {
               sent: 0,
               error: null,
               source: null,
+              model: id,
             },
           ],
     );
@@ -376,6 +392,20 @@ export function useReferences(): References {
     setError(null);
   }, []);
 
+  // A model goes by the name it has now, by its id, keeping the key it was added under. The library keys a model by
+  // its name, so its source carries the new one for it to show as picked there.
+  const items = added.map((item): Reference => {
+    if (item.kind !== "model" || item.model === undefined) {
+      return item;
+    }
+    const found = listed.find((model) => model.id === item.model);
+    if (!found) {
+      return { ...item, error: "It was deleted. Remove it to send." };
+    }
+    return found.name === item.name
+      ? item
+      : { ...item, name: found.name, source: `model:${found.name}` };
+  });
   const models = items
     .filter((item) => item.kind === "model")
     .map((item) => item.name);

@@ -5,6 +5,8 @@ import { app } from "@/lib/host";
 
 const LIST_TOOL = "list_3d_models";
 const VIEW_TOOL = "view_3d_model";
+const RENAME_TOOL = "rename_3d_model";
+const DELETE_TOOL = "delete_3d_model";
 const CREATE_TOOL = "create_3d_model";
 const RIG_TOOL = "rig_3d_model";
 const COLOR_TOOL = "color_3d_model";
@@ -34,6 +36,8 @@ const REFERENCE_FILE_PREFIX = "modeling-3d://references/";
 const CREATE_TIMEOUT_MS = 120_000;
 // Longer than the server waits on a check before it says the check is still going.
 const CHECK_TIMEOUT_MS = 60_000;
+// Longer than deleting a model waits for a run it stopped to end, `STOP_WAIT_SECONDS` in models.py.
+const DELETE_TIMEOUT_MS = 60_000;
 // The file dialog waits on the person, who may take a while to choose.
 const CHOOSE_TIMEOUT_MS = 30 * 60_000;
 
@@ -63,6 +67,8 @@ export type ModelRun = {
   screen_size: [number, number] | null;
   session_id: string | null;
   origin: string | null;
+  /** The model's directory as the run worked in it; null for runs from before it was kept. */
+  directory?: string | null;
   resumed: boolean;
   started: string;
   finished: string | null;
@@ -410,6 +416,22 @@ export async function listModels(): Promise<ModelListing> {
 /** Record `name` as the model viewed last, so the app opens on it next time. */
 export async function viewModel(name: string): Promise<ModelSummary> {
   return (await structuredFrom(VIEW_TOOL, { name })) as ModelSummary;
+}
+
+/** Rename the model `name`, its folder and what names it, and return its summary under `newName`. */
+export async function renameModel(
+  name: string,
+  newName: string,
+): Promise<ModelSummary> {
+  return (await structuredFrom(RENAME_TOOL, {
+    name,
+    new_name: newName,
+  })) as ModelSummary;
+}
+
+/** Delete the model `name` and everything in its folder, for good, stopping a run working on it first. */
+export async function deleteModel(name: string): Promise<void> {
+  await call(DELETE_TOOL, { name }, DELETE_TIMEOUT_MS);
 }
 
 /** One of a model's files, `path` relative to its directory, read through the host. */

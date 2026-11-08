@@ -21,6 +21,9 @@ Both pick the AI model and reasoning effort the next run uses, from those
 beside the models; a pick made while a run works applies to the next one.
 Runs started there go on after the app stops. Nothing done in the app is sent to an agent
 session; a session sees it with `read-3d-model-activity`.
+Each model's menu in the list renames it in place, or deletes it, each after the person
+confirms it, as `rename-3d-model` and `delete-3d-model` do. Rename waits for a run on the model
+to be stopped; Delete stops it.
 
 New model starts from the last prompt a model was created from there, and picks references with
 a click from a library: what the person pinned, the models in the directory, the last 50 files

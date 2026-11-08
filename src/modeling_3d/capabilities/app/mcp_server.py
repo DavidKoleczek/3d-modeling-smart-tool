@@ -43,6 +43,7 @@ from mcp.types import (
 )
 
 from modeling_3d.capabilities.app.pins import (
+    APP_STATE,
     keep,
     list_folder,
     pins_path,
@@ -63,6 +64,7 @@ from modeling_3d.capabilities.app.tools import (
     COLOR_MODEL,
     DETAIL_MODEL,
     CREATE_MODEL,
+    DELETE_MODEL,
     KEEP_UPLOAD,
     LIST_FOLDER,
     LIST_INTELLIGENCE,
@@ -78,6 +80,7 @@ from modeling_3d.capabilities.app.tools import (
     READ_TOOL_CALL,
     REFERENCE_FILE,
     REFERENCE_FILE_PREFIX,
+    RENAME_MODEL,
     RIG_MODEL,
     SAVE_PINS,
     SAVE_SETTINGS,
@@ -157,8 +160,6 @@ STAGE_SKIPPED = shutil.ignore_patterns(".*", "node_modules", "__pycache__")
 OPEN_REQUEST = "open"
 # Who the model's activity shows as asking, for everything done in the app.
 ORIGIN = "app"
-# What the person picked in the app, kept beside the models it shows. Starting with a dot, it is never a model.
-APP_STATE = ".app.json"
 # endregion
 
 # region: The host agent's instructions
@@ -195,6 +196,8 @@ class AppServer:
         directory: Path,
         list_models: Callable[[Path], ModelListing],
         view_model: Callable[[str, Path], ModelSummary],
+        rename_model: Callable[[str, str, Path], ModelSummary],
+        delete_model: Callable[[str, Path], None],
         create_model: Callable[..., Awaitable[Started]],
         rig_model: Callable[..., Awaitable[Started]],
         color_model: Callable[..., Awaitable[Started]],
@@ -220,6 +223,8 @@ class AppServer:
         self._choosing = False
         self._list_models = list_models
         self._view_model = view_model
+        self._rename_model = rename_model
+        self._delete_model = delete_model
         # What starts a run in each mode.
         self._starts: dict[ModelMode, Callable[..., Awaitable[Started]]] = {
             "shape": create_model,
@@ -397,6 +402,12 @@ class AppServer:
             return _structured({"received": received})
         if params.name == STEER_MODEL.name:
             return await self._steer(arguments)
+        if params.name == RENAME_MODEL.name:
+            summary = await asyncio.to_thread(self._rename, arguments["name"], arguments["new_name"])
+            return _structured(summary.model_dump(mode="json"))
+        if params.name == DELETE_MODEL.name:
+            await asyncio.to_thread(self._delete, arguments["name"])
+            return _text(f"Deleted {arguments['name']}.")
         if params.name == CANCEL_MODEL.name:
             await asyncio.to_thread(self._cancel_model, arguments["name"], self.directory)
             return _text("Stopping; the model's activity shows the run end.")
@@ -517,6 +528,29 @@ class AppServer:
             if self._checks.get(target) is future:
                 del self._checks[target]
         return _structured({"report": future.result().model_dump(mode="json")})
+
+    def _rename(self, name: str, new_name: str) -> ModelSummary:
+        self._not_checking(name, "renamed")
+        return self._rename_model(name, new_name, self.directory)
+
+    def _delete(self, name: str) -> None:
+        self._not_checking(name, "deleted")
+        self._delete_model(name, self.directory)
+
+    def _not_checking(self, name: str, done: str) -> None:
+        """Refuse while the model's check runs, since it writes into the model's directory and cannot be stopped."""
+        target = self.directory / name
+        with self._lock:
+            future = self._checks.get(target)
+            if future is not None and not future.done():
+                raise Modeling3dError(
+                    f"Model {name} is being checked in the app, so it cannot be {done} now. Try again once the "
+                    "check ends.",
+                    "model-busy",
+                    name,
+                )
+            # One that ended unread is of the model as it was, and must not answer for another by its name.
+            self._checks.pop(target, None)
 
     def _run_check(self, name: str, directory: Path, future: concurrent.futures.Future[ModelCheck]) -> None:
         try:

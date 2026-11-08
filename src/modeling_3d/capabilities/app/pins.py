@@ -6,12 +6,15 @@ import shutil
 from typing import Any
 import uuid
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from modeling_3d.capabilities.app.settings import write_atomically
-from modeling_3d.schemas import AppPins, Modeling3dError, ModelSummary, ReferenceEntry
+from modeling_3d.schemas import AppPins, AppState, Modeling3dError, ModelSummary, ReferenceEntry
 
 PINS = "app-pins.json"
+# What the person picked and used in the app in a models directory, kept beside its models. Starting with a dot, it is
+# never a model.
+APP_STATE = ".app.json"
 # Where a file or folder the person dropped or pasted is kept once they pin it, since it has no path of its own.
 KEPT = "kept"
 # What the app offers as used before, at most.
@@ -121,6 +124,59 @@ def list_folder(folder: Path) -> list[ReferenceEntry]:
     children.sort(key=lambda child: (not child.is_dir(), child.name.lower()))
     entries = (entry(child) for child in children[:FOLDER_ENTRIES])
     return [found for found in entries if found is not None]
+
+
+def moved(old: Path, new: Path | None, pins: Path, state: Path) -> None:
+    """Point what the person pinned at `pins`, and what they used in the models directory whose `.app.json` is `state`,
+    at the same place under `new` wherever it was at or under `old`, or forget it when `new` is None.
+
+    For a model renamed or deleted, whose directory is `old`. A file that cannot be read is left as it is, since the app
+    reads it as empty.
+    """
+    pinned = _read(AppPins, pins)
+    if pinned is not None:
+        references = [
+            reference.model_copy(update={"path": path})
+            for reference in pinned.references
+            if (path := _relocated(reference.path, old, new)) is not None
+        ]
+        folders = [
+            folder.model_copy(update={"path": path})
+            for folder in pinned.folders
+            if (path := _relocated(folder.path, old, new)) is not None
+        ]
+        _write_changed(pins, pinned, pinned.model_copy(update={"references": references, "folders": folders}), old)
+    used = _read(AppState, state)
+    if used is not None:
+        kept = [path for path in (_relocated(path, old, new) for path in used.used) if path is not None]
+        last_folder = None if used.last_folder is None else _relocated(used.last_folder, old, new)
+        changed = used.model_copy(update={"used": list(dict.fromkeys(kept)), "last_folder": last_folder})
+        _write_changed(state, used, changed, old)
+
+
+def _relocated(path: Path, old: Path, new: Path | None) -> Path | None:
+    """Where `path` is once `old` has moved to `new`: itself when it is not under `old`, and None when `new` is None."""
+    if not path.is_relative_to(old):
+        return path
+    return None if new is None else new / path.relative_to(old)
+
+
+def _read[Kept: BaseModel](kind: type[Kept], path: Path) -> Kept | None:
+    try:
+        return kind.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _write_changed(path: Path, before: BaseModel, after: BaseModel, old: Path) -> None:
+    if after == before:
+        return
+    try:
+        write_atomically(path, after.model_dump_json(indent=2))
+    except OSError as error:
+        raise Modeling3dError(
+            f"Could not update {path} for the model that was in {old}: {error}. Check that the folder can be written."
+        ) from None
 
 
 def _clear_unpinned(kept: Path, pins: AppPins) -> None:

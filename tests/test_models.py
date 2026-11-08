@@ -1,10 +1,11 @@
-"""Lists and views models whose model.json is written directly, so no agent is needed."""
+"""Lists, views, renames, and deletes models whose model.json is written directly, so no agent is needed."""
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 import os
 from pathlib import Path
 import shutil
+import stat
 
 from fakes import run_record
 import pytest
@@ -13,7 +14,15 @@ from typer.testing import CliRunner
 from modeling_3d import lib
 from modeling_3d.capabilities.create_3d_model.record import load_record, write_record
 from modeling_3d.cli import app
-from modeling_3d.schemas import AgentProvider, Modeling3dError, ModelListing, ModelRecord, ModelRunStatus, ModelSummary
+from modeling_3d.schemas import (
+    AgentProvider,
+    ModelCheck,
+    Modeling3dError,
+    ModelListing,
+    ModelRecord,
+    ModelRunStatus,
+    ModelSummary,
+)
 
 START = datetime(2026, 10, 17, 10, tzinfo=UTC)
 # Above Linux's highest pid and never handed out on Windows, so no process has it.
@@ -260,3 +269,187 @@ def test_the_cli_prints_the_listing_and_the_summary_as_json_and_fails_on_an_unkn
     assert unknown.exit_code == 1
     assert isinstance(unknown.exception, Modeling3dError)
     assert "There is no model named 'fox'" in str(unknown.exception)
+
+
+def report_of(target: Path) -> ModelCheck:
+    """A check of the model, kept in its checks/ as `check_3d_model` keeps one."""
+    report = ModelCheck(
+        name=target.name,
+        directory=target,
+        checked=START,
+        glb_sha256="0" * 64,
+        max_triangles=None,
+        max_draw_calls=None,
+        screen_size=None,
+        dimensions=(1.0, 1.0, 1.0),
+        bounds=((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+        triangles=12,
+        mesh_objects=1,
+        materials=0,
+        checks=[],
+    )
+    (target / "checks").mkdir()
+    (target / "checks" / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    return report
+
+
+def opt_in(root: Path) -> Path:
+    """The models directory's .gitignore, opting in bear's sources, and those of models only named alike."""
+    ignores = root / ".gitignore"
+    ignores.write_text("/*\n!/bear/\n!/bear/notes.md\n!/bearish/\n!/fox/\n", encoding="utf-8")
+    return ignores
+
+
+def test_renaming_a_model_moves_it_with_what_names_it_and_leaves_its_history(working_directory: Path) -> None:
+    root = working_directory / ".modeling-3d"
+    bear = make_model("bear").resolve()
+    report = report_of(bear)
+    (bear / "runs" / "run-bear").mkdir(parents=True)
+    events = bear / "runs" / "run-bear" / "events.jsonl"
+    events.write_text(f"Working in {bear}\n", encoding="utf-8")
+    make_model("fox", minutes=30)
+    ignores = opt_in(root)
+    lib.view_3d_model("bear")
+    history = events.read_bytes()
+
+    summary = lib.rename_3d_model("bear", "grizzly")
+
+    grizzly = root / "grizzly"
+    listing = lib.list_3d_models()
+    assert not bear.exists()
+    assert (summary.name, summary.id, summary.directory) == ("grizzly", "id-bear", grizzly)
+    assert summary == listing.models[1]
+    assert listing.last_viewed == "grizzly"
+    record = load_record(grizzly)
+    assert record.name == "grizzly"
+    assert [run.directory for run in record.runs] == [bear]
+    assert ModelCheck.model_validate_json((grizzly / "checks" / "report.json").read_text(encoding="utf-8")) == (
+        report.model_copy(update={"name": "grizzly", "directory": grizzly})
+    )
+    assert ignores.read_text(encoding="utf-8") == "/*\n!/grizzly/\n!/grizzly/notes.md\n!/bearish/\n!/fox/\n"
+    assert (grizzly / "runs" / "run-bear" / "events.jsonl").read_bytes() == history
+    assert (grizzly / "model.py").read_text(encoding="utf-8") == "# the model"
+
+
+@pytest.mark.parametrize(
+    ("new_name", "reason", "named"),
+    [
+        ("../wolf", "invalid-name", "cannot name a model"),
+        (".hidden", "invalid-name", "cannot name a model"),
+        ("Fox", "name-in-use", "is already another model"),
+        ("NOTES", "name-in-use", "is already something that is not a model"),
+    ],
+)
+def test_a_name_the_tool_would_not_give_or_one_held_ignoring_case_is_refused_with_nothing_changed(
+    working_directory: Path, new_name: str, reason: str, named: str
+) -> None:
+    root = working_directory / ".modeling-3d"
+    make_model("bear")
+    make_model("fox")
+    (root / "notes").mkdir()
+    before = sorted(path.name for path in root.iterdir())
+
+    with pytest.raises(Modeling3dError) as failure:
+        lib.rename_3d_model("bear", new_name)
+
+    assert failure.value.reason == reason
+    assert named in str(failure.value)
+    assert sorted(path.name for path in root.iterdir()) == before
+    assert load_record(root / "bear").name == "bear"
+
+
+def test_a_rename_of_only_the_case_renames_it_and_one_to_the_same_name_changes_nothing(working_directory: Path) -> None:
+    root = working_directory / ".modeling-3d"
+    make_model("bear")
+
+    same = lib.rename_3d_model("bear", "bear")
+    cased = lib.rename_3d_model("bear", "Bear")
+
+    assert same.name == "bear"
+    assert [path.name for path in root.iterdir()] == ["Bear"]
+    assert (cased.name, load_record(root / "Bear").name) == ("Bear", "Bear")
+
+
+def test_deleting_a_model_removes_all_of_it_with_what_names_it_and_leaves_the_rest(working_directory: Path) -> None:
+    root = working_directory / ".modeling-3d"
+    bear = make_model("bear")
+    (bear / "references").mkdir()
+    locked = bear / "references" / "locked.png"
+    locked.write_bytes(b"png")
+    locked.chmod(stat.S_IREAD)
+    fox = make_model("fox", minutes=30)
+    ignores = opt_in(root)
+    lib.view_3d_model("bear")
+
+    lib.delete_3d_model("bear")
+
+    listing = lib.list_3d_models()
+    assert not bear.exists()
+    assert sorted(path.name for path in root.iterdir()) == [".gitignore", ".state.json", "fox"]
+    assert ([model.name for model in listing.models], listing.last_viewed) == (["fox"], None)
+    assert ignores.read_text(encoding="utf-8") == "/*\n!/bearish/\n!/fox/\n"
+    assert (fox / "model.py").is_file()
+
+
+@pytest.mark.parametrize("name", ["fox", "Bear", "../bear", "notes", ".deleting-bear-0a1b2c"])
+def test_renaming_or_deleting_anything_but_a_model_by_its_exact_name_names_the_models_there(
+    working_directory: Path, name: str
+) -> None:
+    root = working_directory / ".modeling-3d"
+    make_model("bear")
+    make_model(".deleting-bear-0a1b2c")
+    (root / "notes").mkdir()
+
+    for act in (lambda: lib.rename_3d_model(name, "wolf"), lambda: lib.delete_3d_model(name)):
+        with pytest.raises(Modeling3dError) as failure:
+            act()
+        assert failure.value.reason == "no-such-model"
+        assert "The models there: bear." in str(failure.value)
+    assert sorted(path.name for path in root.iterdir()) == [".deleting-bear-0a1b2c", "bear", "notes"]
+
+
+def test_a_folder_a_delete_left_never_lists_and_one_named_by_hand_still_does() -> None:
+    make_model(".deleting-bear-0a1b2c")
+    make_model("My Bear")
+
+    listed = [model.name for model in lib.list_3d_models().models]
+    renamed = lib.rename_3d_model("My Bear", "my-bear").name
+    lib.delete_3d_model("my-bear")
+
+    assert (listed, renamed) == (["My Bear"], "my-bear")
+    assert lib.list_3d_models().models == []
+
+
+def test_a_run_working_on_a_model_refuses_a_rename_and_in_this_process_a_delete_and_a_crashed_one_neither() -> None:
+    make_model("bear", status="running", pid=os.getpid())
+    make_model("fox", status="running", pid=GONE_PID)
+
+    with pytest.raises(Modeling3dError) as renaming:
+        lib.rename_3d_model("bear", "grizzly")
+    with pytest.raises(Modeling3dError) as deleting:
+        lib.delete_3d_model("bear")
+    lib.rename_3d_model("fox", "wolf")
+    lib.delete_3d_model("wolf")
+
+    assert (renaming.value.reason, renaming.value.model) == ("model-busy", "bear")
+    assert "`modeling-3d cancel-3d-model --name bear`" in str(renaming.value)
+    assert (deleting.value.reason, deleting.value.model) == ("model-busy", "bear")
+    assert "`await run.cancel()`" in str(deleting.value)
+    assert [model.name for model in lib.list_3d_models().models] == ["bear"]
+
+
+def test_the_cli_renames_printing_the_summary_and_deletes_printing_nothing_and_each_fails_naming_the_fix() -> None:
+    make_model("bear")
+
+    renamed = runner.invoke(app, ["rename-3d-model", "--name", "bear", "--new-name", "grizzly"])
+    invalid = runner.invoke(app, ["rename-3d-model", "--name", "grizzly", "--new-name", "a bear"])
+    deleted = runner.invoke(app, ["delete-3d-model", "--name", "grizzly"])
+    again = runner.invoke(app, ["delete-3d-model", "--name", "grizzly"])
+
+    assert renamed.exit_code == deleted.exit_code == 0, renamed.output + deleted.output
+    assert ModelSummary.model_validate_json(renamed.stdout).name == "grizzly"
+    assert deleted.stdout == ""
+    assert invalid.exit_code == again.exit_code == 1
+    assert isinstance(invalid.exception, Modeling3dError)
+    assert "cannot name a model" in str(invalid.exception)
+    assert "There is no model named 'grizzly'" in str(again.exception)

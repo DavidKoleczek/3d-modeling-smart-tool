@@ -32,6 +32,7 @@ export type NextRequest = {
 /** Words and files put into a model's composer from elsewhere in the app, such as marked views, to send from there. */
 export type Handoff = {
   id: number;
+  /** The id of the model whose composer takes it. */
   model: string;
   text: string;
   files: File[];
