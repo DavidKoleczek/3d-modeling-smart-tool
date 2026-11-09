@@ -165,6 +165,12 @@ INTELLIGENCE_MODELS: tuple[IntelligenceModel, ...] = (
         reasoning_efforts=list(PROVIDER_REASONING_EFFORTS["claude"]),
     ),
     IntelligenceModel(
+        agent_provider="claude",
+        id="claude-fable-5-2",
+        label="Fable 5.2",
+        reasoning_efforts=list(PROVIDER_REASONING_EFFORTS["claude"]),
+    ),
+    IntelligenceModel(
         agent_provider="codex",
         id="gpt-6.1-sol",
         label="Sol 6.1",

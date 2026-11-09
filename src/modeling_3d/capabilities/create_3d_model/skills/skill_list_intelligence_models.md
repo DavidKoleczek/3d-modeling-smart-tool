@@ -26,6 +26,8 @@ JSON on stdout:
      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"]},
     {"agent_provider": "claude", "id": "claude-opus-5-5", "label": "Opus 5.5",
      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"]},
+    {"agent_provider": "claude", "id": "claude-fable-5-2", "label": "Fable 5.2",
+     "reasoning_efforts": ["low", "medium", "high", "xhigh", "max"]},
     {"agent_provider": "codex", "id": "gpt-6.1-sol", "label": "Sol 6.1",
      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]},
     {"agent_provider": "codex", "id": "gpt-6-astra", "label": "Astra 6",
