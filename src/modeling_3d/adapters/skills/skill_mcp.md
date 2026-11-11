@@ -43,18 +43,20 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
   next server to start.
 - `list_intelligence_models` and `choose_intelligence_model`: what the view's picker offers, from
   the library's `list_intelligence_models`, and the person's last pick, which the app keeps in
-  `.app.json` in its directory.
+  `.app-state/app.json` in its directory.
 - `read_app_settings` and `save_app_settings`: how the person set the app up, its theme, pane
-  sizes, viewport tools, and the groups of steps they opened or closed in each model's activity,
-  kept for them in every directory in `app-settings.json` in their config directory. A setting
-  that is not valid fails with reason `bad-settings`.
+  sizes, and viewport tools, kept for them in every directory in `app-settings.json` in their
+  config directory. A setting that is not valid fails with reason `bad-settings`.
+- `read_activity_steps` and `save_activity_step`: the groups of steps the person opened or closed
+  in each model's activity, kept for the app's directory in `.app-state/steps.json`, which forgets
+  those of models no longer there.
 - `read_app_folders` and `open_app_folder`: where the app keeps the person's settings and the
   models it shows, and opening the folder of either, or of one model, in the person's file manager.
 - `read_app_library` and `save_app_pins`: what the view offers to start a request from. The
-  references, folders, and prompts the person pinned are kept for them in every directory in
-  `app-pins.json` beside their settings; pins that are not valid fail with reason `bad-pins`. The
-  last 50 files and folders used in the app's directory, chosen there or given to its models, and
-  the last prompt a model was created from there are kept in `.app.json`.
+  references, folders, and prompts the person pinned in the app's directory, the last 50 files and
+  folders used there, chosen there or given to its models, and the last prompt a model was created
+  from there are kept in `.app-state/app.json` in that directory; pins that are not valid fail with reason
+  `bad-pins`.
 - `choose_reference_files` and `choose_reference_folder`: the platform's file and folder dialogs,
   opened where files were last chosen from. Files chosen are staged as uploads and remembered as
   used.

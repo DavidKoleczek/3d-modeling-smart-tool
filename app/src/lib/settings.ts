@@ -22,7 +22,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
     models: { size: null, open: true },
     activity: { size: null, open: true },
   },
-  steps: {},
 };
 
 type State = {

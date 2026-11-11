@@ -21,6 +21,8 @@ const LIST_INTELLIGENCE_TOOL = "list_intelligence_models";
 const CHOOSE_INTELLIGENCE_TOOL = "choose_intelligence_model";
 const READ_SETTINGS_TOOL = "read_app_settings";
 const SAVE_SETTINGS_TOOL = "save_app_settings";
+const READ_STEPS_TOOL = "read_activity_steps";
+const SAVE_STEP_TOOL = "save_activity_step";
 const READ_FOLDERS_TOOL = "read_app_folders";
 const OPEN_FOLDER_TOOL = "open_app_folder";
 const CHOOSE_FILES_TOOL = "choose_reference_files";
@@ -263,6 +265,10 @@ export type AppSettings = {
   surface: boolean;
   wide: AppLayout;
   medium: AppLayout;
+};
+
+/** `AppSteps` in schemas.py. */
+export type AppSteps = {
   /** By model id, the groups of steps in its activity the person opened or closed, and which. */
   steps: Record<string, Record<string, boolean>>;
 };
@@ -605,6 +611,24 @@ export async function saveAppSettings(
   })) as AppSettings;
 }
 
+/** The groups of steps the person opened or closed in each model's activity in the app's directory. */
+export async function readActivitySteps(): Promise<AppSteps> {
+  return (await structuredFrom(READ_STEPS_TOOL, {})) as AppSteps;
+}
+
+/** Keep the group of steps `group` in the activity of the model `modelId` as opened or closed. */
+export async function saveActivityStep(
+  modelId: string,
+  group: string,
+  open: boolean,
+): Promise<AppSteps> {
+  return (await structuredFrom(SAVE_STEP_TOOL, {
+    model_id: modelId,
+    group,
+    open,
+  })) as AppSteps;
+}
+
 /** Where the app keeps the person's settings, and the models it shows. */
 export async function readAppFolders(): Promise<AppFolders> {
   return (await structuredFrom(READ_FOLDERS_TOOL, {})) as AppFolders;
@@ -658,12 +682,12 @@ export async function chooseReferenceFolder(): Promise<string | null> {
   return (structured.path as string | null) ?? null;
 }
 
-/** The person's pins, what was used in the app's directory, and what the last model created there was asked. */
+/** What was pinned and used in the app's directory, and what the last model created there was asked. */
 export async function readAppLibrary(): Promise<AppLibrary> {
   return (await structuredFrom(READ_LIBRARY_TOOL, {})) as AppLibrary;
 }
 
-/** Keep the person's pins, replacing the ones kept before. */
+/** Keep the person's pins for the app's directory, replacing the ones kept before. */
 export async function saveAppPins(pins: AppPins): Promise<AppPins> {
   return (await structuredFrom(SAVE_PINS_TOOL, { pins })) as AppPins;
 }

@@ -459,9 +459,44 @@ class BlenderOnPath(BaseModel):
 
 # region: App
 
+# The folder in a models directory where the app keeps what the person did in it there. Starting with a dot, it is
+# never a model, and a directory holding only it is still new to the tool.
+APP_STATE_FOLDER = ".app-state"
+
+
+class PinnedReference(BaseModel):
+    """A reference the person pinned in the app, by its path on this machine."""
+
+    path: Path = Field(description="Absolute: a file, a folder, or a model's folder")
+    kind: Literal["file", "folder", "model"]
+
+
+class PinnedFolder(BaseModel):
+    """A folder the person pinned in the app, to pick references from."""
+
+    path: Path = Field(description="Absolute")
+    shows: Literal["files", "dialog"] = Field(
+        description="`files` lists what is in it in the app; `dialog` opens the file dialog in it"
+    )
+
+
+class PinnedPrompt(BaseModel):
+    """A prompt the person pinned in the app, for requests in its mode."""
+
+    text: str = Field(min_length=1)
+    mode: ModelMode
+
+
+class AppPins(BaseModel):
+    """What the person pinned in the app in a models directory, kept for that directory alone."""
+
+    references: list[PinnedReference] = Field(default_factory=list)
+    folders: list[PinnedFolder] = Field(default_factory=list)
+    prompts: list[PinnedPrompt] = Field(default_factory=list)
+
 
 class AppState(BaseModel):
-    """.app.json in a models directory: what the person last picked and used in the app there."""
+    """.app-state/app.json in a models directory: what the person pinned, last picked, and used in the app there."""
 
     # Kept by mode, under a name of its own, so the one pick kept for every mode before is left behind rather than
     # holding every mode to it.
@@ -475,6 +510,9 @@ class AppState(BaseModel):
         default=None, description="The folder files were last chosen from, where the file dialog opens next"
     )
     last_prompt: str | None = Field(default=None, description="What the last model created in the app there was asked")
+    pins: AppPins = Field(
+        default_factory=AppPins, description="The references, folders, and prompts the person pinned there"
+    )
 
 
 class AppIntelligence(IntelligenceModels):
@@ -515,6 +553,12 @@ class AppSettings(BaseModel):
     )
     wide: AppLayout = Field(default_factory=AppLayout, description="The panes from 1100 pixels wide")
     medium: AppLayout = Field(default_factory=AppLayout, description="The panes from 640 to 1100 pixels wide")
+
+
+class AppSteps(BaseModel):
+    """.app-state/steps.json in a models directory: which groups of steps the person opened or closed in the activity
+    of each of its models."""
+
     steps: dict[str, dict[str, bool]] = Field(
         default_factory=dict,
         description="By model id, the groups of steps in its activity the person opened or closed, and which",
@@ -524,41 +568,10 @@ class AppSettings(BaseModel):
 class AppFolders(BaseModel):
     """Where the app keeps what it remembers."""
 
-    settings: Path = Field(description="The person's settings and pins, the same in every directory")
+    settings: Path = Field(description="The person's settings, the same in every directory")
     models: Path = Field(
-        description="The models the app shows, with what the person last picked, viewed, and used there"
+        description="The models the app shows, with what the person pinned, last picked, viewed, and used there"
     )
-
-
-class PinnedReference(BaseModel):
-    """A reference the person pinned in the app, by its path on this machine."""
-
-    path: Path = Field(description="Absolute: a file, a folder, or a model's folder")
-    kind: Literal["file", "folder", "model"]
-
-
-class PinnedFolder(BaseModel):
-    """A folder the person pinned in the app, to pick references from."""
-
-    path: Path = Field(description="Absolute")
-    shows: Literal["files", "dialog"] = Field(
-        description="`files` lists what is in it in the app; `dialog` opens the file dialog in it"
-    )
-
-
-class PinnedPrompt(BaseModel):
-    """A prompt the person pinned in the app, for requests in its mode."""
-
-    text: str = Field(min_length=1)
-    mode: ModelMode
-
-
-class AppPins(BaseModel):
-    """app-pins.json in the user's config directory: what the person pinned in the app, the same in every directory."""
-
-    references: list[PinnedReference] = Field(default_factory=list)
-    folders: list[PinnedFolder] = Field(default_factory=list)
-    prompts: list[PinnedPrompt] = Field(default_factory=list)
 
 
 class ReferenceEntry(BaseModel):
@@ -570,7 +583,7 @@ class ReferenceEntry(BaseModel):
 
 
 class AppLibrary(AppPins):
-    """What the app offers to start a request from: the person's pins, and what was used in its directory."""
+    """What the app offers to start a request from: what was pinned and used in its directory."""
 
     used: list[ReferenceEntry] = Field(
         description="What was chosen to work from in the app's directory or given to its models, newest first, each "

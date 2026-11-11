@@ -45,6 +45,8 @@ VIEW_TOOLS = (
     "choose_intelligence_model",
     "read_app_settings",
     "save_app_settings",
+    "read_activity_steps",
+    "save_activity_step",
     "read_app_folders",
     "open_app_folder",
     "choose_reference_files",

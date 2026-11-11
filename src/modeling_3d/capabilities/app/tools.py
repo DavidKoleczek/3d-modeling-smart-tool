@@ -240,8 +240,8 @@ CHOOSE_INTELLIGENCE = Tool(
 )
 READ_SETTINGS = Tool(
     name="read_app_settings",
-    description="How the person set up the app: theme, viewport tools, pane sizes, and the steps they opened in each "
-    "model's activity, the same in every directory. Called by the view.",
+    description="How the person set up the app: theme, viewport tools, and pane sizes, the same in every directory. "
+    "Called by the view.",
     input_schema={"type": "object", "properties": {}},
     _meta=APP_ONLY,
 )
@@ -253,6 +253,28 @@ SAVE_SETTINGS = Tool(
         "type": "object",
         "properties": {"settings": {"type": "object", "description": "As `read_app_settings` returns them"}},
         "required": ["settings"],
+    },
+    _meta=APP_ONLY,
+)
+READ_STEPS = Tool(
+    name="read_activity_steps",
+    description="By model id, the groups of steps the person opened or closed in each model's activity in the app's "
+    "directory. Called by the view.",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+SAVE_STEP = Tool(
+    name="save_activity_step",
+    description="Keep a group of steps in a model's activity as opened or closed, and return every model's, as "
+    "`read_activity_steps` does. Those of models no longer in the app's directory are forgotten. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "model_id": {"type": "string", "description": "The model's `id`, which stays the same when it is renamed"},
+            "group": {"type": "string", "description": "The group of steps, by the view's key for it"},
+            "open": {"type": "boolean"},
+        },
+        "required": ["model_id", "group", "open"],
     },
     _meta=APP_ONLY,
 )
@@ -323,16 +345,16 @@ CHOOSE_FOLDER = Tool(
 )
 READ_LIBRARY = Tool(
     name="read_app_library",
-    description="What the app offers to start a request from: the references, folders, and prompts the person pinned, "
-    "the same in every directory; what was used in the app's directory, newest first, at most 50; and what the last "
-    "model created there was asked. Called by the view.",
+    description="What the app offers to start a request from: the references, folders, and prompts the person pinned "
+    "in the app's directory; what was used there, newest first, at most 50; and what the last model created there was "
+    "asked. Called by the view.",
     input_schema={"type": "object", "properties": {}},
     _meta=APP_ONLY,
 )
 SAVE_PINS = Tool(
     name="save_app_pins",
-    description="Keep the references, folders, and prompts the person pinned, replacing those kept before, and return "
-    "them. Called by the view.",
+    description="Keep the references, folders, and prompts the person pinned in the app's directory, replacing those "
+    "kept before, and return them. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
@@ -358,8 +380,8 @@ LIST_FOLDER = Tool(
 )
 KEEP_UPLOAD = Tool(
     name="keep_upload",
-    description="Keep a copy of an upload beside the person's settings, so a file or folder they dropped or pasted "
-    "can be pinned by its path there, and return that path. It is cleared once unpinned. Called by the view.",
+    description="Keep a copy of an upload in the app's directory, so a file or folder they dropped or pasted can be "
+    "pinned by its path there, and return that path. It is cleared once unpinned. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {"upload": {"type": "string", "description": "An upload whose every piece has arrived"}},
@@ -386,6 +408,8 @@ VIEW_TOOLS = [
     CHOOSE_INTELLIGENCE,
     READ_SETTINGS,
     SAVE_SETTINGS,
+    READ_STEPS,
+    SAVE_STEP,
     READ_FOLDERS,
     OPEN_FOLDER,
     CHOOSE_FILES,

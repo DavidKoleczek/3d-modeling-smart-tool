@@ -21,7 +21,7 @@ import {
 } from "@/lib/requests";
 import { currentCall, runsOf, totalCost, totalTokens } from "@/lib/runs";
 import { statusLabel } from "@/lib/status";
-import { updateSettings, useSettings } from "@/lib/settings";
+import { toggleSteps, useSteps } from "@/lib/steps";
 import { timeOfDay } from "@/lib/time";
 
 // How close to the bottom still counts as at it, so new entries keep it scrolled down.
@@ -54,7 +54,7 @@ export function ActivityPanel({
     working,
     error,
   } = useActivity(model?.name ?? null);
-  const { settings } = useSettings();
+  const opened = useSteps();
   const shown = read ?? model;
   const runs = runsOf(
     steps,
@@ -64,16 +64,10 @@ export function ActivityPanel({
   );
   const latest = runs.at(-1);
   // Blocks the person opened or closed themselves in this model's activity, which keep that until they change it again.
-  const toggled = (shown && settings.steps[shown.id]) || {};
+  const toggled = (shown && opened[shown.id]) || {};
   const toggle = (key: string, open: boolean) => {
     if (shown) {
-      updateSettings((current) => ({
-        ...current,
-        steps: {
-          ...current.steps,
-          [shown.id]: { ...current.steps[shown.id], [key]: open },
-        },
-      }));
+      toggleSteps(shown.id, key, open);
     }
   };
   const [stopError, setStopError] = useState<string | null>(null);

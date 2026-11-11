@@ -19,6 +19,8 @@ import type { ModelMode } from "@/lib/api";
 import { onDisplay, requestDisplayMode } from "@/lib/host";
 import { useIntelligence } from "@/lib/intelligence";
 import { paneLayout, useBreakpoint } from "@/lib/layout";
+import { followDirectory } from "@/lib/library";
+import { loadSteps } from "@/lib/steps";
 import { useModels } from "@/lib/models";
 import type { Handoff, NextRequest } from "@/lib/requests";
 import { useShortcuts } from "@/lib/shortcuts";
@@ -40,6 +42,13 @@ function App() {
   const [fits, setFits] = useState(0);
   const [stats, setStats] = useState<SceneStats | null>(null);
   const { listing, model, error, pick, rename, remove } = useModels();
+  const directory = listing?.directory ?? null;
+  useEffect(() => followDirectory(directory), [directory]);
+  useEffect(() => {
+    if (directory !== null) {
+      void loadSteps();
+    }
+  }, [directory]);
   // By model id, which a rename keeps, the mode the person picked, and whether they switched Continue session on or
   // off since, which the composer's requests follow.
   const [modes, setModes] = useState<Record<string, ModelMode>>({});

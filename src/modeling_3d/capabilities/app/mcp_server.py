@@ -43,17 +43,19 @@ from mcp.types import (
 )
 
 from modeling_3d.capabilities.app.pins import (
-    APP_STATE,
+    app_state_path,
+    check_pins,
+    clear_unpinned,
     keep,
     list_folder,
-    pins_path,
-    read_app_pins,
     remember,
-    save_app_pins,
+    read_app_state,
     used_here,
+    write_app_state,
 )
 from modeling_3d.capabilities.app.server import App, serve_app, view
-from modeling_3d.capabilities.app.settings import read_app_settings, save_app_settings, write_atomically
+from modeling_3d.capabilities.app.settings import read_app_settings, save_app_settings
+from modeling_3d.capabilities.app.steps import read_activity_steps, save_activity_step
 from modeling_3d.capabilities.app.tools import (
     APP_ONLY,
     CANCEL_MODEL,
@@ -77,6 +79,7 @@ from modeling_3d.capabilities.app.tools import (
     READ_FOLDERS,
     READ_LIBRARY,
     READ_SETTINGS,
+    READ_STEPS,
     READ_TOOL_CALL,
     REFERENCE_FILE,
     REFERENCE_FILE_PREFIX,
@@ -84,6 +87,7 @@ from modeling_3d.capabilities.app.tools import (
     RIG_MODEL,
     SAVE_PINS,
     SAVE_SETTINGS,
+    SAVE_STEP,
     STAGE_FILES,
     STEER_MODEL,
     UPLOAD_REFERENCE,
@@ -101,7 +105,9 @@ from modeling_3d.schemas import (
     AppFolders,
     AppIntelligence,
     AppLibrary,
+    AppPins,
     AppState,
+    AppSteps,
     IntelligenceChoice,
     IntelligenceModels,
     Modeling3dError,
@@ -215,7 +221,6 @@ class AppServer:
     ) -> None:
         self.directory = directory
         self.settings_path = settings_path
-        self.pins_path = pins_path(settings_path)
         self._open_folder = open_folder
         self._choose_files = choose_files
         self._choose_folder = choose_folder
@@ -346,12 +351,12 @@ class AppServer:
     def _in_library(self, path: Path) -> bool:
         """Whether the app's library offers `path`: pinned, in a folder pinned to show its files, used here, or given
         to a model here, in its references/."""
-        pins = read_app_pins(self.pins_path)
-        if any(reference.path == path for reference in pins.references):
+        state = self._app_state()
+        if any(reference.path == path for reference in state.pins.references):
             return True
-        if any(folder.shows == "files" and folder.path == path.parent for folder in pins.folders):
+        if any(folder.shows == "files" and folder.path == path.parent for folder in state.pins.folders):
             return True
-        if path in self._app_state().used:
+        if path in state.used:
             return True
         if not path.is_relative_to(self.directory):
             return False
@@ -435,6 +440,14 @@ class AppServer:
         if params.name == SAVE_SETTINGS.name:
             settings = await asyncio.to_thread(save_app_settings, arguments["settings"], self.settings_path)
             return _structured(settings.model_dump(mode="json"))
+        if params.name == READ_STEPS.name:
+            steps = await asyncio.to_thread(read_activity_steps, self.directory)
+            return _structured(steps.model_dump(mode="json"))
+        if params.name == SAVE_STEP.name:
+            steps = await asyncio.to_thread(
+                self._save_step, arguments["model_id"], arguments["group"], arguments["open"]
+            )
+            return _structured(steps.model_dump(mode="json"))
         if params.name == READ_FOLDERS.name:
             folders = AppFolders(settings=self.settings_path.parent, models=self.directory)
             return _structured(folders.model_dump(mode="json"))
@@ -464,7 +477,7 @@ class AppServer:
             library = await asyncio.to_thread(self._library)
             return _structured(library.model_dump(mode="json"))
         if params.name == SAVE_PINS.name:
-            pins = await asyncio.to_thread(save_app_pins, arguments["pins"], self.pins_path)
+            pins = await asyncio.to_thread(self._save_pins, arguments["pins"])
             return _structured(pins.model_dump(mode="json"))
         if params.name == LIST_FOLDER.name:
             entries = await asyncio.to_thread(self._pinned_folder, Path(arguments["path"]))
@@ -590,13 +603,13 @@ class AppServer:
     def _library(self) -> AppLibrary:
         state = self._app_state()
         return AppLibrary(
-            **dict(read_app_pins(self.pins_path)),
+            **dict(state.pins),
             used=used_here(state.used, self._list_models(self.directory).models),
             last_prompt=state.last_prompt,
         )
 
     def _pinned_folder(self, path: Path) -> list[ReferenceEntry]:
-        pinned = [folder.path for folder in read_app_pins(self.pins_path).folders if folder.shows == "files"]
+        pinned = [folder.path for folder in self._app_state().pins.folders if folder.shows == "files"]
         if path not in pinned:
             raise Modeling3dError(
                 f"{path} is not a folder pinned to show its files. Those pinned so are: "
@@ -604,8 +617,21 @@ class AppServer:
             )
         return list_folder(path)
 
+    def _save_pins(self, pins: dict[str, Any]) -> AppPins:
+        """Keep `pins` for the app's directory, replacing those kept before, and clear what was kept for pins gone."""
+        checked = check_pins(pins)
+        self._update_state(lambda state: {"pins": checked})
+        clear_unpinned(self.directory, checked)
+        return checked
+
+    def _save_step(self, model_id: str, group: str, opened: bool) -> AppSteps:
+        """Keep a group of steps in a model's activity as opened or closed, one change at a time."""
+        models = {model.id for model in self._list_models(self.directory).models}
+        with self._lock:
+            return save_activity_step(self.directory, model_id, group, opened, models)
+
     def _keep(self, upload: str) -> Path:
-        return keep(_staged(upload), self.settings_path)
+        return keep(_staged(upload), self.directory)
 
     def _last_folder(self) -> Path:
         """Where the file dialogs open: where files were last chosen from, while it is there, else the home folder."""
@@ -624,14 +650,14 @@ class AppServer:
 
     def _update_state(self, change: Callable[[AppState], dict[str, Any]]) -> None:
         """Change what the app remembers in its directory, one change at a time."""
-        path = self.directory / APP_STATE
         with self._lock:
             state = self._app_state()
             try:
-                write_atomically(path, state.model_copy(update=change(state)).model_dump_json(indent=2))
+                write_app_state(self.directory, state.model_copy(update=change(state)))
             except OSError as error:
                 raise Modeling3dError(
-                    f"Could not save what the app remembers to {path}: {error}. Check that the folder can be written."
+                    f"Could not save what the app remembers to {app_state_path(self.directory)}: {error}. Check that "
+                    "the folder can be written."
                 ) from None
 
     def _stage(self, path: Path) -> StagedReference:
@@ -748,11 +774,8 @@ class AppServer:
         return self._intelligence()
 
     def _app_state(self) -> AppState:
-        """What the person picked in the app; nothing when it was never written or cannot be read."""
-        try:
-            return AppState.model_validate_json((self.directory / APP_STATE).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return AppState()
+        """What the person pinned, picked, and used in the app; nothing when it was never written or cannot be read."""
+        return read_app_state(self.directory) or AppState()
 
     def _folder(self, folder: str, name: str | None) -> Path:
         if folder == "settings":

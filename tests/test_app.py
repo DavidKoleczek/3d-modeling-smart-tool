@@ -39,6 +39,7 @@ from modeling_3d.schemas import (
     AppPins,
     AppSettings,
     AppState,
+    AppSteps,
     IntelligenceChoice,
     ModelActivity,
     ModelCheck,
@@ -511,8 +512,9 @@ async def test_the_view_remembers_the_ai_model_picked_for_each_mode_in_the_app_d
     )
     assert AppIntelligence.model_validate(chosen.structured_content).chosen == {"color": picked}
     assert AppIntelligence.model_validate(after.structured_content).chosen == {"color": picked, "shape": shaped}
-    state = AppState.model_validate_json((directory / ".app.json").read_text(encoding="utf-8"))
+    state = AppState.model_validate_json((directory / ".app-state" / "app.json").read_text(encoding="utf-8"))
     assert (state.last_intelligence, state.last_prompt) == ({"color": picked, "shape": shaped}, "A cub")
+    assert not (directory / ".app.json").exists()
     assert unknown.structured_content == {"reason": "no-such-intelligence-model", "model": None}
     assert ", ".join(model.id for model in options.models) in text_of(unknown)
     assert ultra.structured_content == {"reason": "bad-reasoning-effort", "model": None}
@@ -529,7 +531,6 @@ async def test_the_view_keeps_the_person_s_settings_in_their_config_directory_fo
         theme="dark",
         dimensions=True,
         wide=AppLayout(activity=PaneLayout(size=420), models=PaneLayout(open=False)),
-        steps={"id-bear": {"run:1": True, "run:3": False}},
     )
 
     async with Client(f"{toys.open().url}/mcp") as client:
@@ -544,6 +545,40 @@ async def test_the_view_keeps_the_person_s_settings_in_their_config_directory_fo
     kept = config_directory / "modeling-3d" / "app-settings.json"
     assert AppSettings.model_validate_json(kept.read_text(encoding="utf-8")) == settings
     assert not (tmp_path / "toys" / "app-settings.json").exists()
+
+
+async def test_the_steps_opened_in_a_model_s_activity_are_kept_for_the_app_s_directory_and_forget_deleted_models(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
+) -> None:
+    model_in(tmp_path / "toys", "bear")
+    model_in(tmp_path / "toys", "fox")
+    toys = open_app(directory=tmp_path / "toys")
+    tools = open_app(directory=tmp_path / "tools")
+
+    async with Client(f"{toys.open().url}/mcp") as client:
+        before = await client.call_tool("read_activity_steps", {})
+        await client.call_tool("save_activity_step", {"model_id": "id-bear", "group": "run:1", "open": True})
+        await client.call_tool("save_activity_step", {"model_id": "id-bear", "group": "run:3", "open": False})
+        await client.call_tool("save_activity_step", {"model_id": "id-fox", "group": "run:1", "open": True})
+        both = await client.call_tool("read_activity_steps", {})
+        await client.call_tool("delete_3d_model", {"name": "fox"})
+        after = await client.call_tool("save_activity_step", {"model_id": "id-bear", "group": "run:1", "open": False})
+    async with Client(f"{tools.open().url}/mcp") as client:
+        elsewhere = await client.call_tool("read_activity_steps", {})
+
+    assert AppSteps.model_validate(before.structured_content) == AppSteps()
+    assert AppSteps.model_validate(both.structured_content) == AppSteps(
+        steps={"id-bear": {"run:1": True, "run:3": False}, "id-fox": {"run:1": True}}
+    )
+    assert AppSteps.model_validate(after.structured_content) == AppSteps(
+        steps={"id-bear": {"run:1": False, "run:3": False}}
+    )
+    assert AppSteps.model_validate(elsewhere.structured_content) == AppSteps()
+    kept = tmp_path / "toys" / ".app-state" / "steps.json"
+    assert AppSteps.model_validate_json(kept.read_text(encoding="utf-8")) == AppSteps.model_validate(
+        after.structured_content
+    )
+    assert not any(config_directory.rglob("*steps*"))
 
 
 async def test_settings_that_are_not_valid_are_refused_naming_the_field_and_kept_ones_read_as_far_as_they_can(
@@ -649,7 +684,7 @@ def test_the_file_dialog_names_a_folder_that_is_not_there(tmp_path: Path) -> Non
         choose_files(tmp_path / "gone", "Choose references")
 
 
-async def test_the_person_s_pins_are_kept_for_every_directory_and_refused_when_not_valid(
+async def test_the_person_s_pins_are_kept_for_the_app_s_directory_alone_and_refused_when_not_valid(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
 ) -> None:
     pins = {
@@ -665,14 +700,19 @@ async def test_the_person_s_pins_are_kept_for_every_directory_and_refused_when_n
         saved = await client.call_tool("save_app_pins", {"pins": pins})
         bad = await client.call_tool("save_app_pins", {"pins": {"prompts": [{"text": "", "mode": "shape"}]}})
     async with Client(f"{elsewhere.open().url}/mcp") as client:
-        after = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+        other = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+    async with Client(f"{open_app(directory=tmp_path / 'here').open().url}/mcp") as client:
+        again = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
 
     assert before == AppLibrary(used=[], last_prompt=None)
     assert AppPins.model_validate(saved.structured_content) == AppPins.model_validate(pins)
-    assert AppPins.model_validate(after.model_dump(include={"references", "folders", "prompts"})) == (
+    assert other == AppLibrary(used=[], last_prompt=None)
+    assert AppPins.model_validate(again.model_dump(include={"references", "folders", "prompts"})) == (
         AppPins.model_validate(pins)
     )
-    assert (config_directory / "modeling-3d" / "app-pins.json").is_file()
+    kept = AppState.model_validate_json((tmp_path / "here" / ".app-state" / "app.json").read_text(encoding="utf-8"))
+    assert kept.pins == AppPins.model_validate(pins)
+    assert not any(config_directory.rglob("*pins*"))
     assert bad.structured_content == {"reason": "bad-pins", "model": None}
     assert "The app pin prompts.0.text is not valid" in text_of(bad)
 
@@ -749,8 +789,8 @@ async def test_pinned_folders_list_what_is_in_them_and_only_the_library_s_images
     assert "is not an image the app offers to work from" in str(refused.value)
 
 
-async def test_a_dropped_file_pinned_is_kept_beside_the_settings_until_it_is_unpinned(
-    open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
+async def test_a_dropped_file_pinned_is_kept_in_the_app_s_directory_until_it_is_unpinned(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path
 ) -> None:
     app_server = open_app(directory=tmp_path / "models")
 
@@ -762,7 +802,7 @@ async def test_a_dropped_file_pinned_is_kept_beside_the_settings_until_it_is_unp
         pinned = kept.read_bytes()
         await client.call_tool("save_app_pins", {"pins": {}})
 
-    assert kept.is_relative_to(config_directory / "modeling-3d" / "kept")
+    assert kept.is_relative_to(tmp_path / "models" / ".app-state" / "pins")
     assert pinned == b"pasted-bytes"
     assert not kept.parent.exists()
 
@@ -806,7 +846,7 @@ async def test_the_view_renames_and_deletes_models_but_not_one_the_app_is_checki
 
 
 def test_renaming_or_deleting_a_model_moves_or_drops_the_person_s_pins_of_it_and_what_was_used_from_it(
-    tmp_path: Path, config_directory: Path
+    tmp_path: Path,
 ) -> None:
     root = tmp_path / "models"
     bear = model_in(root, "bear", references=[])
@@ -822,18 +862,18 @@ def test_renaming_or_deleting_a_model_moves_or_drops_the_person_s_pins_of_it_and
         folders=[PinnedFolder(path=bear / "renders", shows="files"), PinnedFolder(path=pictures, shows="dialog")],
         prompts=[PinnedPrompt(text="A bear", mode="shape")],
     )
-    pinned = config_directory / "modeling-3d" / "app-pins.json"
-    pinned.parent.mkdir(parents=True)
-    pinned.write_text(pins.model_dump_json(), encoding="utf-8")
-    state = AppState(used=[bear / "renders" / "front view.png", pictures / "cub.png"], last_folder=bear / "renders")
-    (root / ".app.json").write_text(state.model_dump_json(), encoding="utf-8")
+    state = AppState(
+        used=[bear / "renders" / "front view.png", pictures / "cub.png"], last_folder=bear / "renders", pins=pins
+    )
+    (root / ".app-state").mkdir()
+    (root / ".app-state" / "app.json").write_text(state.model_dump_json(), encoding="utf-8")
 
     lib.rename_3d_model("bear", "grizzly", root)
-    renamed = AppPins.model_validate_json(pinned.read_text(encoding="utf-8"))
-    renamed_state = AppState.model_validate_json((root / ".app.json").read_text(encoding="utf-8"))
+    renamed_state = AppState.model_validate_json((root / ".app-state" / "app.json").read_text(encoding="utf-8"))
+    renamed = renamed_state.pins
     lib.delete_3d_model("grizzly", root)
-    deleted = AppPins.model_validate_json(pinned.read_text(encoding="utf-8"))
-    deleted_state = AppState.model_validate_json((root / ".app.json").read_text(encoding="utf-8"))
+    deleted_state = AppState.model_validate_json((root / ".app-state" / "app.json").read_text(encoding="utf-8"))
+    deleted = deleted_state.pins
 
     grizzly = root / "grizzly"
     assert [reference.path for reference in renamed.references] == [
@@ -844,12 +884,14 @@ def test_renaming_or_deleting_a_model_moves_or_drops_the_person_s_pins_of_it_and
     ]
     assert [folder.path for folder in renamed.folders] == [grizzly / "renders", pictures]
     assert renamed.prompts == pins.prompts
-    assert renamed_state == AppState(
+    assert renamed_state.model_dump(exclude={"pins"}) == AppState(
         used=[grizzly / "renders" / "front view.png", pictures / "cub.png"], last_folder=grizzly / "renders"
-    )
+    ).model_dump(exclude={"pins"})
     assert [reference.path for reference in deleted.references] == [root / "fox", root / "bearish"]
     assert [folder.path for folder in deleted.folders] == [pictures]
-    assert deleted_state == AppState(used=[pictures / "cub.png"], last_folder=None)
+    assert deleted_state.model_dump(exclude={"pins"}) == AppState(
+        used=[pictures / "cub.png"], last_folder=None
+    ).model_dump(exclude={"pins"})
 
 
 async def test_the_view_names_and_opens_the_folders_where_the_app_keeps_things(

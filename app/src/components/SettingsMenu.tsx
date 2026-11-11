@@ -101,7 +101,7 @@ function Folders() {
       />
       <FolderRow
         name="This directory"
-        detail="Its models, their runs, and what you last picked and viewed here"
+        detail="Its models, their runs, and what you pinned, last picked, and viewed here"
         path={folders?.models}
         onOpen={() => open("models")}
       />

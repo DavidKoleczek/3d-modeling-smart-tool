@@ -18,7 +18,7 @@ asks for a change, continuing the model's session unless they switch that off or
 another agent provider, or steers the run working on it, which Stop ends.
 Both pick the AI model and reasoning effort the next run uses, from those
 `list-intelligence-models` offers, starting on the mode's default. The app remembers the pick for
-each mode in the directory in `.app.json` beside the models; a pick made while a run works applies to the next one.
+each mode in the directory in `.app-state/app.json` beside the models; a pick made while a run works applies to the next one.
 Runs started there go on after the app stops. Nothing done in the app is sent to an agent
 session; a session sees it with `read-3d-model-activity`.
 Each model's menu in the list renames it in place, or deletes it, each after the person
@@ -30,13 +30,13 @@ a click from a library: what the person pinned, the models in the directory, the
 and folders chosen there or given to its models, and pinned folders, each of which shows what is
 in it or opens the platform's file dialog in it. Prompts can be pinned too, and show as buttons
 under the prompt. When a change turns to a fresh agent session, by its mode or Continue session,
-the references the last fresh session started with are put in again. Pins are the person's in
-every directory, kept in `app-pins.json` beside their settings; what was used is kept for the
-directory in `.app.json`.
+the references the last fresh session started with are put in again. Pins and what was used
+are kept for the directory alone, in its `.app-state/app.json`, with dropped or pasted files that
+are pinned copied into its `.app-state/pins/`. The steps opened or closed in each model's activity are kept
+for the directory too, in `.app-state/steps.json`.
 
-How the person set the app up, its theme, pane sizes, viewport tools, and the steps they opened in
-each model's activity, is theirs in every directory, kept in `app-settings.json` in their config
-directory: `%APPDATA%\modeling-3d` on Windows, `~/Library/Application Support/modeling-3d` on
+How the person set the app up, its theme, pane sizes, and viewport tools, is theirs in every
+directory, kept in `app-settings.json` in their config directory: `%APPDATA%\modeling-3d` on Windows, `~/Library/Application Support/modeling-3d` on
 macOS, and `$XDG_CONFIG_HOME/modeling-3d` or `~/.config/modeling-3d` on Linux. The app's
 Settings shows that folder and the models directory, and opens either in the file manager.
 

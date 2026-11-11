@@ -10,7 +10,7 @@ import time
 
 from pydantic import ValidationError
 
-from modeling_3d.schemas import ModelEvent, Modeling3dError, ModelRecord, ModelRunRecord, ModelRuns
+from modeling_3d.schemas import APP_STATE_FOLDER, ModelEvent, Modeling3dError, ModelRecord, ModelRunRecord, ModelRuns
 
 # region: A models directory
 DEFAULT_DIRECTORY = Path(".modeling-3d")
@@ -88,14 +88,21 @@ def write_runs(target: Path, runs: list[ModelRunRecord]) -> None:
 def make_models_directory(root: Path) -> None:
     """Make the models directory, with a .gitignore of its own while it holds no models yet.
 
-    Holding only hidden files, such as what the app remembers there, it is new to the tool. One holding anything else
-    is left as it is, since its project has already set up what it commits.
+    Holding only hidden files and what the app remembers there, it is new to the tool. One holding anything else, such
+    as a hidden folder like .git, is left as it is, since its project has already set up what it commits.
     """
     root.mkdir(parents=True, exist_ok=True)
     target = root / ".gitignore"
-    if target.exists() or any(entry.is_dir() or not entry.name.startswith(".") for entry in root.iterdir()):
+    if target.exists() or any(_set_up(entry) for entry in root.iterdir()):
         return
     shutil.copyfile(GITIGNORE, target)
+
+
+def _set_up(entry: Path) -> bool:
+    """Whether `entry` in a models directory shows its project has already set up what it commits."""
+    if entry.name == APP_STATE_FOLDER:
+        return False
+    return entry.is_dir() or not entry.name.startswith(".")
 
 
 def last_session(record: ModelRecord) -> ModelRunRecord | None:

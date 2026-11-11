@@ -108,6 +108,8 @@ async def test_the_models_directory_named_holds_the_models_and_gets_a_gitignore_
     working_directory: Path,
 ) -> None:
     (working_directory / "picked").mkdir()
+    (working_directory / "picked" / ".app-state").mkdir()
+    (working_directory / "picked" / ".app-state" / "app.json").write_text("{}", encoding="utf-8")
     (working_directory / "picked" / ".app.json").write_text("{}", encoding="utf-8")
     (working_directory / "kept" / "notes").mkdir(parents=True)
 
