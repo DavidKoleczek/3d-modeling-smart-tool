@@ -299,14 +299,14 @@ OPEN_FOLDER = Tool(
     _meta=APP_ONLY,
 )
 STAGED_FILES = (
-    "Return them, each with its path, whether it is a file or a folder, its size, and a preview of an image as a data "
-    "URL."
+    "Each is remembered as used in the app's directory once a request or steering message sends it. Return them, each "
+    "with its path, whether it is a file or a folder, its size, and a preview of an image as a data URL."
 )
 CHOOSE_FILES = Tool(
     name="choose_reference_files",
     description="Ask the person for files to work from in their platform's file dialog, and stage each one chosen as "
-    "an upload `create_3d_model` takes, as though the view had sent it, remembering them as used in the app's "
-    f"directory. {STAGED_FILES} None when the person cancels. Called by the view.",
+    "an upload `create_3d_model` takes, as though the view had sent it, remembering where they were chosen from. "
+    f"{STAGED_FILES} None when the person cancels. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
@@ -327,10 +327,6 @@ STAGE_FILES = Tool(
         "type": "object",
         "properties": {
             "paths": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-            "remember": {
-                "type": "boolean",
-                "description": "Whether to remember them as used in the app's directory; left out, not",
-            },
         },
         "required": ["paths"],
     },

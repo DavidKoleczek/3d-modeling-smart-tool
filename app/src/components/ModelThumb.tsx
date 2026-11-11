@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { Icon } from "@/components/ui/icon";
 import { firstRender, readModelFile, type ModelSummary } from "@/lib/api";
+import { shrinkImage } from "@/lib/images";
 import { pastelFor } from "@/lib/models";
 import { cn } from "@/lib/utils";
 
@@ -31,14 +32,18 @@ export function ModelThumb({
       return;
     }
     let current = true;
-    readModelFile(model.name, render).then(
-      (file) => {
-        if (current) {
-          setSource(`data:${file.mimeType};base64,${file.base64}`);
-        }
-      },
-      () => {},
-    );
+    readModelFile(model.name, render)
+      .then((file) =>
+        shrinkImage(`data:${file.mimeType};base64,${file.base64}`),
+      )
+      .then(
+        (url) => {
+          if (current) {
+            setSource(url);
+          }
+        },
+        () => {},
+      );
     return () => {
       current = false;
     };

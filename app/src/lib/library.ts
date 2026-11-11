@@ -13,6 +13,7 @@ import {
   type ReferenceEntry,
 } from "@/lib/api";
 import { describe } from "@/lib/errors";
+import { shrinkImage } from "@/lib/images";
 import { pathSource, sourceOf, type Reference } from "@/lib/references";
 
 const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
@@ -54,7 +55,7 @@ function subscribe(listener: () => void) {
   };
 }
 
-/** Read the library again, as once files were chosen, which it now offers as used before. */
+/** Read the library again, as once a request was sent, whose files it now offers as used before. */
 export function refreshLibrary(): Promise<void> {
   reading = readAppLibrary().then(
     (library) => set({ library, error: null }),
@@ -118,6 +119,20 @@ export function entryItem(entry: ReferenceEntry): LibraryItem {
     name: entry.name,
     path: entry.path,
   };
+}
+
+/** `items` in the order of their keys in `order`, with those not in it first, as the newest. */
+export function keepOrder(
+  items: LibraryItem[],
+  order: string[],
+): LibraryItem[] {
+  const at = new Map(order.map((key, index) => [key, index]));
+  return [
+    ...items.filter((item) => !at.has(item.key)),
+    ...items
+      .filter((item) => at.has(item.key))
+      .sort((a, b) => (at.get(a.key) ?? 0) - (at.get(b.key) ?? 0)),
+  ];
 }
 
 /** The last part of a path, as a name to show. */
@@ -262,7 +277,9 @@ export function unpinPrompt(text: string, mode: ModelMode) {
 
 const thumbnails = new Map<string, Promise<string | null>>();
 
-/** A picture of an image in the library by its path, once read; null for anything else, or one too large to show. */
+/**
+ * A small picture of an image in the library by its path, once read; null for anything else, or one too large to show.
+ */
 export function useThumbnail(path: string | null): string | null {
   const [loaded, setLoaded] = useState<{
     path: string;
@@ -274,7 +291,9 @@ export function useThumbnail(path: string | null): string | null {
     }
     let thumbnail = thumbnails.get(path);
     if (!thumbnail) {
-      thumbnail = readReferenceFile(path).catch(() => null);
+      thumbnail = readReferenceFile(path)
+        .then(shrinkImage)
+        .catch(() => null);
       thumbnails.set(path, thumbnail);
     }
     let showing = true;

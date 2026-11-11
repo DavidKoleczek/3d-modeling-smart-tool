@@ -1,7 +1,7 @@
 ---
 smart_tool_format: 1
 name: modeling-3d
-version: 0.4.0
+version: 0.4.1
 description: >-
   Creates and edits 3D models from a description of what to build
 use_cases:

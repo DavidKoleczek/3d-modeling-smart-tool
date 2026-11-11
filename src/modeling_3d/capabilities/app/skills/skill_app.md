@@ -27,7 +27,7 @@ to be stopped; Delete stops it.
 
 New model starts from the last prompt a model was created from there, and picks references with
 a click from a library: what the person pinned, the models in the directory, the last 50 files
-and folders chosen there or given to its models, and pinned folders, each of which shows what is
+and folders sent from there or given to its models, and pinned folders, each of which shows what is
 in it or opens the platform's file dialog in it. Prompts can be pinned too, and show as buttons
 under the prompt. When a change turns to a fresh agent session, by its mode or Continue session,
 the references the last fresh session started with are put in again. Pins and what was used

@@ -246,7 +246,9 @@ class AppServer:
         self._read_tool_call = read_tool_call
         self._list_intelligence = list_intelligence
         self._lock = threading.Lock()
-        self._uploads: set[str] = set()
+        # Each upload no request took yet, with the file or folder on this machine it was staged from, to remember as
+        # used once a request or steering message sends it; None for one the view sent.
+        self._uploads: dict[str, Path | None] = {}
         self._app: App | None = None
         clear_old_uploads(time.time())
         self._offered = False
@@ -461,14 +463,11 @@ class AppServer:
             chosen = await self._in_dialog(self._choose_files, opened, CHOOSE_TITLE)
             staged = await self._staged_references(chosen)
             if chosen:
-                await asyncio.to_thread(self._remember, chosen, chosen[0].parent)
+                folder = chosen[0].parent.resolve()
+                await asyncio.to_thread(self._update_state, lambda _: {"last_folder": folder})
             return staged
         if params.name == STAGE_FILES.name:
-            paths = [Path(path) for path in arguments["paths"]]
-            staged = await self._staged_references(paths)
-            if arguments.get("remember"):
-                await asyncio.to_thread(self._remember, paths)
-            return staged
+            return await self._staged_references([Path(path) for path in arguments["paths"]])
         if params.name == CHOOSE_FOLDER.name:
             opened = await asyncio.to_thread(self._last_folder)
             folder = await self._in_dialog(self._choose_folder, opened, CHOOSE_FOLDER_TITLE)
@@ -517,6 +516,7 @@ class AppServer:
             detach=True,
             **budgets,
         )
+        await asyncio.to_thread(self._remember_sent, uploads)
         # Cleared only once the run has started, having copied them into the model: a request that is refused is
         # usually sent again, with the same references.
         await self._clear(uploads)
@@ -580,6 +580,7 @@ class AppServer:
         await asyncio.to_thread(
             self._steer_model, arguments["name"], arguments["message"], self.directory, ORIGIN, references
         )
+        await asyncio.to_thread(self._remember_sent, uploads)
         # As for a request: kept until the message has them, since one that is refused is usually sent again.
         await self._clear(uploads)
         return _text("Sent; the model's activity shows it once its agent has it.")
@@ -638,15 +639,13 @@ class AppServer:
         folder = self._app_state().last_folder
         return folder if folder is not None and folder.is_dir() else Path.home()
 
-    def _remember(self, chosen: list[Path], folder: Path | None = None) -> None:
-        """Remember `chosen` as used in the app's directory, and `folder` as where files were last chosen from."""
-        resolved = [path.expanduser().resolve() for path in chosen]
-        self._update_state(
-            lambda state: {
-                "used": remember(state.used, resolved),
-                **({"last_folder": folder.resolve()} if folder is not None else {}),
-            }
-        )
+    def _remember_sent(self, uploads: list[str]) -> None:
+        """Remember what the sent `uploads` were staged from on this machine as used in the app's directory, so
+        what is picked and left out again is not."""
+        with self._lock:
+            sources = [source for upload in uploads if (source := self._uploads.get(upload)) is not None]
+        if sources:
+            self._update_state(lambda state: {"used": remember(state.used, sources)})
 
     def _update_state(self, change: Callable[[AppState], dict[str, Any]]) -> None:
         """Change what the app remembers in its directory, one change at a time."""
@@ -673,7 +672,7 @@ class AppServer:
         try:
             target.parent.mkdir(parents=True)
             with self._lock:
-                self._uploads.add(upload)
+                self._uploads[upload] = source
             if source.is_dir():
                 shutil.copytree(source, target, ignore=STAGE_SKIPPED)
                 held = [file for file in target.rglob("*") if file.is_file()]
@@ -703,7 +702,7 @@ class AppServer:
         for upload in uploads:
             await asyncio.to_thread(shutil.rmtree, UPLOADS / upload, True)
             with self._lock:
-                self._uploads.discard(upload)
+                self._uploads.pop(upload, None)
 
     def _receive(self, upload: str, path: str, offset: int, data: str) -> int:
         """Write a piece of an upload's file at `offset`, and return how much of the file has arrived."""
@@ -729,7 +728,7 @@ class AppServer:
                     "bad-upload",
                 )
             with self._lock:
-                self._uploads.add(upload)
+                self._uploads.setdefault(upload, None)
             target.parent.mkdir(parents=True, exist_ok=True)
             # A piece sent again, after a reply that never came back, lands where it did the first time.
             with target.open("r+b" if offset > 0 else "wb") as file:

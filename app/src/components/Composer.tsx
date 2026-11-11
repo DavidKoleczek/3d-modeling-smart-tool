@@ -29,6 +29,7 @@ import {
   type ModelSummary,
 } from "@/lib/api";
 import { describe } from "@/lib/errors";
+import { refreshLibrary } from "@/lib/library";
 import { shortDirectory } from "@/lib/models";
 import { takesReferences, useReferences } from "@/lib/references";
 import {
@@ -134,6 +135,7 @@ export function Composer({
     setError(null);
     try {
       await ask(model, next, text, await references.ready());
+      void refreshLibrary();
       references.clear();
       refilled.current.clear();
       setDraft("");

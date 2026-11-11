@@ -717,8 +717,8 @@ async def test_the_person_s_pins_are_kept_for_the_app_s_directory_alone_and_refu
     assert "The app pin prompts.0.text is not valid" in text_of(bad)
 
 
-async def test_what_was_chosen_or_given_to_a_model_is_used_before_newest_first_and_at_most_50(
-    open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog
+async def test_what_was_sent_or_given_to_a_model_is_used_before_newest_first_and_at_most_50(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bear = model_in(tmp_path / "models", "bear", references=["references/bear.png", "references/gone.png"])
     (bear / "references").mkdir()
@@ -731,23 +731,39 @@ async def test_what_was_chosen_or_given_to_a_model_is_used_before_newest_first_a
     for index in range(60):
         (pictures / f"{index:02}.png").write_bytes(b"png-bytes")
     file_dialog.files = [pictures / "00.png"]
+
+    def steer(name: str, message: str, directory: Path, origin: str, references: list[Path]) -> None:
+        if message == "Refused.":
+            raise Modeling3dError(f"No run is working on {name}.")
+
+    monkeypatch.setattr(create, "steer_3d_model", steer)
     app_server = open_app(directory=tmp_path / "models")
 
+    async def library() -> AppLibrary:
+        return AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+
+    async def stage(paths: list[Path]) -> list[str]:
+        staged = await client.call_tool("stage_reference_files", {"paths": [str(path) for path in paths]})
+        return [file["upload"] for file in staged.structured_content["files"]]
+
     async with Client(f"{app_server.open().url}/mcp") as client:
-        given = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
-        await client.call_tool("choose_reference_files", {})
+        given = await library()
+        chosen = await client.call_tool("choose_reference_files", {})
         await client.call_tool("choose_reference_folder", {})
-        chosen = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
-        await client.call_tool("stage_reference_files", {"paths": [str(pictures / "01.png")]})
-        unremembered = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
-        everything = [str(path) for path in sorted(pictures.iterdir())]
-        await client.call_tool("stage_reference_files", {"paths": everything, "remember": True})
-        capped = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+        picked = [file["upload"] for file in chosen.structured_content["files"]] + await stage([pictures / "01.png"])
+        unsent = await library()
+        await client.call_tool("steer_3d_model", {"name": "bear", "message": "Refused.", "uploads": picked})
+        refused = await library()
+        await client.call_tool("steer_3d_model", {"name": "bear", "message": "Smaller.", "uploads": picked})
+        sent = await library()
+        everything = await stage(sorted(pictures.iterdir()))
+        await client.call_tool("steer_3d_model", {"name": "bear", "message": "Smaller.", "uploads": everything})
+        capped = await library()
 
     assert [entry.name for entry in given.used] == ["bear.png"]
-    assert [entry.path for entry in chosen.used] == [pictures / "00.png", given.used[0].path]
     assert file_dialog.shown == [Path.home(), pictures]
-    assert unremembered.used == chosen.used
+    assert unsent.used == refused.used == given.used
+    assert [entry.path for entry in sent.used] == [pictures / "00.png", pictures / "01.png", given.used[0].path]
     assert len(capped.used) == 50
     assert capped.used[0].path == pictures / "00.png"
 

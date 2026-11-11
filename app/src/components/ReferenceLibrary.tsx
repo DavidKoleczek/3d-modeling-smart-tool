@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ModelThumb } from "@/components/ModelThumb";
 import { Button } from "@/components/ui/button";
@@ -21,11 +21,11 @@ import { describe } from "@/lib/errors";
 import {
   baseName,
   entryItem,
+  keepOrder,
   modelItem,
   pinFolder,
   pinnedItems,
   pinnedKeys,
-  refreshLibrary,
   togglePin,
   unpinFolder,
   useLibrary,
@@ -72,20 +72,26 @@ function RailItem({
         className={cn(
           "flex h-7 w-full min-w-0 items-center gap-2 rounded-sm pr-1.5 pl-2 text-left text-label -outline-offset-2",
           active ? "bg-accent-soft text-ink" : "text-ink hover:bg-hover",
-          acts && "group-focus-within/rail:pr-8 group-hover/rail:pr-8",
+          acts && "group-hover/rail:pr-8 group-has-focus-visible/rail:pr-8",
         )}
       >
         <Icon name={icon} className="text-ink-muted" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
         {busy && <LoadingMark />}
         {!busy && count !== undefined && (
-          <span className="mono-annotation text-ink-muted group-focus-within/rail:hidden group-hover/rail:hidden">
+          <span
+            className={cn(
+              "mono-annotation text-ink-muted",
+              acts &&
+                "group-hover/rail:hidden group-has-focus-visible/rail:hidden",
+            )}
+          >
             {count}
           </span>
         )}
       </button>
       {acts && (
-        <div className="absolute top-1/2 right-0.5 flex -translate-y-1/2 opacity-0 group-focus-within/rail:opacity-100 group-hover/rail:opacity-100">
+        <div className="absolute top-1/2 right-0.5 flex -translate-y-1/2 opacity-0 group-hover/rail:opacity-100 group-has-focus-visible/rail:opacity-100">
           {actions}
         </div>
       )}
@@ -99,6 +105,7 @@ function Tile({
   picked,
   pinned,
   loading,
+  scroller,
   onToggle,
   onPin,
 }: {
@@ -107,12 +114,34 @@ function Tile({
   picked: boolean;
   pinned: boolean;
   loading: boolean;
+  /** What the tile scrolls in, near which it reads its image. */
+  scroller: HTMLElement | null;
   onToggle: () => void;
   onPin: () => void;
 }) {
-  const thumbnail = useThumbnail(item.kind === "file" ? item.path : null);
+  const tile = useRef<HTMLLIElement>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const element = tile.current;
+    if (near || !element || !scroller) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setNear(true);
+        }
+      },
+      { root: scroller, rootMargin: "50% 0px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [near, scroller]);
+  const thumbnail = useThumbnail(
+    near && item.kind === "file" ? item.path : null,
+  );
   return (
-    <li className="group/tile relative min-w-0">
+    <li ref={tile} className="group/tile relative min-w-0">
       <button
         type="button"
         aria-pressed={picked}
@@ -159,7 +188,7 @@ function Tile({
           "shadow-sm absolute top-1 right-1 grid size-6 place-items-center rounded-sm bg-panel/90 hover:text-ink",
           pinned
             ? "text-accent-ink"
-            : "text-ink-muted opacity-0 group-focus-within/tile:opacity-100 group-hover/tile:opacity-100",
+            : "text-ink-muted opacity-0 group-hover/tile:opacity-100 group-has-focus-visible/tile:opacity-100",
         )}
       >
         <Icon name={pinned ? "pinned" : "pin"} />
@@ -176,7 +205,7 @@ function Tile({
 }
 
 /**
- * What a request can work from, to pick with a click: what the person pinned, the models here, what was chosen or
+ * What a request can work from, to pick with a click: what the person pinned, the models here, what was sent or
  * given to the models here before, and pinned folders, each showing what is in it or opening the file dialog there.
  * Other files and folders come in by the file dialogs under them, or dropped or pasted onto whatever holds it.
  */
@@ -198,6 +227,9 @@ export function ReferenceLibrary({
   const [problem, setProblem] = useState<string | null>(null);
   const [loading, setLoading] = useState<string[]>([]);
   const [choosing, setChoosing] = useState<string | null>(null);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  // What was used before in the order it first showed, so nothing moves under the pointer until the library next opens.
+  const [usedOrder, setUsedOrder] = useState<string[]>([]);
   // By pinned folder, what was in it when it was last opened.
   const [contents, setContents] = useState<Record<string, ReferenceEntry[]>>(
     {},
@@ -214,7 +246,10 @@ export function ReferenceLibrary({
   const modelItems = referable(models)
     .map((model) => modelItem(model.name))
     .filter(offered);
-  const used = library.used.map(entryItem);
+  const used = keepOrder(library.used.map(entryItem), usedOrder);
+  if (used.some((item, index) => item.key !== usedOrder[index])) {
+    setUsedOrder(used.map((item) => item.key));
+  }
   const folder = library.folders.find(
     (entry) => source === `folder:${entry.path}`,
   );
@@ -233,7 +268,7 @@ export function ReferenceLibrary({
     ? items.filter((item) => item.name.toLowerCase().includes(needle))
     : items;
 
-  /** Run `work` with `id` showing as busy, adding what it staged, then reading the library for what it remembered. */
+  /** Run `work` with `id` showing as busy, adding what it staged. */
   const busy = (id: string, work: () => Promise<StagedReference[] | void>) => {
     if (choosing) {
       return;
@@ -244,7 +279,6 @@ export function ReferenceLibrary({
       .then((staged) => {
         if (staged && staged.length > 0) {
           references.addStaged(staged);
-          void refreshLibrary();
         }
       })
       .catch((cause: unknown) => setProblem(describe(cause)))
@@ -266,11 +300,8 @@ export function ReferenceLibrary({
       return;
     }
     setLoading((current) => [...current, item.key]);
-    stageReferenceFiles([item.path], true)
-      .then((staged) => {
-        references.addStaged(staged);
-        void refreshLibrary();
-      })
+    stageReferenceFiles([item.path])
+      .then((staged) => references.addStaged(staged))
       .catch((cause: unknown) => setProblem(describe(cause)))
       .finally(() =>
         setLoading((current) => current.filter((key) => key !== item.key)),
@@ -311,7 +342,7 @@ export function ReferenceLibrary({
         : showing === "models"
           ? "No model here has a script to work from yet."
           : showing === "used"
-            ? "Nothing used here yet. Files chosen to work from show here."
+            ? "Nothing used here yet. Files sent to work from show here."
             : `${title} has nothing to work from.`;
   const shownProblem = problem ?? error;
 
@@ -348,7 +379,7 @@ export function ReferenceLibrary({
             <RailItem
               icon="image"
               label="Used before"
-              title="What was chosen to work from here, and what the models here were given"
+              title="What was sent to work from here, and what the models here were given"
               count={used.length}
               active={showing === "used"}
               onClick={() => setSource("used")}
@@ -438,7 +469,7 @@ export function ReferenceLibrary({
               onClick={() =>
                 busy("folder", async () => {
                   const path = await chooseReferenceFolder();
-                  return path ? stageReferenceFiles([path], true) : [];
+                  return path ? stageReferenceFiles([path]) : [];
                 })
               }
             />
@@ -467,7 +498,10 @@ export function ReferenceLibrary({
               />
             </label>
           </header>
-          <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+          <div
+            ref={setScroller}
+            className="min-h-0 flex-1 overflow-y-auto p-2.5"
+          >
             {shownProblem && (
               <Help error className="mt-0 mb-2">
                 {shownProblem}
@@ -496,6 +530,7 @@ export function ReferenceLibrary({
                     picked={picked.has(item.key)}
                     pinned={pinned.has(item.key)}
                     loading={loading.includes(item.key)}
+                    scroller={scroller}
                     onToggle={() => toggle(item)}
                     onPin={() => togglePin(item, models)}
                   />

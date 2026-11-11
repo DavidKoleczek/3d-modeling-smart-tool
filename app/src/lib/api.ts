@@ -647,7 +647,7 @@ export async function openAppFolder(
 
 /**
  * Ask the person for files in their file dialog, opened at `directory` or where they last chose from, each staged as
- * an upload and remembered as used; none if they cancel.
+ * an upload, which is remembered as used once sent; none if they cancel.
  */
 export async function chooseReferenceFiles(
   directory?: string,
@@ -660,15 +660,11 @@ export async function chooseReferenceFiles(
   return structured.files as StagedReference[];
 }
 
-/** Stage files and folders on this machine, by path, each as an upload, remembering them as used when `remember`. */
+/** Stage files and folders on this machine, by path, each as an upload, which is remembered as used once sent. */
 export async function stageReferenceFiles(
   paths: string[],
-  remember = false,
 ): Promise<StagedReference[]> {
-  const structured = await structuredFrom(
-    STAGE_FILES_TOOL,
-    remember ? { paths, remember } : { paths },
-  );
+  const structured = await structuredFrom(STAGE_FILES_TOOL, { paths });
   return structured.files as StagedReference[];
 }
 
