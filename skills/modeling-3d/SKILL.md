@@ -5,7 +5,7 @@ description: >-
   `modeling_3d.lib`. Triggers on "modeling-3d".
 license: MIT
 metadata:
-  version: "0.4.1"
+  version: "0.4.2"
 ---
 
 # Using modeling-3d

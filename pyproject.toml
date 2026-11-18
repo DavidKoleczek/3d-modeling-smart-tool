@@ -1,17 +1,17 @@
 [project]
 name = "modeling-3d"
-version = "0.4.1"
+version = "0.4.2"
 description = "Creates and edits 3D models from a description of what to build"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
 dependencies = [
-    "fastapi>=0.149.0,<0.150.0",
+    "fastapi>=0.149.0,<0.163.0",
     "mcp>=2.3.0,<3.0.0",
     "pydantic>=2.14,<3.0",
     "pyyaml>=6.0.3,<7.0.0",
-    "typer>=0.27.3,<0.28.0",
+    "typer>=0.29.0,<0.30.0",
     "uvicorn>=0.54.0,<0.55.0",
     "websockets>=17.3,<18.0",
 ]
@@ -28,7 +28,7 @@ claude = ["claude-agent-sdk>=0.2.168,<0.3.0"]
 all = ["modeling-3d[codex,claude]"]
 
 [build-system]
-requires = ["uv_build>=0.13.1,<0.14.0"]
+requires = ["uv_build>=0.13.8,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
@@ -38,6 +38,11 @@ module-name = "modeling_3d"
 add-bounds = "major"
 default-groups = "all"
 exclude-newer = "5 days"
+
+[tool.uv.exclude-newer-package]
+# Remove these exceptions once 0.169.1 has cleared the cooldown.
+openai-codex = false
+openai-codex-cli-bin = false
 
 [dependency-groups]
 # Every agent provider, so `uv run` type checks and tests each implementation without asking for extras.
@@ -91,6 +96,7 @@ ban-relative-imports = "all"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 # The tests import their helpers, such as fakes.py, by name, and importlib mode leaves tests/ off the path otherwise.
 pythonpath = ["tests"]

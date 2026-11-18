@@ -31,6 +31,10 @@ JSON on stdout:
     {"agent_provider": "codex", "id": "gpt-6.1-sol", "label": "Sol 6.1",
      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]},
     {"agent_provider": "codex", "id": "gpt-6-astra", "label": "Astra 6",
+     "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]},
+    {"agent_provider": "codex", "id": "gpt-6.2-sol", "label": "Sol 6.2",
+     "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]},
+    {"agent_provider": "codex", "id": "gpt-6.2-astra", "label": "Astra 6.2",
      "reasoning_efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]}
   ],
   "defaults": {

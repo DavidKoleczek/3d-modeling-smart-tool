@@ -9,15 +9,16 @@ metadata:
 # Dependency update
 
 All dependencies have a cooldown time. `exclude-newer = "5 days"` under `[tool.uv]` in `pyproject.toml`, and `minimumReleaseAge: 7200` (minutes) in `app/pnpm-workspace.yaml`.
-Never apply a major version upgrade yourself. Collect each one, check whether its peers allow it, and report it at the end for the user to decide.
+Report every major version upgrade, such as `1.x` to `2.x` or `2.x` to `3.x`, and check whether dependency and peer ranges allow it. Keep the dependency on its current major unless the user approves the upgrade.
 
 ## Python
 
-1. Notice how we version. Runtime dependencies and extras carry a cap at the next major, for example `"mcp>=2.3.0,<3.0.0"`, so we never auto upgrade to a new major. A 0.x package treats its minor as the major, so its cap is the next minor, for example `"fastapi>=0.143.0,<0.144.0"`. Dev dependencies have no cap.
+1. Runtime dependencies and extras usually carry a cap at the next major, for example `"mcp>=2.3.0,<3.0.0"`. Some `0.x` dependencies have a cap at the next minor, as FastAPI does. Dev dependencies have no cap.
 1. For each dependency in `[project.dependencies]`, `[project.optional-dependencies]`, and `[dependency-groups]`, find the latest version. Read `https://pypi.org/pypi/<name>/json` and take the newest non-prerelease, non-yanked release whose earliest file upload is at least 5 days old. Do not trust the top of the PyPI history page; it ignores the cooldown.
-1. Raise each floor that is behind to that version, keeping the form the entry already uses (`>=2.14,<3.0` stays two-part, `>=0.27.3,<0.28.0` stays three-part). Never raise a cap: a latest version at or past the cap is a major upgrade to report.
-1. Update `uv_build` under `[build-system]` to the latest version, moving its cap with it. It is the one exception to the cap rule.
-1. Run `uv lock --upgrade`. It respects the cooldown and the caps, and moves transitive dependencies too. Do this even when `pyproject.toml` did not change.
+1. Keep Python dependency ranges in `pyproject.toml` broad enough for downstream library users. Record routine upgrades in `uv.lock`. Raise a minimum only when the library or its development checks require a newer version, for example when the code uses a newly introduced API. Keep the existing version format.
+1. When the latest eligible `0.x` release crosses a minor cap, review the intervening release notes against the APIs the project uses and check dependency constraints. If the release is compatible, move the cap to the next minor after that release, keep the existing minimum, and verify the update with the affected tests. If the upgrade requires breaking changes or the dependency constraints prevent it, keep the cap and report the blocker.
+1. Update `uv_build` under `[build-system]` to the latest eligible version within its current major, moving its cap with it.
+1. Refresh `uv.lock` even when `pyproject.toml` did not change. Preview `uv lock --upgrade --dry-run` and check the proposed direct and transitive changes for major upgrades, including uncapped development dependencies. If there are no major upgrades, run `uv lock --upgrade`. Otherwise use targeted `uv lock --upgrade-package '<name>==<version>'` updates to keep packages within their current major. Check the resulting lock changes before syncing.
 1. Run `uv sync --frozen --all-extras --all-groups`. On Windows this fails with `failed to remove file ... modeling-3d.exe` while an agent session has the `modeling-3d` MCP server running. Either stop that session, or verify in a throwaway environment and tell the user to sync afterwards:
 
    ```bash
@@ -46,4 +47,4 @@ Never apply a major version upgrade yourself. Collect each one, check whether it
 ## Finish
 
 1. Run `prek run --all-files` and `uv run pytest`; both must pass.
-1. Report what moved on each side, every major upgrade you held back with whether its peers allow it, and whether the user still needs to run `uv sync`.
+1. Report what moved on each side, any caps widened, every upgrade held back and why, and whether the user still needs to run `uv sync`.
