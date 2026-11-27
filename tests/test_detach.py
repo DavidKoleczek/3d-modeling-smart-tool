@@ -73,6 +73,22 @@ async def test_a_detached_run_goes_on_in_its_own_process_and_its_handle_follows_
     assert (run.directory / "runs" / run.run_id / PROCESS_LOG).is_file()
 
 
+async def test_a_detached_run_given_a_workspace_runs_its_agent_there_and_not_where_it_was_started(
+    detached: Callable[[str], None], working_directory: Path
+) -> None:
+    detached("builds_and_says_where_it_ran")
+    garden = working_directory / "garden"
+    garden.mkdir()
+
+    run = await lib.create_3d_model("A bear", name="bear", workspace=Path("garden"), detach=True)
+    result = await asyncio.wait_for(run.result(), DETACHED_TIMEOUT_SECONDS)
+
+    assert run.directory == garden / ".modeling-3d" / "bear"
+    assert (result.status, result.text) == ("done", str(garden))
+    assert result.next.endswith(f"--workspace {garden}")
+    assert not (working_directory / ".modeling-3d").exists()
+
+
 async def test_deleting_a_model_stops_the_detached_run_working_on_it_and_then_deletes_it(
     detached: Callable[[str], None],
 ) -> None:

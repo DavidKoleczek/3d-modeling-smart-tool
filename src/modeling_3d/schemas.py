@@ -56,6 +56,9 @@ BPY_REQUIREMENT = "bpy==5.2.*"
 
 # Which failure it was, for a surface that words it for a person in its own terms rather than passing on the message.
 FailureReason = Literal[
+    "no-such-workspace",
+    "no-workspace",
+    "workspace-changed",
     "invalid-name",
     "name-in-use",
     "no-such-model",
@@ -403,10 +406,15 @@ class ModelSummary(BaseModel):
     )
 
 
-class ModelListing(BaseModel):
-    """Every model in a directory, most recently updated first, and the one viewed last."""
+# The folder in a workspace, the top-level directory of the user's project, that holds its models.
+MODELS_FOLDER = ".modeling-3d"
 
-    directory: Path
+
+class ModelListing(BaseModel):
+    """Every model in a workspace, most recently updated first, and the one viewed last."""
+
+    workspace: Path = Field(description="The top-level directory of the user's project")
+    directory: Path = Field(description=f"Where its models are kept: its {MODELS_FOLDER}")
     models: list[ModelSummary]
     last_viewed: str | None = Field(description="None when nothing was viewed, or that model is gone")
     unreadable: list[str] = Field(
@@ -560,7 +568,7 @@ class AppLayout(BaseModel):
 
 
 class AppSettings(BaseModel):
-    """app-settings.json in the user's config directory: how the person set up the app, the same in every directory."""
+    """app-settings.json in the user's config directory: how the person set up the app, the same in every workspace."""
 
     theme: ThemePreference = Field(default="system", description="`system` follows the host's theme")
     grid: bool = True
@@ -587,9 +595,34 @@ class AppSteps(BaseModel):
 class AppFolders(BaseModel):
     """Where the app keeps what it remembers."""
 
-    settings: Path = Field(description="The person's settings, the same in every directory")
-    models: Path = Field(
-        description="The models the app shows, with what the person pinned, last picked, viewed, and used there"
+    settings: Path = Field(description="The person's settings and the workspaces they opened, the same everywhere")
+    workspace: Path | None = Field(description="The workspace the app shows; None before one is picked")
+    models: Path | None = Field(
+        description="Its .modeling-3d: the models, with what the person pinned, last picked, viewed, and used there"
+    )
+
+
+class OpenedWorkspaces(BaseModel):
+    """app-workspaces.json in the user's config directory: the workspaces opened in the app, for any app to offer."""
+
+    workspaces: list[Path] = Field(default_factory=list, description="Newest first, each once, at most 20")
+
+
+class RecentWorkspace(BaseModel):
+    """A workspace opened in the app before."""
+
+    path: Path = Field(description="Absolute")
+    missing: bool = Field(description="Whether it is no longer a folder on this machine")
+
+
+class AppWorkspaces(BaseModel):
+    """The workspace the app shows, and the ones it can switch to."""
+
+    current: Path | None = Field(description="None before one is picked, or once its folder is gone")
+    recent: list[RecentWorkspace] = Field(description="Those opened in the app, newest first")
+    new_in: Path = Field(
+        description="Where a new workspace is made unless another folder is picked: beside the one shown, else the "
+        "one opened last, else the home folder"
     )
 
 
@@ -605,10 +638,10 @@ class AppLibrary(AppPins):
     """What the app offers to start a request from: what was pinned and used in its directory."""
 
     used: list[ReferenceEntry] = Field(
-        description="What was chosen to work from in the app's directory or given to its models, newest first, each "
+        description="What was chosen to work from in the app's workspace or given to its models, newest first, each "
         "once, of what is still there"
     )
-    last_prompt: str | None = Field(description="What the last model created in the app's directory was asked there")
+    last_prompt: str | None = Field(description="What the last model created in the app's workspace was asked there")
     default_prompts: dict[ModelMode, DefaultPrompt] = Field(
         description="By mode, what a request that needs no prompt asks when given none, which a switch to the mode "
         "puts in the composer"

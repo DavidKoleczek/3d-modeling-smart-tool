@@ -16,7 +16,8 @@ cancel_3d_model("bear")
 ## Arguments
 
 - `--name NAME`: the model being worked on.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models; the working directory when omitted.
 
 ## Result
 

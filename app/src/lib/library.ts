@@ -39,8 +39,9 @@ let state: State = { library: null, error: null };
 let reading: Promise<void> | null = null;
 // Saves go one at a time, in order, so the last pin made is the one kept.
 let saving: Promise<unknown> = Promise.resolve();
-// The app's directory the library was read for, since each directory keeps its own pins and uses.
-let followed: string | null = null;
+// Counts the workspaces shown, each with its own pins and uses, so what was read or pinned for one never lands in the
+// next.
+let generation = 0;
 
 function set(next: Partial<State>) {
   state = { ...state, ...next };
@@ -58,28 +59,33 @@ function subscribe(listener: () => void) {
 
 /** Read the library again, as once a request was sent, whose files it now offers as used before. */
 export function refreshLibrary(): Promise<void> {
+  const asked = generation;
   reading = readAppLibrary().then(
-    (library) => set({ library, error: null }),
-    (cause: unknown) =>
-      set({ error: `Could not read the library: ${describe(cause)}` }),
+    (library) => {
+      if (asked === generation) {
+        set({ library, error: null });
+      }
+    },
+    (cause: unknown) => {
+      if (asked === generation) {
+        set({ error: `Could not read the library: ${describe(cause)}` });
+      }
+    },
   );
   return reading;
 }
 
-/** Read the library again once the app shows another directory, whose pins and uses are its own. */
-export function followDirectory(directory: string | null) {
-  if (directory === null || directory === followed) {
-    return;
-  }
-  const switched = followed !== null;
-  followed = directory;
-  if (switched) {
-    void refreshLibrary();
-  }
+/** Forget the library, for a workspace shown next, which reads its own. */
+export function forgetLibrary() {
+  generation += 1;
+  reading = null;
+  saving = Promise.resolve();
+  thumbnails.clear();
+  set({ library: null, error: null });
 }
 
 /**
- * What the app offers to start a request from: what was pinned and used in its directory, and the last prompt a model
+ * What the app offers to start a request from: what was pinned and used in its workspace, and the last prompt a model
  * was created from there, read once and kept current as the person pins.
  */
 export function useLibrary(): { library: AppLibrary; error: string | null } {
@@ -101,11 +107,14 @@ function changePins(change: (pins: AppPins) => AppPins) {
     prompts: library.prompts,
   });
   set({ library: { ...library, ...pins }, error: null });
+  const asked = generation;
   saving = saving
-    .then(() => saveAppPins(pins))
+    .then(() => (asked === generation ? saveAppPins(pins) : undefined))
     .catch((cause: unknown) => {
-      set({ error: describe(cause) });
-      return refreshLibrary();
+      if (asked === generation) {
+        set({ error: describe(cause) });
+        return refreshLibrary();
+      }
     });
 }
 
@@ -276,6 +285,7 @@ export function unpinPrompt(text: string, mode: ModelMode) {
   }));
 }
 
+// Of what the library of the workspace shown offers, which another's may not.
 const thumbnails = new Map<string, Promise<string | null>>();
 
 /**

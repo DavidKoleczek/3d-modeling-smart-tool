@@ -32,7 +32,7 @@ from modeling_3d.capabilities.create_3d_model.prompting import template
 from modeling_3d.capabilities.create_3d_model.record import GITIGNORE, write_record
 from modeling_3d.cli import app
 from modeling_3d.intelligence import interface
-from modeling_3d.intelligence.schemas import AgentResult
+from modeling_3d.intelligence.schemas import AgentResult, HostWorkspace
 from modeling_3d.schemas import (
     BPY_REQUIREMENT,
     DEFAULT_INTELLIGENCE_MODELS,
@@ -104,31 +104,48 @@ async def test_a_new_model_is_built_and_recorded_in_its_own_directory(working_di
     assert [ModelEvent.model_validate_json(line) for line in lines] == events
 
 
-async def test_the_models_directory_named_holds_the_models_and_gets_a_gitignore_when_new_to_the_tool(
+async def test_a_workspace_keeps_its_models_in_a_models_directory_with_a_gitignore_when_new_and_runs_the_agent(
     working_directory: Path,
 ) -> None:
-    (working_directory / "picked").mkdir()
-    (working_directory / "picked" / ".app-state").mkdir()
-    (working_directory / "picked" / ".app-state" / "app.json").write_text("{}", encoding="utf-8")
-    (working_directory / "picked" / ".app.json").write_text("{}", encoding="utf-8")
-    (working_directory / "kept" / "notes").mkdir(parents=True)
+    picked = working_directory / "picked"
+    (picked / ".modeling-3d" / ".app-state").mkdir(parents=True)
+    (picked / ".modeling-3d" / ".app-state" / "app.json").write_text("{}", encoding="utf-8")
+    (picked / ".modeling-3d" / ".app.json").write_text("{}", encoding="utf-8")
+    (working_directory / "kept" / ".modeling-3d" / "notes").mkdir(parents=True)
 
-    _, made, _, _ = await run_to_end(name="bear")
+    _, made, here, _ = await run_to_end(name="bear")
     gitignore = made.directory.parent / ".gitignore"
     first = gitignore.read_text(encoding="utf-8")
     gitignore.write_text("/*\n", encoding="utf-8")
     await run_to_end(name="cub")
-    _, fox, _, _ = await run_to_end(name="fox", directory=Path("picked"))
-    await run_to_end(name="owl", directory=Path("kept"))
+    _, fox, there, _ = await run_to_end(name="fox", workspace=Path("picked"))
+    await run_to_end(name="owl", workspace=Path("kept"))
 
     written = GITIGNORE.read_text(encoding="utf-8")
     assert first == written
     assert "!/AGENTS.md" in written
     assert gitignore.read_text(encoding="utf-8") == "/*\n"
-    assert (working_directory / "picked" / ".gitignore").read_text(encoding="utf-8") == written
-    assert not (working_directory / "kept" / ".gitignore").exists()
-    assert fox.directory == working_directory / "picked" / "fox"
-    assert (await fox.result()).next.endswith(f"--directory {working_directory / 'picked'}")
+    assert (picked / ".modeling-3d" / ".gitignore").read_text(encoding="utf-8") == written
+    assert not (working_directory / "kept" / ".modeling-3d" / ".gitignore").exists()
+    assert made.directory == working_directory / ".modeling-3d" / "bear"
+    assert fox.directory == picked / ".modeling-3d" / "fox"
+    assert here.runs[0].request.workspace == HostWorkspace(path=working_directory)
+    assert there.runs[0].request.workspace == HostWorkspace(path=picked)
+    assert f"Your working directory is the workspace, {picked}," in there.runs[0].request.prompt
+    assert f"--name fox --workspace {picked}`" in there.runs[0].request.prompt
+    assert (await made.result()).next.endswith("--name bear --resume-session true")
+    assert (await fox.result()).next.endswith(f"--workspace {picked}")
+
+
+async def test_a_workspace_that_is_not_a_folder_is_refused_naming_it_and_nothing_is_made(
+    working_directory: Path,
+) -> None:
+    with pytest.raises(Modeling3dError) as failure:
+        await run_to_end(name="bear", workspace=Path("gone"))
+
+    assert failure.value.reason == "no-such-workspace"
+    assert str(working_directory / "gone") in str(failure.value)
+    assert not (working_directory / "gone").exists()
 
 
 @pytest.mark.parametrize(
@@ -273,7 +290,9 @@ async def test_a_session_continued_after_a_rename_is_told_once_where_the_model_i
     _, _, going_on, _ = await run_to_end(prompt="And a tail", name="grizzly", resume_session=True)
 
     models = working_directory / ".modeling-3d"
-    moved = constants.MOVED.format(old="bear", name="grizzly", directory=models / "grizzly", models=models)
+    moved = constants.MOVED.format(
+        old="bear", name="grizzly", directory=models / "grizzly", workspace=working_directory
+    )
     assert resuming.runs[0].request.resume == SESSION
     assert resuming.runs[0].request.prompt.startswith(f"{moved}\n\nRounder ears")
     assert going_on.runs[0].request.prompt.strip() == "And a tail"
@@ -334,19 +353,19 @@ async def test_a_fresh_session_is_told_to_read_the_project_s_guidance_beside_its
 ) -> None:
     _, bear, without, _ = await run_to_end(name="bear")
     (bear.directory.parent / "AGENTS.md").write_text("Models face -Z.\n", encoding="utf-8")
-    (working_directory / "models").mkdir()
-    (working_directory / "models" / "AGENTS.md").write_text("Keep them small.", encoding="utf-8")
+    (working_directory / "garden" / ".modeling-3d").mkdir(parents=True)
+    (working_directory / "garden" / ".modeling-3d" / "AGENTS.md").write_text("Keep them small.", encoding="utf-8")
 
     _, _, fresh, _ = await run_to_end(prompt="Make the snout longer", name="bear")
     _, _, resuming, _ = await run_to_end(prompt="And the ears rounder", name="bear", resume_session=True)
-    _, _, elsewhere, _ = await run_to_end(name="fox", directory=Path("models"))
+    _, _, elsewhere, _ = await run_to_end(name="fox", workspace=Path("garden"))
 
     guidance = bear.directory.parent / "AGENTS.md"
     assert str(guidance) not in without.runs[0].request.prompt
     assert constants.READ_GUIDANCE.format(path=guidance) in fresh.runs[0].request.prompt
     assert "Models face -Z." not in fresh.runs[0].request.prompt
     assert str(guidance) not in resuming.runs[0].request.prompt
-    assert str(working_directory / "models" / "AGENTS.md") in elsewhere.runs[0].request.prompt
+    assert str(working_directory / "garden" / ".modeling-3d" / "AGENTS.md") in elsewhere.runs[0].request.prompt
 
 
 async def test_a_session_goes_on_with_another_model_of_its_agent_provider() -> None:
@@ -604,7 +623,7 @@ async def test_every_run_gets_the_check_as_a_skill_and_is_told_to_run_it(state_d
     assert sys.executable in skill
     assert " ".join(check.CHECK_COMMAND[1:]) in skill
     assert lib.skill(constants.AGENT_SKILL) in skill
-    assert f"--name bear --directory {run.directory.parent}" in request.prompt
+    assert f"--name bear --workspace {run.directory.parents[1]}" in request.prompt
 
 
 async def test_an_agent_that_did_not_check_the_model_gets_the_check_once_as_it_finishes() -> None:

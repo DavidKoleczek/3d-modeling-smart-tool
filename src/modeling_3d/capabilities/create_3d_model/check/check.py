@@ -56,13 +56,13 @@ from modeling_3d.capabilities.create_3d_model.check.png import Rgba
 from modeling_3d.capabilities.create_3d_model.constants import AGENT_SKILL, AGENT_SKILL_DESCRIPTION
 from modeling_3d.capabilities.create_3d_model.prompting import template
 from modeling_3d.capabilities.create_3d_model.record import (
-    DEFAULT_DIRECTORY,
     DETAIL,
     GLB,
     REPORT,
     load_record,
     missing_model,
     model_names,
+    models_directory,
     read_atomically,
     write_atomically,
 )
@@ -196,27 +196,29 @@ class _Measured:
 
 def check_3d_model(
     name: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     checks: list[str] | None = None,
     max_triangles: int | NotGiven | None = NOT_GIVEN,
     max_draw_calls: int | NotGiven | None = NOT_GIVEN,
     screen_size: tuple[int, int] | NotGiven | None = NOT_GIVEN,
 ) -> ModelCheck:
     """Measure the model's model.glb, write the report into its checks/, and return it."""
-    measured = _measure(name, directory, checks, max_triangles, max_draw_calls, screen_size)
+    root = models_directory(workspace)
+    measured = _measure(name, root, checks, max_triangles, max_draw_calls, screen_size)
     found = _blender(measured) if measured.blender else {}
     return _report(measured, found)
 
 
 async def check_model(
     name: str,
-    directory: Path | None,
+    root: Path,
     max_triangles: int | None,
     max_draw_calls: int | None,
     screen_size: tuple[int, int] | None,
 ) -> ModelCheck:
-    """Every check of the model, for a run, which can stop it partway and Blender with it."""
-    measured = await asyncio.to_thread(_measure, name, directory, None, max_triangles, max_draw_calls, screen_size)
+    """Every check of the model in the models directory `root`, for a run, which can stop it partway and Blender with
+    it."""
+    measured = await asyncio.to_thread(_measure, name, root, None, max_triangles, max_draw_calls, screen_size)
     found = await _blender_async(measured) if measured.blender else {}
     return await asyncio.to_thread(_report, measured, found)
 
@@ -279,7 +281,7 @@ def describe(report: ModelCheck) -> str:
 
 def _measure(
     name: str,
-    directory: Path | None,
+    root: Path,
     checks: list[str] | None,
     max_triangles: int | NotGiven | None,
     max_draw_calls: int | NotGiven | None,
@@ -287,7 +289,6 @@ def _measure(
 ) -> _Measured:
     require_budgets(max_triangles, max_draw_calls, screen_size)
     names = _selected(checks)
-    root = (directory or DEFAULT_DIRECTORY).resolve()
     # Compared against the names on disk, since Windows and macOS find `Bear` when only `bear` exists.
     if name not in model_names(root):
         raise missing_model(root, name)

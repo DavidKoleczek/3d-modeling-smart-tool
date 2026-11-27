@@ -46,8 +46,9 @@ works too: the agent is told the detailing's instructions, which that session ha
 ## Arguments
 
 - `PROMPT`: optional. The detail wanted, or what to change in it.
-- `--name NAME`: required. A model in the directory that has been built.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--name NAME`: required. A model in the workspace that has been built.
+- `--workspace DIR`: the top-level directory of the project, where the agent runs and whose
+  `.modeling-3d` holds the models; the working directory when omitted.
 - `--reference PATH`: a file or folder to work from, repeatable, as for `create-3d-model`.
 - `--resume-session S`: `false` (the default) for a fresh session, `true` to continue the model's
   last one, or the id of one of its sessions.

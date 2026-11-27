@@ -8,12 +8,14 @@ import { Notice } from "@/components/ui/notice";
 import { describe } from "@/lib/errors";
 import { connect } from "@/lib/host";
 import { loadSettings } from "@/lib/settings";
+import { refreshWorkspaces } from "@/lib/workspaces";
 
 const root = createRoot(document.getElementById("root")!);
 
 try {
   await connect();
-  await loadSettings();
+  // Before the view first paints, so it opens in the person's theme and layout, on the workspace the app shows.
+  await Promise.all([loadSettings(), refreshWorkspaces()]);
   root.render(
     <StrictMode>
       <TooltipProvider>

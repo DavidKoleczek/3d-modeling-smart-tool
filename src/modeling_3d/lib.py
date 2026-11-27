@@ -8,11 +8,12 @@ from modeling_3d.capabilities.app import mcp_server as app_server_module
 from modeling_3d.capabilities.app import pins as app_pins
 from modeling_3d.capabilities.app import server as app_module
 from modeling_3d.capabilities.app import settings as app_settings
+from modeling_3d.capabilities.app import workspaces as app_workspaces
 from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.capabilities.blender import blender
 from modeling_3d.capabilities.create_3d_model import activity, constants, create, intelligence_models, models, runs
 from modeling_3d.capabilities.create_3d_model.check import check
-from modeling_3d.capabilities.create_3d_model.record import DEFAULT_DIRECTORY
+from modeling_3d.capabilities.create_3d_model.record import resolve_workspace
 from modeling_3d.capabilities.create_3d_model.runs import ModelRun
 from modeling_3d.core import manifest
 from modeling_3d.core import skill as skill_module
@@ -54,25 +55,27 @@ def version() -> str:
     return skill_module.version()
 
 
-def app_server(directory: Path | None = None) -> AppServer:
+def app_server(workspace: Path | None = None) -> AppServer:
     """The app's MCP server: the tool that opens the app, the tools its view calls, and the view as an MCP App.
 
     Serve `AppServer.server` over any MCP transport. `AppServer.open` serves the browser host page, which renders
     the view for agents that cannot embed it and reaches the same server at its own `/mcp`. The view shows the models
-    in `AppServer.directory`, and creates, changes, rigs, colors, details, checks, steers, stops, renames, and deletes them
-    through this library's capabilities, as from `app`. Nothing done in it is sent to an agent session; a session sees
-    it with `read_3d_model_activity`.
-    How the person set up the app, such as its theme and pane sizes, is theirs in every directory, kept in
-    `app-settings.json` in their config directory. What they pinned in it is kept for its directory alone, in its
-    `.app-state/`.
+    in `AppServer.workspace`, and creates, changes, rigs, colors, details, checks, steers, stops, renames, and deletes
+    them through this library's capabilities, as from `app`. Nothing done in it is sent to an agent session; a session
+    sees it with `read_3d_model_activity`.
+    How the person set up the app, such as its theme and pane sizes, is theirs in every workspace, kept in
+    `app-settings.json` in their config directory, with the workspaces opened in the app, newest first, in
+    `app-workspaces.json` beside it. What they pinned in it is kept for its workspace alone, in its
+    `.modeling-3d/.app-state/`.
 
     Args:
-        directory: Where the models the app shows are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The workspace whose models the app shows, as for `create_3d_model`. When omitted, the one opened
+            last that is still a folder, or none until one is picked in the app.
     """
     return app_server_module.AppServer(
         skill_module.DISTRIBUTION,
         version(),
-        (directory or DEFAULT_DIRECTORY).resolve(),
+        None if workspace is None else resolve_workspace(workspace),
         list_models=models.list_3d_models,
         view_model=models.view_3d_model,
         rename_model=rename_3d_model,
@@ -89,6 +92,7 @@ def app_server(directory: Path | None = None) -> AppServer:
         list_intelligence=intelligence_models.list_intelligence_models,
         default_prompts=constants.UNASKED,
         settings_path=app_settings.settings_path(),
+        workspaces_path=app_workspaces.workspaces_path(),
         open_folder=app_folders.open_folder,
         choose_files=app_folders.choose_files,
         choose_folder=app_folders.choose_folder,
@@ -103,7 +107,7 @@ def app_view() -> str:
 async def create_3d_model(
     prompt: str,
     name: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     max_triangles: int | NotGiven | None = NOT_GIVEN,
     max_draw_calls: int | NotGiven | None = NOT_GIVEN,
@@ -122,16 +126,17 @@ async def create_3d_model(
     An agent writes the model as a Blender script, model.py, in the model's own directory, builds model.glb with it,
     and renders and looks at the result until it matches the request. It builds the shape from named parts, without
     materials unless asked, which `rig_3d_model` splits and joins to ready it to move and `color_3d_model` colors by
-    role; reshaping a rigged or colored model keeps its rig and colors. It runs in the working directory, usually the
-    project the model is for, which it may explore; it writes only in the model's directory. An AGENTS.md in
-    `directory` is the project's guidance for its models, and a fresh session is told to read it. The run ends with
-    the shape, and never goes on to rig or color the model by itself.
+    role; reshaping a rigged or colored model keeps its rig and colors. It runs in the workspace, which it may
+    explore; it writes only in the model's directory. An AGENTS.md in the workspace's `.modeling-3d` is the
+    project's guidance for its models, and a fresh session is told to read it. The run ends with the shape, and
+    never goes on to rig or color the model by itself.
 
     Args:
         prompt: What to build, or what to change.
-        name: The model's name and directory under `directory`. When a model by that name exists there, ignoring
-            case, the request changes it; otherwise it creates a new model.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        name: The model's name, which its directory takes. When a model by that name exists in the workspace,
+            ignoring case, the request changes it; otherwise it creates a new model.
+        workspace: The top-level directory of the project, where the agent runs and whose `.modeling-3d` holds
+            the models; the working directory when omitted.
         references: Files and folders to work from, such as images, models, or another model's model.py, model.glb,
             and renders. Each is copied into the model's references/, a folder whole but for its hidden folders,
             node_modules, and __pycache__, and images given as files are also shown to the agent with the prompt.
@@ -162,7 +167,7 @@ async def create_3d_model(
     return await create.create_3d_model(
         prompt=prompt,
         name=name,
-        directory=directory,
+        workspace=workspace,
         references=references,
         max_triangles=max_triangles,
         max_draw_calls=max_draw_calls,
@@ -181,7 +186,7 @@ async def create_3d_model(
 async def rig_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -202,10 +207,11 @@ async def rig_3d_model(
     continued the same ways, and it ends once the model is rigged.
 
     Args:
-        name: A model in `directory` that has been built, ignoring case.
+        name: A model in the workspace that has been built, ignoring case.
         prompt: What moves and how, or what to change in the rig; when omitted, the agent works it out from the model,
             its references, and the project's guidance.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
         references: Files and folders to work from, as for `create_3d_model`.
         resume_session: Which agent session to continue, as for `create_3d_model`. A session that last shaped the
             model is told the rig's instructions as it goes on.
@@ -220,7 +226,7 @@ async def rig_3d_model(
     return await create.rig_3d_model(
         name=name,
         prompt=prompt,
-        directory=directory,
+        workspace=workspace,
         references=references,
         resume_session=resume_session,
         agent_provider=agent_provider,
@@ -236,7 +242,7 @@ async def rig_3d_model(
 async def color_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -258,10 +264,11 @@ async def color_3d_model(
     once the model is colored.
 
     Args:
-        name: A model in `directory` that has been built, ignoring case.
+        name: A model in the workspace that has been built, ignoring case.
         prompt: The roles, schemes, or colors wanted, or what to change in them; when omitted, the agent works them
             out from the model, its references, and the project's guidance.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
         references: Files and folders to work from, such as concept art to take colors from, as for
             `create_3d_model`.
         resume_session: Which agent session to continue, as for `create_3d_model`. A session that last worked in
@@ -277,7 +284,7 @@ async def color_3d_model(
     return await create.color_3d_model(
         name=name,
         prompt=prompt,
-        directory=directory,
+        workspace=workspace,
         references=references,
         resume_session=resume_session,
         agent_provider=agent_provider,
@@ -293,7 +300,7 @@ async def color_3d_model(
 async def detail_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -315,10 +322,11 @@ async def detail_3d_model(
     steered, cancelled, followed, and continued the same ways, and it ends once the detail is painted.
 
     Args:
-        name: A model in `directory` that has been built, ignoring case.
+        name: A model in the workspace that has been built, ignoring case.
         prompt: The detail wanted, or what to change in it; when omitted, the agent works out what the model would
             show from the model, its references, and the project's guidance.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
         references: Files and folders to work from, such as photos of the wear wanted, as for `create_3d_model`.
         resume_session: Which agent session to continue, as for `create_3d_model`. A session that last worked in
             another mode is told the detailing's instructions as it goes on.
@@ -333,7 +341,7 @@ async def detail_3d_model(
     return await create.detail_3d_model(
         name=name,
         prompt=prompt,
-        directory=directory,
+        workspace=workspace,
         references=references,
         resume_session=resume_session,
         agent_provider=agent_provider,
@@ -348,7 +356,7 @@ async def detail_3d_model(
 
 def check_3d_model(
     name: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     checks: list[str] | None = None,
     max_triangles: int | NotGiven | None = NOT_GIVEN,
     max_draw_calls: int | NotGiven | None = NOT_GIVEN,
@@ -370,7 +378,8 @@ def check_3d_model(
 
     Args:
         name: The model's name, exactly as its directory is named.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
         checks: The checks to run, by name or by the groups `shape`, `rig`, and `color`, as `CHECK_NAMES` and
             `CHECK_GROUPS` in schemas.py list them; every check when omitted.
         max_triangles: The triangle budget to measure against; None for none. Each budget left out is the model's
@@ -381,7 +390,7 @@ def check_3d_model(
     """
     return check.check_3d_model(
         name=name,
-        directory=directory,
+        workspace=workspace,
         checks=checks,
         max_triangles=max_triangles,
         max_draw_calls=max_draw_calls,
@@ -392,7 +401,7 @@ def check_3d_model(
 def steer_3d_model(
     name: str,
     message: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     origin: str | None = None,
     references: list[Path] | None = None,
 ) -> None:
@@ -401,17 +410,18 @@ def steer_3d_model(
     Args:
         name: The model being worked on.
         message: What to tell its agent.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
         origin: Who is sending it, shown with it in the model's activity, as for `create_3d_model`.
         references: Files or folders to send with it, copied into the model's references/ as for `create_3d_model`;
             images are shown to the agent with the message.
     """
-    create.steer_3d_model(name=name, message=message, directory=directory, origin=origin, references=references)
+    create.steer_3d_model(name=name, message=message, workspace=workspace, origin=origin, references=references)
 
 
-def cancel_3d_model(name: str, directory: Path | None = None) -> None:
+def cancel_3d_model(name: str, workspace: Path | None = None) -> None:
     """Stop the run working on the model at once, from any process; its session can still be resumed."""
-    create.cancel_3d_model(name=name, directory=directory)
+    create.cancel_3d_model(name=name, workspace=workspace)
 
 
 def stopped_by_signals(run: ModelRun) -> AbstractContextManager[None]:
@@ -423,7 +433,7 @@ def stopped_by_signals(run: ModelRun) -> AbstractContextManager[None]:
     return runs.stopped_by_signals(run)
 
 
-def read_3d_model_activity(name: str, directory: Path | None = None, after: str | None = None) -> ModelActivity:
+def read_3d_model_activity(name: str, workspace: Path | None = None, after: str | None = None) -> ModelActivity:
     """Everything about how a model is being made: its summary, and its activity across every run.
 
     The activity is each request and steering message with who sent it, what the agent said, the tools it ran and
@@ -432,13 +442,14 @@ def read_3d_model_activity(name: str, directory: Path | None = None, after: str 
 
     Args:
         name: The model's name, exactly as its directory is named.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
         after: The `cursor` of an earlier read, for only the activity since.
     """
-    return activity.read_3d_model_activity(name=name, directory=directory, after=after)
+    return activity.read_3d_model_activity(name=name, workspace=workspace, after=after)
 
 
-def read_3d_model_tool_call(name: str, run_id: str, call_id: str, directory: Path | None = None) -> ToolCall:
+def read_3d_model_tool_call(name: str, run_id: str, call_id: str, workspace: Path | None = None) -> ToolCall:
     """One tool call of a model's agent in full: the arguments it was called with, and what came back as text.
 
     The activity gives each call only by what it works on; this gives the whole command, edit, or file, and its
@@ -448,54 +459,58 @@ def read_3d_model_tool_call(name: str, run_id: str, call_id: str, directory: Pat
         name: The model's name, exactly as its directory is named.
         run_id: The `run_id` of the call's `tool` entry in the model's activity.
         call_id: The `id` in that entry's `data`.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
     """
-    return activity.read_3d_model_tool_call(name=name, run_id=run_id, call_id=call_id, directory=directory)
+    return activity.read_3d_model_tool_call(name=name, run_id=run_id, call_id=call_id, workspace=workspace)
 
 
-def list_3d_models(directory: Path | None = None) -> ModelListing:
-    """Every model in a directory, most recently updated first, with its state, and the one viewed last.
+def list_3d_models(workspace: Path | None = None) -> ModelListing:
+    """Every model in a workspace, most recently updated first, with its state, and the one viewed last.
 
-    Reads only, so it is safe while runs write. A directory that does not exist lists as empty.
+    Reads only, so it is safe while runs write. A workspace without a `.modeling-3d` lists as empty.
 
     Args:
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
     """
-    return models.list_3d_models(directory=directory)
+    return models.list_3d_models(workspace=workspace)
 
 
-def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary:
-    """Record the model as the one viewed last in its directory, and return its summary.
+def view_3d_model(name: str, workspace: Path | None = None) -> ModelSummary:
+    """Record the model as the one viewed last in its workspace, and return its summary.
 
     Args:
         name: The model's name, exactly as its directory is named.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
     """
-    return models.view_3d_model(name=name, directory=directory)
+    return models.view_3d_model(name=name, workspace=workspace)
 
 
-def rename_3d_model(name: str, new_name: str, directory: Path | None = None) -> ModelSummary:
+def rename_3d_model(name: str, new_name: str, workspace: Path | None = None) -> ModelSummary:
     """Rename a model: move its directory, and point what names it at the new name, then return its summary there.
 
     Its model.json, its latest check's report, `.state.json`, and the lines of the models directory's .gitignore that opt
     it in follow the name, as do the person's pins of it in the app and what they used from it there. Its history, such
     as each run's prompt and events, and its agent's own sources, such as model.py, are left as they are. A session
     continued after the rename is told where the model is now. A run working on the model, or a name another entry in
-    the directory holds, ignoring case, refuses it.
+    the models directory holds, ignoring case, refuses it.
 
     Args:
         name: The model's name, exactly as its directory is named.
         new_name: Its new name, which its directory takes: letters, digits, '.', '_', and '-', starting with a letter or
             digit. One that differs only in case renames it too.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
     """
-    summary = models.rename_3d_model(name=name, new_name=new_name, directory=directory)
+    summary = models.rename_3d_model(name=name, new_name=new_name, workspace=workspace)
     if new_name != name:
         _app_paths_moved(summary.directory.with_name(name), summary.directory)
     return summary
 
 
-def delete_3d_model(name: str, directory: Path | None = None) -> None:
+def delete_3d_model(name: str, workspace: Path | None = None) -> None:
     """Delete a model and everything in its directory, for good, stopping a run working on it first.
 
     It waits up to `STOP_WAIT_SECONDS` in models.py for the run to end, and leaves the model whole when it has not. Its
@@ -504,9 +519,10 @@ def delete_3d_model(name: str, directory: Path | None = None) -> None:
 
     Args:
         name: The model's name, exactly as its directory is named.
-        directory: Where models are kept; `.modeling-3d` in the working directory when omitted.
+        workspace: The top-level directory of the project, whose `.modeling-3d` holds the models; the working
+            directory when omitted.
     """
-    _app_paths_moved(models.delete_3d_model(name=name, directory=directory), None)
+    _app_paths_moved(models.delete_3d_model(name=name, workspace=workspace), None)
 
 
 def _app_paths_moved(old: Path, new: Path | None) -> None:

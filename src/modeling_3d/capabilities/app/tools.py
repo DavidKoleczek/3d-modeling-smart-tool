@@ -13,18 +13,28 @@ REFERENCE_FILE_PREFIX = "modeling-3d://references/"
 APP_ONLY = {"ui": {"resourceUri": VIEW_URI, "visibility": ["app"]}}
 # Copy buttons in the view write to the clipboard, which a sandboxed frame may only do when its host allows it.
 VIEW_META = {"ui": {"permissions": {"clipboardWrite": {}}}}
+# What each view tool that works in the app's workspace takes, so a call sent as the app switched is refused rather
+# than made in the other workspace.
+SHOWN: dict[str, Any] = {
+    "workspace": {
+        "type": "string",
+        "description": "The workspace the view shows, as `read_app_workspaces` returns it; a call for another fails "
+        "with reason `workspace-changed`",
+    }
+}
 OPEN_APP = Tool(
     name="open_app",
-    description="Show the 3D Modeling app, where the user watches the models in a directory being made, and creates, "
+    description="Show the 3D Modeling app, where the user watches the models in a workspace being made, and creates, "
     "changes, and steers them, and return its browser URL. Hosts that render MCP Apps show it inline. Opening it "
     "again returns the same URL.",
     input_schema={
         "type": "object",
         "properties": {
-            "directory": {
+            "workspace": {
                 "type": "string",
-                "description": "Where the models to show are kept, absolute or relative to where this server started. "
-                "Omit it to keep the current one, .modeling-3d in the working directory at first.",
+                "description": "The top-level directory of the project whose models to show, kept in its "
+                ".modeling-3d; absolute or relative to where this server started. Omit it to keep the current "
+                "one, the working directory at first.",
             }
         },
     },
@@ -32,34 +42,34 @@ OPEN_APP = Tool(
 )
 LIST_MODELS = Tool(
     name="list_3d_models",
-    description="The models in the app's directory, newest first, with their state, and the one viewed last. Called "
+    description="The models in the app's workspace, newest first, with their state, and the one viewed last. Called "
     "by the view.",
-    input_schema={"type": "object", "properties": {}},
+    input_schema={"type": "object", "properties": {**SHOWN}},
     _meta=APP_ONLY,
 )
 VIEW_MODEL = Tool(
     name="view_3d_model",
-    description="Record a model in the app's directory as the one viewed last, and return its summary. Called by the "
+    description="Record a model in the app's workspace as the one viewed last, and return its summary. Called by the "
     "view.",
-    input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    input_schema={"type": "object", "properties": {"name": {"type": "string"}, **SHOWN}, "required": ["name"]},
     _meta=APP_ONLY,
 )
 RENAME_MODEL = Tool(
     name="rename_3d_model",
-    description="Rename a model in the app's directory: its folder, the records that name it, and the person's pins "
+    description="Rename a model in the app's workspace: its folder, the records that name it, and the person's pins "
     "of it, and return its summary under the new name. Called by the view.",
     input_schema={
         "type": "object",
-        "properties": {"name": {"type": "string"}, "new_name": {"type": "string"}},
+        "properties": {"name": {"type": "string"}, "new_name": {"type": "string"}, **SHOWN},
         "required": ["name", "new_name"],
     },
     _meta=APP_ONLY,
 )
 DELETE_MODEL = Tool(
     name="delete_3d_model",
-    description="Delete a model in the app's directory and everything in its folder, for good, stopping a run working "
+    description="Delete a model in the app's workspace and everything in its folder, for good, stopping a run working "
     "on it first. Called by the view.",
-    input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    input_schema={"type": "object", "properties": {"name": {"type": "string"}, **SHOWN}, "required": ["name"]},
     _meta=APP_ONLY,
 )
 # What every request that starts a run on a model takes, whatever its mode.
@@ -72,17 +82,18 @@ RUN_PROPERTIES: dict[str, Any] = {
     "reference_models": {
         "type": "array",
         "items": {"type": "string"},
-        "description": "Models in the app's directory, whose script, GLB, and first render are references",
+        "description": "Models in the app's workspace, whose script, GLB, and first render are references",
     },
     "uploads": {
         "type": "array",
         "items": {"type": "string"},
         "description": "Uploads from `upload_reference`, each a file or a folder to work from",
     },
+    **SHOWN,
 }
 CREATE_MODEL = Tool(
     name="create_3d_model",
-    description="Create a model in the app's directory, or change the shape of the one by that name, in a run of its "
+    description="Create a model in the app's workspace, or change the shape of the one by that name, in a run of its "
     "own that outlives this server; return the model's summary once its agent runs. Called by the view.",
     input_schema={
         "type": "object",
@@ -106,7 +117,7 @@ CREATE_MODEL = Tool(
 )
 RIG_MODEL = Tool(
     name="rig_3d_model",
-    description="Rig a built model in the app's directory, to its own budgets, in a run of its own that outlives this "
+    description="Rig a built model in the app's workspace, to its own budgets, in a run of its own that outlives this "
     "server; return the model's summary once its agent runs. Called by the view.",
     input_schema={
         "type": "object",
@@ -120,7 +131,7 @@ RIG_MODEL = Tool(
 )
 COLOR_MODEL = Tool(
     name="color_3d_model",
-    description="Color a built model in the app's directory by role, to its own budgets, in a run of its own that "
+    description="Color a built model in the app's workspace by role, to its own budgets, in a run of its own that "
     "outlives this server; return the model's summary once its agent runs. Called by the view.",
     input_schema={
         "type": "object",
@@ -134,7 +145,7 @@ COLOR_MODEL = Tool(
 )
 DETAIL_MODEL = Tool(
     name="detail_3d_model",
-    description="Paint the surface detail of a built model in the app's directory, to its own budgets, in a run of its "
+    description="Paint the surface detail of a built model in the app's workspace, to its own budgets, in a run of its "
     "own that outlives this server; return the model's summary once its agent runs. Called by the view.",
     input_schema={
         "type": "object",
@@ -148,10 +159,10 @@ DETAIL_MODEL = Tool(
 )
 CHECK_MODEL = Tool(
     name="check_3d_model",
-    description="Check a model in the app's directory against its own budgets, and return the report, which is also "
+    description="Check a model in the app's workspace against its own budgets, and return the report, which is also "
     'kept in its checks/report.json. A check that takes a while returns {"checking": true} first; calling again '
     "waits on the same check. Called by the view.",
-    input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    input_schema={"type": "object", "properties": {"name": {"type": "string"}, **SHOWN}, "required": ["name"]},
     _meta=APP_ONLY,
 )
 UPLOAD_REFERENCE = Tool(
@@ -173,7 +184,7 @@ UPLOAD_REFERENCE = Tool(
 )
 STEER_MODEL = Tool(
     name="steer_3d_model",
-    description="Send a message to the agent working on a model in the app's directory. Called by the view.",
+    description="Send a message to the agent working on a model in the app's workspace. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
@@ -184,6 +195,7 @@ STEER_MODEL = Tool(
                 "items": {"type": "string"},
                 "description": "Uploads from `upload_reference`, each a file or a folder to send with the message",
             },
+            **SHOWN,
         },
         "required": ["name", "message"],
     },
@@ -191,8 +203,8 @@ STEER_MODEL = Tool(
 )
 CANCEL_MODEL = Tool(
     name="cancel_3d_model",
-    description="Stop the run working on a model in the app's directory. Called by the view.",
-    input_schema={"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+    description="Stop the run working on a model in the app's workspace. Called by the view.",
+    input_schema={"type": "object", "properties": {"name": {"type": "string"}, **SHOWN}, "required": ["name"]},
     _meta=APP_ONLY,
 )
 READ_ACTIVITY = Tool(
@@ -200,7 +212,7 @@ READ_ACTIVITY = Tool(
     description="A model's summary and its activity, or only what came after the cursor `after`. Called by the view.",
     input_schema={
         "type": "object",
-        "properties": {"name": {"type": "string"}, "after": {"type": "string"}},
+        "properties": {"name": {"type": "string"}, "after": {"type": "string"}, **SHOWN},
         "required": ["name"],
     },
     _meta=APP_ONLY,
@@ -211,7 +223,12 @@ READ_TOOL_CALL = Tool(
     "activity. Called by the view.",
     input_schema={
         "type": "object",
-        "properties": {"name": {"type": "string"}, "run_id": {"type": "string"}, "call_id": {"type": "string"}},
+        "properties": {
+            "name": {"type": "string"},
+            "run_id": {"type": "string"},
+            "call_id": {"type": "string"},
+            **SHOWN,
+        },
         "required": ["name", "run_id", "call_id"],
     },
     _meta=APP_ONLY,
@@ -219,20 +236,21 @@ READ_TOOL_CALL = Tool(
 LIST_INTELLIGENCE = Tool(
     name="list_intelligence_models",
     description="The AI models and reasoning efforts to pick from, what each mode runs with when given none, and what "
-    "the person picked last for each mode in the app's directory. Called by the view.",
-    input_schema={"type": "object", "properties": {}},
+    "the person picked last for each mode in the app's workspace. Called by the view.",
+    input_schema={"type": "object", "properties": {**SHOWN}},
     _meta=APP_ONLY,
 )
 CHOOSE_INTELLIGENCE = Tool(
     name="choose_intelligence_model",
     description="Remember an AI model and reasoning effort as the ones the person picked last for the mode in the "
-    "app's directory, and return what can be picked. Called by the view.",
+    "app's workspace, and return what can be picked. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
             "mode": {"type": "string", "enum": list(MODES)},
             "model": {"type": "string"},
             "reasoning_effort": {"type": "string", "enum": list(REASONING_EFFORTS)},
+            **SHOWN,
         },
         "required": ["mode", "model", "reasoning_effort"],
     },
@@ -240,7 +258,7 @@ CHOOSE_INTELLIGENCE = Tool(
 )
 READ_SETTINGS = Tool(
     name="read_app_settings",
-    description="How the person set up the app: theme, viewport tools, and pane sizes, the same in every directory. "
+    description="How the person set up the app: theme, viewport tools, and pane sizes, the same in every workspace. "
     "Called by the view.",
     input_schema={"type": "object", "properties": {}},
     _meta=APP_ONLY,
@@ -259,20 +277,21 @@ SAVE_SETTINGS = Tool(
 READ_STEPS = Tool(
     name="read_activity_steps",
     description="By model id, the groups of steps the person opened or closed in each model's activity in the app's "
-    "directory. Called by the view.",
-    input_schema={"type": "object", "properties": {}},
+    "workspace. Called by the view.",
+    input_schema={"type": "object", "properties": {**SHOWN}},
     _meta=APP_ONLY,
 )
 SAVE_STEP = Tool(
     name="save_activity_step",
     description="Keep a group of steps in a model's activity as opened or closed, and return every model's, as "
-    "`read_activity_steps` does. Those of models no longer in the app's directory are forgotten. Called by the view.",
+    "`read_activity_steps` does. Those of models no longer in the app's workspace are forgotten. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
             "model_id": {"type": "string", "description": "The model's `id`, which stays the same when it is renamed"},
             "group": {"type": "string", "description": "The group of steps, by the view's key for it"},
             "open": {"type": "boolean"},
+            **SHOWN,
         },
         "required": ["model_id", "group", "open"],
     },
@@ -280,26 +299,95 @@ SAVE_STEP = Tool(
 )
 READ_FOLDERS = Tool(
     name="read_app_folders",
-    description="Where the app keeps the person's settings, and the models it shows. Called by the view.",
-    input_schema={"type": "object", "properties": {}},
+    description="Where the app keeps the person's settings, the workspace it shows, and that workspace's models, the "
+    "two null before one is picked. Called by the view.",
+    input_schema={"type": "object", "properties": {**SHOWN}},
     _meta=APP_ONLY,
 )
 OPEN_FOLDER = Tool(
     name="open_app_folder",
-    description="Open the folder of the person's settings, of the app's models, or of one model in their file manager. "
-    "Called by the view.",
+    description="Open the folder of the person's settings, the app's workspace, its models, or one model in their file "
+    "manager. Called by the view.",
     input_schema={
         "type": "object",
         "properties": {
-            "folder": {"type": "string", "enum": ["settings", "models", "model"]},
+            "folder": {"type": "string", "enum": ["settings", "workspace", "models", "model"]},
             "name": {"type": "string", "description": "The model, for `model`"},
+            **SHOWN,
         },
         "required": ["folder"],
     },
     _meta=APP_ONLY,
 )
+READ_WORKSPACES = Tool(
+    name="read_app_workspaces",
+    description="The workspace the app shows, null before one is picked or once its folder is gone, and the workspaces "
+    "opened in the app, newest first, each with whether it is still a folder. Called by the view.",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+OPEN_WORKSPACE = Tool(
+    name="open_app_workspace",
+    description="Show the models in another workspace, keep it as the one opened last, and return what "
+    "`read_app_workspaces` does. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "The project's top-level directory; its .modeling-3d opens the project too",
+            }
+        },
+        "required": ["path"],
+    },
+    _meta=APP_ONLY,
+)
+CHOOSE_WORKSPACE = Tool(
+    name="choose_app_workspace",
+    description="Ask the person in their platform's folder dialog for a workspace, or for the folder to make a new "
+    "one in, opened where `read_app_workspaces` makes one by default, and return its path, or null when they "
+    "cancel. Called by the view, to open it or make one there.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "parent": {
+                "type": "boolean",
+                "description": "True to ask for the folder a new workspace is made in, rather than a workspace",
+            }
+        },
+    },
+    _meta=APP_ONLY,
+)
+CREATE_WORKSPACE = Tool(
+    name="create_app_workspace",
+    description="Make a new folder for a workspace, `name` in `parent`, show it, keep it as the one opened last, and "
+    "return what `read_app_workspaces` does. A name already taken in `parent` fails. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "description": "The new folder's name"},
+            "parent": {
+                "type": "string",
+                "description": "The folder to make it in, such as `new_in` from `read_app_workspaces`",
+            },
+        },
+        "required": ["name", "parent"],
+    },
+    _meta=APP_ONLY,
+)
+FORGET_WORKSPACE = Tool(
+    name="forget_app_workspace",
+    description="Drop a workspace from those the app offers to switch to, leaving its folder as it is, and return "
+    "what `read_app_workspaces` does. Called by the view.",
+    input_schema={
+        "type": "object",
+        "properties": {"path": {"type": "string", "description": "As `read_app_workspaces` returns it"}},
+        "required": ["path"],
+    },
+    _meta=APP_ONLY,
+)
 STAGED_FILES = (
-    "Each is remembered as used in the app's directory once a request or steering message sends it. Return them, each "
+    "Each is remembered as used in the app's workspace once a request or steering message sends it. Return them, each "
     "with its path, whether it is a file or a folder, its size, and a preview of an image as a data URL."
 )
 CHOOSE_FILES = Tool(
@@ -313,7 +401,8 @@ CHOOSE_FILES = Tool(
             "directory": {
                 "type": "string",
                 "description": "An absolute path to the folder to open at; left out, where files were last chosen from",
-            }
+            },
+            **SHOWN,
         },
     },
     _meta=APP_ONLY,
@@ -336,20 +425,20 @@ CHOOSE_FOLDER = Tool(
     name="choose_reference_folder",
     description="Ask the person for a folder in their platform's folder dialog, opened where files were last chosen "
     "from, and return its path, or null when they cancel. Called by the view, to pin the folder or work from it.",
-    input_schema={"type": "object", "properties": {}},
+    input_schema={"type": "object", "properties": {**SHOWN}},
     _meta=APP_ONLY,
 )
 READ_LIBRARY = Tool(
     name="read_app_library",
     description="What the app offers to start a request from: the references, folders, and prompts the person pinned "
-    "in the app's directory; what was used there, newest first, at most 50; and what the last model created there was "
+    "in the app's workspace; what was used there, newest first, at most 50; and what the last model created there was "
     "asked. Called by the view.",
-    input_schema={"type": "object", "properties": {}},
+    input_schema={"type": "object", "properties": {**SHOWN}},
     _meta=APP_ONLY,
 )
 SAVE_PINS = Tool(
     name="save_app_pins",
-    description="Keep the references, folders, and prompts the person pinned in the app's directory, replacing those "
+    description="Keep the references, folders, and prompts the person pinned in the app's workspace, replacing those "
     "kept before, and return them. Called by the view.",
     input_schema={
         "type": "object",
@@ -357,7 +446,8 @@ SAVE_PINS = Tool(
             "pins": {
                 "type": "object",
                 "description": "`references`, `folders`, and `prompts`, as `read_app_library` returns them",
-            }
+            },
+            **SHOWN,
         },
         "required": ["pins"],
     },
@@ -369,18 +459,18 @@ LIST_FOLDER = Tool(
     "leaving out hidden ones, at most 500. Called by the view.",
     input_schema={
         "type": "object",
-        "properties": {"path": {"type": "string", "description": "The pinned folder's path"}},
+        "properties": {"path": {"type": "string", "description": "The pinned folder's path"}, **SHOWN},
         "required": ["path"],
     },
     _meta=APP_ONLY,
 )
 KEEP_UPLOAD = Tool(
     name="keep_upload",
-    description="Keep a copy of an upload in the app's directory, so a file or folder they dropped or pasted can be "
+    description="Keep a copy of an upload in the app's workspace, so a file or folder they dropped or pasted can be "
     "pinned by its path there, and return that path. It is cleared once unpinned. Called by the view.",
     input_schema={
         "type": "object",
-        "properties": {"upload": {"type": "string", "description": "An upload whose every piece has arrived"}},
+        "properties": {"upload": {"type": "string", "description": "An upload whose every piece has arrived"}, **SHOWN},
         "required": ["upload"],
     },
     _meta=APP_ONLY,
@@ -408,6 +498,11 @@ VIEW_TOOLS = [
     SAVE_STEP,
     READ_FOLDERS,
     OPEN_FOLDER,
+    READ_WORKSPACES,
+    OPEN_WORKSPACE,
+    CHOOSE_WORKSPACE,
+    CREATE_WORKSPACE,
+    FORGET_WORKSPACE,
     CHOOSE_FILES,
     STAGE_FILES,
     CHOOSE_FOLDER,
@@ -427,5 +522,5 @@ REFERENCE_FILE = ResourceTemplate(
     name="Reference file",
     uri_template=f"{REFERENCE_FILE_PREFIX}{{+path}}",
     description="An image the app offers to work from, by its absolute path, as base64, for the app's view: one the "
-    "person pinned, one in a folder they pinned to show its files, or one used in the app's directory.",
+    "person pinned, one in a folder they pinned to show its files, or one used in the app's workspace.",
 )

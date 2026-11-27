@@ -20,7 +20,8 @@ call.input, call.output
 - `--name NAME`: the model whose agent made the call, exactly as its directory is named.
 - `--run RUN_ID`: the `run_id` of the call's `tool` entry in `read-3d-model-activity`.
 - `--id ID`: the `id` in that entry's `data`.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models; the working directory when omitted.
 
 ## Result
 

@@ -23,7 +23,6 @@ from modeling_3d.capabilities.create_3d_model.check import check
 from modeling_3d.capabilities.create_3d_model.constants import KEPT, MODE_CAPABILITIES
 from modeling_3d.capabilities.create_3d_model.intelligence_models import mode_agent_provider, require_reasoning_effort
 from modeling_3d.capabilities.create_3d_model.record import (
-    DEFAULT_DIRECTORY,
     GLB,
     RECORD,
     alive,
@@ -32,6 +31,7 @@ from modeling_3d.capabilities.create_3d_model.record import (
     make_models_directory,
     missing_model,
     require_name,
+    resolve_workspace,
     write_record,
     write_runs,
 )
@@ -53,6 +53,7 @@ from modeling_3d.schemas import (
     DEFAULT_MAX_TRIANGLES,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_SCREEN_SIZE,
+    MODELS_FOLDER,
     NOT_GIVEN,
     AgentProvider,
     Modeling3dError,
@@ -75,7 +76,7 @@ class DetachedRequest(BaseModel):
     mode: ModelMode
     prompt: str
     name: str
-    directory: Path | None
+    workspace: Path
     references: list[Path]
     max_triangles: int | NotGiven | None
     max_draw_calls: int | NotGiven | None
@@ -91,7 +92,7 @@ class DetachedRequest(BaseModel):
 async def create_3d_model(
     prompt: str,
     name: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     max_triangles: int | NotGiven | None = NOT_GIVEN,
     max_draw_calls: int | NotGiven | None = NOT_GIVEN,
@@ -110,7 +111,7 @@ async def create_3d_model(
         "shape",
         prompt,
         name,
-        directory,
+        workspace,
         references,
         max_triangles,
         max_draw_calls,
@@ -129,7 +130,7 @@ async def create_3d_model(
 async def rig_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -145,7 +146,7 @@ async def rig_3d_model(
         "rig",
         prompt or "",
         name,
-        directory,
+        workspace,
         references,
         NOT_GIVEN,
         NOT_GIVEN,
@@ -164,7 +165,7 @@ async def rig_3d_model(
 async def color_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -180,7 +181,7 @@ async def color_3d_model(
         "color",
         prompt or "",
         name,
-        directory,
+        workspace,
         references,
         NOT_GIVEN,
         NOT_GIVEN,
@@ -199,7 +200,7 @@ async def color_3d_model(
 async def detail_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -215,7 +216,7 @@ async def detail_3d_model(
         "detail",
         prompt or "",
         name,
-        directory,
+        workspace,
         references,
         NOT_GIVEN,
         NOT_GIVEN,
@@ -235,7 +236,7 @@ async def start_run(
     mode: ModelMode,
     prompt: str,
     name: str,
-    directory: Path | None,
+    workspace: Path | None,
     references: list[Path] | None,
     max_triangles: int | NotGiven | None,
     max_draw_calls: int | NotGiven | None,
@@ -252,6 +253,8 @@ async def start_run(
     """Start a run on the model named `name` in `mode`, and return its handle once the agent runs."""
     require_reasoning_effort(reasoning_effort)
     require_budgets(max_triangles, max_draw_calls, screen_size)
+    # Resolved here, so a detached run's process works in the same workspace whatever directory it starts in.
+    workspace = resolve_workspace(workspace)
     if detach:
         if intelligence is not None:
             raise Modeling3dError(
@@ -262,7 +265,7 @@ async def start_run(
             mode=mode,
             prompt=prompt,
             name=name,
-            directory=directory,
+            workspace=workspace,
             references=references or [],
             max_triangles=max_triangles,
             max_draw_calls=max_draw_calls,
@@ -275,7 +278,7 @@ async def start_run(
             origin=origin,
         )
         return await _detach(request)
-    root = (directory or DEFAULT_DIRECTORY).resolve()
+    root = workspace / MODELS_FOLDER
     target, existing = _model_directory(root, name)
     # Only shaping builds a model; every other mode works on one built already.
     if mode != "shape" and existing is None:
@@ -366,7 +369,7 @@ async def start_run(
         )
     )
     write_record(target, record)
-    next_command = _next_command(mode, target.name, directory)
+    next_command = _next_command(mode, target.name, workspace)
     if resumed is not None and resumed.mode == mode:
         # The session has the model's budgets already, so it hears only those this request sets.
         budgets = prompting.changed_budgets_block(mode, max_triangles, max_draw_calls, screen_size)
@@ -378,7 +381,7 @@ async def start_run(
         prompt=prompting.prompt(
             record.runs[-1],
             target,
-            root,
+            workspace,
             budgets,
             resumed,
             created,
@@ -387,9 +390,9 @@ async def start_run(
         ),
         model=model,
         images=[target / path for path in copied if attached(path)],
-        # Where the tool was launched, usually the project the model is for, so the agent finds its context and
-        # instructions there; the prompt keeps what it writes in the model's directory.
-        workspace=HostWorkspace(path=Path.cwd()),
+        # The project's top-level directory, so the agent finds its context and instructions there; the prompt
+        # keeps what it writes in the model's directory.
+        workspace=HostWorkspace(path=workspace),
         writable=True,
         reasoning_effort=reasoning_effort,
         timeout_seconds=timeout_seconds + AGENT_TIMEOUT_GRACE_SECONDS,
@@ -414,25 +417,25 @@ async def start_run(
 def steer_3d_model(
     name: str,
     message: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     origin: str | None = None,
     references: list[Path] | None = None,
 ) -> None:
     """Write a steering message for the process running the model's run to deliver, with its references copied in."""
-    write_steering(_running_run(name, directory), message, references or [], origin)
+    write_steering(_running_run(name, workspace), message, references or [], origin)
 
 
-def cancel_3d_model(name: str, directory: Path | None = None) -> None:
+def cancel_3d_model(name: str, workspace: Path | None = None) -> None:
     """Write the cancel the process running the model's run acts on."""
-    (_running_run(name, directory) / "cancel").touch()
+    (_running_run(name, workspace) / "cancel").touch()
 
 
 async def _detach(request: DetachedRequest) -> DetachedRun:
     report = await asyncio.to_thread(_start_process, request)
     if report.get("error"):
         raise Modeling3dError(report["error"], report.get("reason"), report.get("model"))
-    target = (request.directory or DEFAULT_DIRECTORY).resolve() / report["name"]
-    next_command = _next_command(request.mode, target.name, request.directory)
+    target = request.workspace / MODELS_FOLDER / report["name"]
+    next_command = _next_command(request.mode, target.name, request.workspace)
     return DetachedRun(target, report["run_id"], request.origin, next_command)
 
 
@@ -492,15 +495,16 @@ def _popen(
     )
 
 
-def _running_run(name: str, directory: Path | None) -> Path:
-    root = (directory or DEFAULT_DIRECTORY).resolve()
+def _running_run(name: str, workspace: Path | None) -> Path:
+    workspace = resolve_workspace(workspace)
+    root = workspace / MODELS_FOLDER
     target = root / name
     if not target.is_dir():
         raise missing_model(root, name)
     record = load_record(target)
     run = record.runs[-1] if record.runs else None
     if run is None or run.status != "running" or not alive(run.pid):
-        next_command = _next_command(run.mode if run is not None else "shape", name, directory)
+        next_command = _next_command(run.mode if run is not None else "shape", name, workspace)
         raise not_running(name, run.status if run is not None else "never run", next_command)
     return target / "runs" / run.id
 
@@ -538,10 +542,11 @@ def _resumed(name: str, existing: ModelRecord | None, resume_session: bool | str
     return resumed
 
 
-def _next_command(mode: ModelMode, name: str, directory: Path | None) -> str:
+def _next_command(mode: ModelMode, name: str, workspace: Path) -> str:
+    """The command that goes on changing the model, naming its workspace unless that is where the command runs."""
     capability = MODE_CAPABILITIES[mode].replace("_", "-")
     command = f'modeling-3d {capability} "<what to change>" --name {name} --resume-session true'
-    if directory is not None and directory != DEFAULT_DIRECTORY:
-        resolved = str(directory.resolve())
-        command += f' --directory "{resolved}"' if re.search(r"\s", resolved) else f" --directory {resolved}"
+    if workspace != Path.cwd().resolve():
+        path = str(workspace)
+        command += f' --workspace "{path}"' if re.search(r"\s", path) else f" --workspace {path}"
     return command

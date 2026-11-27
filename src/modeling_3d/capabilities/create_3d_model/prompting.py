@@ -45,7 +45,7 @@ def template(name: str) -> str:
 def prompt(
     run: ModelRunRecord,
     target: Path,
-    root: Path,
+    workspace: Path,
     budgets: str,
     resumed: ModelRunRecord | None,
     created: bool,
@@ -62,7 +62,7 @@ def prompt(
     if resumed is not None:
         mode = "" if resumed.mode == run.mode else f"\n{CHANGED_MODE}\n\n{instructions}\n"
         return template("resume.md").format(
-            moved=_moved(resumed, target, root),
+            moved=_moved(resumed, target, workspace),
             request=request,
             mode=mode,
             budgets=budgets,
@@ -79,8 +79,8 @@ def prompt(
         budgets=budgets,
         directory=target,
         name=target.name,
-        models=root,
-        guidance=_guidance(root),
+        workspace=workspace,
+        guidance=_guidance(target.parent),
         bpy=BPY_REQUIREMENT,
         references=listed(run.references, REFERENCES),
         existing=existing,
@@ -95,13 +95,13 @@ def _request(run: ModelRunRecord, referenced: bool) -> str:
     return unasked.with_references if referenced else unasked.without_references
 
 
-def _moved(resumed: ModelRunRecord, target: Path, root: Path) -> str:
+def _moved(resumed: ModelRunRecord, target: Path, workspace: Path) -> str:
     """Where the model is now, for a session that last worked on it elsewhere; nothing for one that did not."""
     # Compared as text: a rename that changes only the case moves the model for its session, whose check names it
     # exactly, though Windows paths that differ only in case are equal.
     if resumed.directory is None or str(resumed.directory) == str(target):
         return ""
-    moved = MOVED.format(old=resumed.directory.name, name=target.name, directory=target, models=root)
+    moved = MOVED.format(old=resumed.directory.name, name=target.name, directory=target, workspace=workspace)
     return f"{moved}\n\n"
 
 

@@ -20,7 +20,7 @@ QUARTER_TURN_ABOUT_Y = (0.0, math.sin(math.pi / 4), 0.0, math.cos(math.pi / 4))
 
 
 def made(
-    root: Path,
+    workspace: Path,
     glb: Glb | bytes | None,
     max_triangles: int | None = None,
     max_draw_calls: int | None = None,
@@ -28,8 +28,8 @@ def made(
     references: list[str] | None = None,
     name: str = "part",
 ) -> Path:
-    """A model as a run leaves it, built to `glb` and to the budgets its prompt was given."""
-    target = root / name
+    """A model as a run leaves it in `workspace`, built to `glb` and to the budgets its prompt was given."""
+    target = workspace / ".modeling-3d" / name
     target.mkdir(parents=True)
     run = run_record(
         id="20261017-100000-ab12cd",
@@ -60,7 +60,7 @@ def result(report: ModelCheck, name: str) -> CheckResult:
 def test_the_report_measures_the_model_against_its_own_budgets_and_is_kept_beside_it(tmp_path: Path) -> None:
     target = made(tmp_path, boxes(), max_triangles=20, max_draw_calls=1, screen_size=(40, 240))
 
-    report = lib.check_3d_model("part", directory=tmp_path)
+    report = lib.check_3d_model("part", workspace=tmp_path)
 
     assert [entry.name for entry in report.checks] == list(CHECK_NAMES)
     assert (report.max_triangles, report.max_draw_calls, report.screen_size) == (20, 1, (40, 240))
@@ -87,8 +87,8 @@ def test_budgets_passed_replace_the_model_s_own_and_a_model_without_is_never_mea
     made(tmp_path, boxes(), max_triangles=20, max_draw_calls=1, screen_size=(40, 240))
     made(tmp_path, boxes(), name="plain")
 
-    report = lib.check_3d_model("part", directory=tmp_path, max_triangles=100, max_draw_calls=None, screen_size=None)
-    plain = lib.check_3d_model("plain", directory=tmp_path)
+    report = lib.check_3d_model("part", workspace=tmp_path, max_triangles=100, max_draw_calls=None, screen_size=None)
+    plain = lib.check_3d_model("plain", workspace=tmp_path)
 
     assert (report.max_triangles, report.max_draw_calls, report.screen_size) == (100, None, None)
     assert result(report, "triangles").figures["budget"] == 100
@@ -105,11 +105,11 @@ def test_checks_are_chosen_by_name_or_group_in_one_order_and_unknown_ones_and_mo
 ) -> None:
     made(tmp_path, boxes())
 
-    report = lib.check_3d_model("part", directory=tmp_path, checks=["triangles", "rig"])
+    report = lib.check_3d_model("part", workspace=tmp_path, checks=["triangles", "rig"])
     with pytest.raises(Modeling3dError) as unknown:
-        lib.check_3d_model("part", directory=tmp_path, checks=["tris"])
+        lib.check_3d_model("part", workspace=tmp_path, checks=["tris"])
     with pytest.raises(Modeling3dError) as missing:
-        lib.check_3d_model("other", directory=tmp_path)
+        lib.check_3d_model("other", workspace=tmp_path)
 
     assert [entry.name for entry in report.checks] == ["triangles", *CHECK_GROUPS["rig"]]
     assert unknown.value.reason == "no-such-check"
@@ -127,7 +127,7 @@ def test_a_model_that_cannot_be_checked_says_why(tmp_path: Path, glb: bytes | No
     made(tmp_path, glb)
 
     with pytest.raises(Modeling3dError) as failure:
-        lib.check_3d_model("part", directory=tmp_path)
+        lib.check_3d_model("part", workspace=tmp_path)
 
     assert failure.value.reason == reason
 
@@ -138,7 +138,7 @@ def test_triangles_under_a_pixel_at_the_smallest_size_are_counted_by_part(tmp_pa
     glb.node("Rivet", mesh=glb.mesh(box(size=(0.01, 0.01, 0.01), center=(0.0, 0.5, 0.5))))
     made(tmp_path, glb, screen_size=(10, 100))
 
-    report = lib.check_3d_model("part", directory=tmp_path, checks=["sub-pixel"])
+    report = lib.check_3d_model("part", workspace=tmp_path, checks=["sub-pixel"])
 
     [found] = report.checks
     assert found.figures == {"pixels_per_meter": 10.0, "under_a_pixel": 12, "no_area": 0, "triangles": 24}
@@ -156,8 +156,8 @@ def test_round_parts_measure_how_far_a_smooth_curve_strays_at_the_largest_size_a
     flat.node("Piston", mesh=flat.mesh(cylinder(radius=0.5, height=1.0, sides=8, smooth=False)))
     made(tmp_path, flat, screen_size=(10, 100), name="flat")
 
-    [found] = lib.check_3d_model("part", directory=tmp_path, checks=["round-parts"]).checks
-    [unsmoothed] = lib.check_3d_model("flat", directory=tmp_path, checks=["round-parts"]).checks
+    [found] = lib.check_3d_model("part", workspace=tmp_path, checks=["round-parts"]).checks
+    [unsmoothed] = lib.check_3d_model("flat", workspace=tmp_path, checks=["round-parts"]).checks
 
     # A regular polygon of n sides strays r (1 - cos(pi / n)) from its circle.
     strays = 0.5 * (1 - math.cos(math.pi / 8)) * 100
@@ -177,7 +177,7 @@ def test_draw_calls_count_each_primitive_of_each_mesh_object(tmp_path: Path) -> 
     glb.node("Wheel_R", mesh=wheel)
     made(tmp_path, glb, max_draw_calls=2)
 
-    [found] = lib.check_3d_model("part", directory=tmp_path, checks=["draw-calls"]).checks
+    [found] = lib.check_3d_model("part", workspace=tmp_path, checks=["draw-calls"]).checks
 
     assert found.figures == {"draw_calls": 4, "materials": 2, "swap_groups": 0, "budget": 2}
     assert found.lines == ["Body: 2 (Paint, Metal)", "Wheel_L: 1 (Paint)", "Wheel_R: 1 (Paint)"]
@@ -193,7 +193,7 @@ def test_a_swap_group_counts_the_draw_calls_of_its_costliest_part_since_one_show
     glb.node("Lens", mesh=glb.mesh(box(material=glass)), parent=dome)
     made(tmp_path, glb, max_draw_calls=3)
 
-    [found] = lib.check_3d_model("part", directory=tmp_path, checks=["draw-calls"]).checks
+    [found] = lib.check_3d_model("part", workspace=tmp_path, checks=["draw-calls"]).checks
 
     assert found.figures == {"draw_calls": 3, "materials": 2, "swap_groups": 1, "budget": 3}
     assert "shade" in found.lines[-1]
@@ -205,7 +205,7 @@ def test_motions_on_bones_are_described_but_not_swept_or_posed(tmp_path: Path) -
     glb.node("Lamp", mesh=glb.mesh(box()), skin=glb.skin([arm]))
     target = made(tmp_path, glb)
 
-    moving, poses = lib.check_3d_model("part", directory=tmp_path, checks=["moving-parts", "poses"]).checks
+    moving, poses = lib.check_3d_model("part", workspace=tmp_path, checks=["moving-parts", "poses"]).checks
 
     assert moving.lines[0].startswith("Arm")
     assert poses.skipped
@@ -224,7 +224,7 @@ def test_static_parts_are_the_mesh_objects_that_neither_move_nor_have_a_skin(tmp
     glb.node("Tail", mesh=glb.mesh(box()), skin=glb.skin([bone]))
     made(tmp_path, glb)
 
-    [found] = lib.check_3d_model("part", directory=tmp_path, checks=["static-parts"]).checks
+    [found] = lib.check_3d_model("part", workspace=tmp_path, checks=["static-parts"]).checks
 
     assert found.figures == {"static": 2, "moving": 2, "skinned": 1}
     assert found.summary.endswith("Body, Trim.")
@@ -245,7 +245,7 @@ def test_moving_parts_describe_each_motion_and_what_is_wrong_with_how_it_is_decl
     glb.node("Fin", mesh=glb.mesh(box()), extras={"motion": {"kind": "wiggle"}})
     target = made(tmp_path, glb)
 
-    [found] = lib.check_3d_model("part", directory=tmp_path, checks=["moving-parts"]).checks
+    [found] = lib.check_3d_model("part", workspace=tmp_path, checks=["moving-parts"]).checks
 
     assert found.figures == {"motions": 7, "not_well_formed": 3}
     described, (group, *touching) = found.lines[:7], found.lines[7:]
@@ -287,7 +287,7 @@ def test_skeletons_report_their_bones_influences_and_unweighted_vertices(tmp_pat
     glb.node("Tail", mesh=glb.mesh(tail), skin=glb.skin([root, arm]))
     made(tmp_path, glb)
 
-    [found] = lib.check_3d_model("part", directory=tmp_path, checks=["skeleton"]).checks
+    [found] = lib.check_3d_model("part", workspace=tmp_path, checks=["skeleton"]).checks
 
     assert found.figures == {"skeletons": 1, "bones": 2}
     [line] = found.lines
@@ -303,7 +303,7 @@ def test_markers_are_empties_with_nothing_under_them_and_say_where_they_point(tm
     glb.node("Empty.001")
     made(tmp_path, glb)
 
-    [found] = lib.check_3d_model("part", directory=tmp_path, checks=["markers"]).checks
+    [found] = lib.check_3d_model("part", workspace=tmp_path, checks=["markers"]).checks
 
     assert found.figures == {"markers": 2}
     hitch, empty = found.lines
@@ -336,7 +336,7 @@ def test_the_color_checks_read_the_declared_palette_the_role_each_triangle_lands
     glb.node("Stand", mesh=glb.mesh(box(center=(0.0, -1.0, 0.0))))
     target = made(tmp_path, glb, screen_size=(40, 240))
 
-    found, roles, emission, schemes = lib.check_3d_model("part", directory=tmp_path, checks=["color"]).checks
+    found, roles, emission, schemes = lib.check_3d_model("part", workspace=tmp_path, checks=["color"]).checks
 
     assert found.figures["swatches"] == {
         "day": {"body": "#F0A068", "trim": "#C8CCCE", "glow": "#FFB040"},
@@ -370,9 +370,9 @@ def test_a_palette_no_material_declares_is_read_a_swatch_a_pixel_and_names_what_
         return glb
 
     target = made(tmp_path, colored((40, 50, 60)))
-    before = lib.check_3d_model("part", directory=tmp_path, checks=["palette"]).checks[0]
+    before = lib.check_3d_model("part", workspace=tmp_path, checks=["palette"]).checks[0]
     (target / "model.glb").write_bytes(colored((99, 50, 60)).bytes())
-    after = lib.check_3d_model("part", directory=tmp_path, checks=["palette", "emission"]).checks
+    after = lib.check_3d_model("part", workspace=tmp_path, checks=["palette", "emission"]).checks
 
     assert before.figures["swatches"] == {"row 1": {"column 1": "#0A141E", "column 2": "#28323C"}}
     assert "No material declares" in before.summary
@@ -404,7 +404,7 @@ def test_the_detail_checks_read_the_declared_texture_where_each_triangle_lands_o
     target = made(tmp_path, glb, screen_size=(40, 240))
     (target / "model-detail.png").write_bytes(gray_png([[128] * 16] * 16))
 
-    texture, uvs, colors, renders = lib.check_3d_model("part", directory=tmp_path, checks=["detail"]).checks
+    texture, uvs, colors, renders = lib.check_3d_model("part", workspace=tmp_path, checks=["detail"]).checks
 
     assert texture.summary == "model-detail.png, declared on Palette, is a 16 by 16 pixel 8 bit grayscale PNG."
     assert texture.lines == []
@@ -447,13 +447,13 @@ def test_a_detail_texture_is_read_only_once_declared_and_the_report_says_what_a_
     glb.node("Body", mesh=glb.mesh(box()))
     target = made(tmp_path, glb)
     (target / "model-detail.png").write_bytes(gray_png([[128] * 4] * 4))
-    undeclared = lib.check_3d_model("part", directory=tmp_path, checks=["detail"]).checks
+    undeclared = lib.check_3d_model("part", workspace=tmp_path, checks=["detail"]).checks
     declared = Glb()
     declared.node("Body", mesh=declared.mesh(box(material=declared.material("Plain", detail="detail.png"))))
     (target / "model.glb").write_bytes(declared.bytes())
     (target / "detail.png").write_bytes(png([[(128, 128, 128, 255)] * 3] * 3))
 
-    texture, uvs, *_ = lib.check_3d_model("part", directory=tmp_path, checks=["detail"]).checks
+    texture, uvs, *_ = lib.check_3d_model("part", workspace=tmp_path, checks=["detail"]).checks
 
     assert all(entry.skipped for entry in undeclared)
     assert undeclared[0].summary == f"{check.NO_DETAIL} model-detail.png beside model.glb is not read without one."
@@ -478,7 +478,7 @@ def test_the_blender_checks_report_what_blender_found_and_the_renders_it_left(tm
     (target / "checks").mkdir()
     (target / "checks" / "pose-Old.png").write_bytes(b"png")
 
-    report = lib.check_3d_model("part", directory=tmp_path, checks=["buried-faces", "on-screen", "poses"])
+    report = lib.check_3d_model("part", workspace=tmp_path, checks=["buried-faces", "on-screen", "poses"])
 
     buried, on_screen, poses = report.checks
     assert buried.figures == {"buried": 2, "triangles": 12}
@@ -505,7 +505,7 @@ def test_when_blender_cannot_run_its_checks_say_why_and_the_rest_still_report(
     glb.node("Arm", mesh=glb.mesh(box()), extras={"motion": {"kind": "hinge", "axis": [1, 0, 0], "range": [0, 45]}})
     made(tmp_path, glb, screen_size=(40, 240))
 
-    report = lib.check_3d_model("part", directory=tmp_path)
+    report = lib.check_3d_model("part", workspace=tmp_path)
 
     for name in ("buried-faces", "on-screen", "poses"):
         assert result(report, name).skipped
@@ -519,7 +519,7 @@ def test_when_blender_cannot_run_its_checks_say_why_and_the_rest_still_report(
 def test_describe_gives_the_report_as_text_for_an_agent(tmp_path: Path) -> None:
     target = made(tmp_path, boxes(), max_triangles=20, screen_size=(40, 240))
 
-    text = check.describe(lib.check_3d_model("part", directory=tmp_path, checks=["triangles", "on-screen"]))
+    text = check.describe(lib.check_3d_model("part", workspace=tmp_path, checks=["triangles", "on-screen"]))
 
     assert f"The check of model.glb is kept in {target / 'checks' / 'report.json'}." in text
     assert "It is 1.000 by 1.500 by 1.000 m along glTF's x, y, and z" in text
@@ -536,7 +536,7 @@ def test_the_cli_prints_the_report_and_takes_checks_and_budgets(tmp_path: Path) 
             "check-3d-model",
             "--name",
             "part",
-            "--directory",
+            "--workspace",
             str(tmp_path),
             "--check",
             "triangles",

@@ -4,11 +4,11 @@ from pathlib import Path
 
 from modeling_3d.capabilities.create_3d_model.models import model_summary
 from modeling_3d.capabilities.create_3d_model.record import (
-    DEFAULT_DIRECTORY,
     EVENTS,
     load_record,
     missing_model,
     model_names,
+    models_directory,
     read_events,
 )
 from modeling_3d.intelligence.interface import agent_steps, agent_tool_call
@@ -16,9 +16,9 @@ from modeling_3d.intelligence.schemas import AgentEvent
 from modeling_3d.schemas import ActivityEntry, ModelActivity, ModelEvent, Modeling3dError, ModelRunRecord, ToolCall
 
 
-def read_3d_model_activity(name: str, directory: Path | None = None, after: str | None = None) -> ModelActivity:
+def read_3d_model_activity(name: str, workspace: Path | None = None, after: str | None = None) -> ModelActivity:
     """The model's summary and its activity across every run, or only what came after the cursor `after`."""
-    root = (directory or DEFAULT_DIRECTORY).resolve()
+    root = models_directory(workspace)
     # Compared against the names on disk, since Windows and macOS find `Bear` when only `bear` exists.
     if name not in model_names(root):
         raise missing_model(root, name)
@@ -45,9 +45,9 @@ def read_3d_model_activity(name: str, directory: Path | None = None, after: str 
     return ModelActivity(model=model_summary(target, record), entries=entries, cursor=cursor)
 
 
-def read_3d_model_tool_call(name: str, run_id: str, call_id: str, directory: Path | None = None) -> ToolCall:
+def read_3d_model_tool_call(name: str, run_id: str, call_id: str, workspace: Path | None = None) -> ToolCall:
     """One tool call of the model's agent in full, by the `run_id` and `id` of its entry in the model's activity."""
-    root = (directory or DEFAULT_DIRECTORY).resolve()
+    root = models_directory(workspace)
     if name not in model_names(root):
         raise missing_model(root, name)
     target = root / name

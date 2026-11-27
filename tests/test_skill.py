@@ -131,6 +131,22 @@ def test_every_capability_skill_documents_every_argument_the_cli_takes() -> None
                 assert name in document
 
 
+def test_the_skills_say_a_workspace_is_the_top_of_the_user_s_project_wherever_one_is_taken() -> None:
+    tool = " ".join(lib.skill().split())
+    commands = typer.main.get_group(app).commands
+
+    assert "the top-level directory of the user's project" in tool
+    assert "`.modeling-3d`" in tool
+    for capability in CAPABILITIES:
+        command = commands[capability.name]
+        options = [name for parameter in command.get_params(typer.Context(command)) for name in parameter.opts]
+        if "--workspace" not in options:
+            continue
+        document = " ".join(lib.skill(capability.name).split())
+        assert "`--workspace DIR`: the top-level directory of the project" in document, capability.name
+        assert "`.modeling-3d` holds the models" in document, capability.name
+
+
 def test_version_prints_the_distribution_and_its_installed_version() -> None:
     result = runner.invoke(app, ["--version"])
 

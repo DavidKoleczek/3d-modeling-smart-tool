@@ -1,5 +1,5 @@
 `rename-3d-model` renames a model: its directory moves to the new name, and what names it follows,
-so every command takes the new name from then on. An open app on that directory follows it.
+so every command takes the new name from then on. An open app on that workspace follows it.
 
 ```bash
 modeling-3d rename-3d-model --name bear --new-name grizzly
@@ -27,7 +27,8 @@ it to end.
 
 - `--name NAME`: the model to rename.
 - `--new-name NEW_NAME`: its new name, which its directory takes.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models; the working directory when omitted.
 
 ## Result
 

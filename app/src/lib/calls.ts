@@ -6,7 +6,13 @@ import { describe } from "@/lib/errors";
 // Enough for the steps someone opens while reading back through a model's activity.
 const CACHED = 64;
 
+// Of the workspace shown, by model name, which another's model by the same name shares.
 const cache = new Map<string, Promise<ToolCall>>();
+
+/** Forget the tool calls read, for a workspace shown next. */
+export function forgetToolCalls() {
+  cache.clear();
+}
 
 /** A tool call in full, read once for each `version` of it, such as before and after it finished. */
 function readCall(
@@ -18,9 +24,10 @@ function readCall(
   const key = JSON.stringify([model, runId, callId, version]);
   let call = cache.get(key);
   if (!call) {
-    call = readToolCall(model, runId, callId);
+    const read = readToolCall(model, runId, callId);
+    call = read;
     // A failed read is tried again next time.
-    call.catch(() => cache.delete(key));
+    read.catch(() => cache.get(key) === read && cache.delete(key));
     cache.set(key, call);
     for (const old of cache.keys()) {
       if (cache.size <= CACHED) {

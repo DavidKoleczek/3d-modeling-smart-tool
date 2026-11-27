@@ -46,8 +46,8 @@ Without an agent provider named, a run uses its mode's in `MODE_AGENT_PROVIDERS`
 Model-backed. An agent creates a 3D model, or changes one, as a Blender script in the model's own directory: it writes `model.py`, builds `model.glb` with it, renders the result, looks at the renders, and fixes what does not match the request.
 This is the model's shape, built from named parts in `model.py`, with each face's role recorded there, no materials unless the request asks for them, and small marks such as screws and seams left to its surface detail. Readying it to move, coloring it, and painting its surface detail are modes of their own, `rig_3d_model`, `color_3d_model`, and `detail_3d_model`. Each run records its mode, `shape` here, and a run never moves on to the next mode by itself. Changing the shape of a rigged, colored, or detailed model keeps its rig, colors, and detail working.
 The agent is told not to stop and ask questions, since the person is likely not watching: where something is unclear, it chooses what serves the model and keeps going.
-The agent runs in the working directory the tool was started in, usually the project the model is for, so it finds the project's docs, conventions, assets, and agent instructions. It may explore there, but writes only in the model's directory and runs commands from it, unless the work needs an exception, which it reports.
-An `AGENTS.md` in `directory` is the project's guidance for its models. Neither agent provider loads it by itself, so a fresh session is told to read it, and the request decides over it.
+The agent runs in the workspace, the top-level directory of the user's project, so it finds the project's docs, conventions, assets, and agent instructions. It may explore there, but writes only in the model's directory and runs commands from it, unless the work needs an exception, which it reports.
+An `AGENTS.md` in the workspace's `.modeling-3d` is the project's guidance for its models. Neither agent provider loads it by itself, so a fresh session is told to read it, and the request decides over it.
 A models directory the tool makes, or one holding only hidden files, gets a `.gitignore` of its own. It commits only `AGENTS.md` and each opted-in model's `model.json`, `model.py`, `validate.py`, and `README.md`, and a model is opted in with a line like `!/bear/`.
 The agent has `check_3d_model` as a skill, run with this install's Python, and is told to check the model before it finishes. When it finishes without a check of the `model.glb` it left, the run checks it against the run's budgets and sends the agent the report to act on, at most once a run. A run that ends with an unchecked `model.glb` checks it once more for whoever looks next, without telling the agent.
 `model.py` gets Blender from PyPI as an inline dependency and runs with `uv run --script`, so no Blender install is needed. Building runs on Windows, Linux x64, and macOS on Apple silicon.
@@ -56,7 +56,7 @@ The agent has `check_3d_model` as a skill, run with this install's Python, and i
 async def create_3d_model(
     prompt: str,
     name: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     max_triangles: int | NotGiven | None = NOT_GIVEN,
     max_draw_calls: int | NotGiven | None = NOT_GIVEN,
@@ -73,9 +73,9 @@ async def create_3d_model(
 ```
 
 - `prompt`: The text that tells the agent what to do. For a new model, it tells what to build. For a model that exists, it tells what to change.
-- `name`: The name of the model. The model is in a directory with this name, in `directory` which must be unique.
+- `name`: The name of the model. The model is in a directory with this name in the workspace's `.modeling-3d`, which must be unique.
   If a model with this name exists, the tool works with that model. If not, the tool makes a new model.
-- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
+- `workspace`: The top-level directory of the project, whose `.modeling-3d` holds the models. If you do not give a workspace, the tool uses the working directory.
 - `references`: Files and folders that the agent uses as examples, such as images, 3D models, or a folder of them.
   To use another model as an example, give its files, such as its `model.py`, its `model.glb`, and a render.
   The tool copies each into `references/` in the directory of the model, a folder whole but for its hidden folders, `node_modules`, and `__pycache__`.
@@ -117,16 +117,16 @@ From `runs.json` and `events.jsonl` alone, a UX can tell a run that is working, 
 def steer_3d_model(
     name: str,
     message: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     origin: str | None = None,
     references: list[Path] | None = None,
 ) -> None
-def cancel_3d_model(name: str, directory: Path | None = None) -> None
+def cancel_3d_model(name: str, workspace: Path | None = None) -> None
 ```
 
 - `name`: The name of the model that the agent works on now.
 - `message`: The text to send to the agent.
-- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
+- `workspace`: The workspace, as for `create_3d_model`.
 - `origin`: A label that tells who sent the message, as for `create_3d_model`. The activity of the model shows it with the message.
 - `references`: Files or folders to send with the message. They are copied into the model's `references/` as for `create_3d_model`, and named to the agent with the message. Images are also shown to it. The `steered` entry in the activity lists them as `references`.
 
@@ -143,7 +143,7 @@ The run works to the model's own budgets, records its mode as `rig`, and ends on
 async def rig_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -156,7 +156,7 @@ async def rig_3d_model(
 ) -> ModelRun
 ```
 
-- `name`: The name of a model in `directory` that has been built, ignoring case. A model that does not exist, or has no `model.glb` yet, raises `Modeling3dError`.
+- `name`: The name of a model in the workspace that has been built, ignoring case. A model that does not exist, or has no `model.glb` yet, raises `Modeling3dError`.
 - `prompt`: What moves and how, or what to change in the rig. If you do not give a prompt, the agent works out what moves from the model, its references, and the project's guidance, and the run records an empty prompt.
 - `resume_session`: The agent session to continue, as for `create_3d_model`. A session that last shaped the model is told the rig's instructions as it goes on.
 - The other arguments are as for `create_3d_model`.
@@ -174,7 +174,7 @@ The run works to the model's own budgets, records its mode as `color`, and ends 
 async def color_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -187,7 +187,7 @@ async def color_3d_model(
 ) -> ModelRun
 ```
 
-- `name`: The name of a model in `directory` that has been built, ignoring case. A model that does not exist, or has no `model.glb` yet, raises `Modeling3dError`.
+- `name`: The name of a model in the workspace that has been built, ignoring case. A model that does not exist, or has no `model.glb` yet, raises `Modeling3dError`.
 - `prompt`: The roles, schemes, or colors wanted, or what to change in them. If you do not give a prompt, the agent works them out from the model, its references, and the project's guidance, and the run records an empty prompt.
 - `resume_session`: The agent session to continue, as for `create_3d_model`. A session that last worked in another mode is told the coloring's instructions as it goes on.
 - The other arguments are as for `create_3d_model`.
@@ -205,7 +205,7 @@ The run works to the model's own budgets, records its mode as `detail`, and ends
 async def detail_3d_model(
     name: str,
     prompt: str | None = None,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     references: list[Path] | None = None,
     resume_session: bool | str = False,
     agent_provider: AgentProvider | None = None,
@@ -218,7 +218,7 @@ async def detail_3d_model(
 ) -> ModelRun
 ```
 
-- `name`: The name of a model in `directory` that has been built, ignoring case. A model that does not exist, or has no `model.glb` yet, raises `Modeling3dError`.
+- `name`: The name of a model in the workspace that has been built, ignoring case. A model that does not exist, or has no `model.glb` yet, raises `Modeling3dError`.
 - `prompt`: The detail wanted, or what to change in it. If you do not give a prompt, the agent works out what the model would show from the model, its references, and the project's guidance, and the run records an empty prompt.
 - `resume_session`: The agent session to continue, as for `create_3d_model`. A session that last worked in another mode is told the detailing's instructions as it goes on.
 - The other arguments are as for `create_3d_model`.
@@ -232,7 +232,7 @@ Deterministic. Measures a model's `model.glb` against its budgets and the modeli
 ```python
 def check_3d_model(
     name: str,
-    directory: Path | None = None,
+    workspace: Path | None = None,
     checks: list[str] | None = None,
     max_triangles: int | NotGiven | None = NOT_GIVEN,
     max_draw_calls: int | NotGiven | None = NOT_GIVEN,
@@ -241,7 +241,7 @@ def check_3d_model(
 ```
 
 - `name`: The name of the model. It must be the same as the name of its directory, with the same upper case and lower case letters.
-- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
+- `workspace`: The workspace, as for `create_3d_model`.
 - `checks`: The checks to run, by name or by group, `shape`, `rig`, `color`, or `detail`, as `CHECK_NAMES` and `CHECK_GROUPS` in `modeling_3d.schemas` list them. If you do not give checks, every check runs. An unknown name raises `Modeling3dError`, which lists the valid ones.
 - `max_triangles`, `max_draw_calls`, `screen_size`: The budgets to measure against, as for `create_3d_model`. A budget left out is the model's own, the one its last run's prompt was given, and `None` is no budget. The defaults a new model gets are never used.
 
@@ -261,33 +261,33 @@ What needs only the mesh is read from the GLB in Python. Buried faces, sweeps, t
 
 ## List and view models
 
-Deterministic. What a gallery of the models in a directory needs: each model's state and files, and the one the person viewed last.
+Deterministic. What a gallery of the models in a workspace needs: each model's state and files, and the one the person viewed last.
 
 ```python
-def list_3d_models(directory: Path | None = None) -> ModelListing
-def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary
+def list_3d_models(workspace: Path | None = None) -> ModelListing
+def view_3d_model(name: str, workspace: Path | None = None) -> ModelSummary
 ```
 
-- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory. If the directory does not exist, the list is empty.
+- `workspace`: The workspace, as for `create_3d_model`. If it has no `.modeling-3d`, the list is empty.
 - `name`: For `view_3d_model`, the name of the model to record. It must be the same as the name of its directory, with the same upper case and lower case letters.
 
-`list_3d_models` only reads, so it is safe while runs write. `ModelListing` has the resolved `directory`, its `models` most recently updated first, `last_viewed`, and `unreadable`, one message for each model whose `model.json` or `runs.json` could not be read, naming what is wrong. A file in place of the directory raises `Modeling3dError`.
+`list_3d_models` only reads, so it is safe while runs write. `ModelListing` has the resolved `workspace`, its models directory in `directory`, its `models` most recently updated first, `last_viewed`, and `unreadable`, one message for each model whose `model.json` or `runs.json` could not be read, naming what is wrong. A file in place of `.modeling-3d` raises `Modeling3dError`.
 Each `ModelSummary` has `name`, `id`, `directory`, `created`, `updated` (when its last run started, or once it has ended, when it ended, so a model moves up the list as a run on it starts and ends but not as it works), `built` (when `model.glb` was last written, `None` before the first build), `checked` (when its latest check, `checks/report.json`, was written, `None` before the first), `status`, `last_run` (that run's entry in `runs.json`), `last_session` (the entry of the latest run with a session, the one `resume_session=True` continues), `resumable` (whether a run on this machine can continue that session), `files`, and `references`, every reference its runs were given. `status` is the last run's, or `crashed` when that run is `running` but its process is gone; the next run on the model marks it failed. `status`, `last_run`, and `last_session` are `None` for a model that never ran, and `resumable` is false.
 
 `view_3d_model` records the model as viewed last in `.state.json` in the models directory, and returns its summary. An unknown name raises `Modeling3dError` naming the models there. `last_viewed` is `None` when nothing was viewed, or that model is gone.
 
 ## Rename and delete models
 
-Deterministic. Renames a model, its directory and what names it, or deletes it for good, so a directory of models can be kept tidy from anywhere, the app included.
+Deterministic. Renames a model, its directory and what names it, or deletes it for good, so a workspace's models can be kept tidy from anywhere, the app included.
 
 ```python
-def rename_3d_model(name: str, new_name: str, directory: Path | None = None) -> ModelSummary
-def delete_3d_model(name: str, directory: Path | None = None) -> None
+def rename_3d_model(name: str, new_name: str, workspace: Path | None = None) -> ModelSummary
+def delete_3d_model(name: str, workspace: Path | None = None) -> None
 ```
 
 - `name`: The name of the model. It must be the same as the name of its directory, with the same upper case and lower case letters.
 - `new_name`: For `rename_3d_model`, the new name, which its directory takes. It uses letters, digits, `.`, `_`, and `-`, and starts with a letter or digit, as for `create_3d_model`. No other entry in the directory may hold it, ignoring case, and a name that changes only the case renames the model too.
-- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
+- `workspace`: The workspace, as for `create_3d_model`.
 
 `rename_3d_model` moves the directory in one step, so nothing has changed if that fails, and then points what names the model at the new name: `name` in `model.json`, `name` and `directory` in `checks/report.json`, `last_viewed` in `.state.json`, the lines of the models directory's `.gitignore` that opt the model in, and the person's pins of the model, or of anything in its directory, and what they used from it, in the app's `.app-state/app.json`. Its history, each run's prompt, `events.jsonl`, `process.log`, and `sessions/`, and its agent's own sources, such as `model.py`, are left as they are. A session continued after the rename is told once, before its request, that the model was renamed, where its directory is now, and the check's new arguments, since each run keeps the directory it worked in. It returns the model's summary under its new name, with the same `id`. A run working on the model refuses it with `model-busy`.
 
@@ -300,11 +300,11 @@ Both raise `no-such-model`, naming the models there, for any name but a model's 
 Deterministic. Everything about how a model is being made, for a session picking up work it did not start, and for the app beside the model.
 
 ```python
-def read_3d_model_activity(name: str, directory: Path | None = None, after: str | None = None) -> ModelActivity
+def read_3d_model_activity(name: str, workspace: Path | None = None, after: str | None = None) -> ModelActivity
 ```
 
 - `name`: The name of the model. It must be the same as the name of its directory, with the same upper case and lower case letters.
-- `directory`: The directory that holds the models. If you do not give a directory, the tool uses `.modeling-3d` in the working directory.
+- `workspace`: The workspace, as for `create_3d_model`.
 - `after`: The `cursor` from an earlier read. If you give it, you get only the activity that occurred after that read. If you do not give it, you get all the activity.
   A cursor that is not from this model raises `Modeling3dError`.
 
@@ -313,13 +313,13 @@ Each `ActivityEntry` has `time`, `run_id`, `kind`, `text`, `origin`, and `data`.
 The activity is the one view of a run that every agent provider shares. Each provider's events stay in `events.jsonl` as it gave them, and `interface.agent_steps(agent_provider)` reads them into `said`, `reasoning`, `thought`, `composing`, `tool`, `tool-result`, and `usage`.
 
 ```python
-def read_3d_model_tool_call(name: str, run_id: str, call_id: str, directory: Path | None = None) -> ToolCall
+def read_3d_model_tool_call(name: str, run_id: str, call_id: str, workspace: Path | None = None) -> ToolCall
 ```
 
 - `name`: The name of the model, as for `read_3d_model_activity`.
 - `run_id`: The `run_id` of the call's `tool` entry in the model's activity.
 - `call_id`: The `id` in that entry's `data`.
-- `directory`: The directory that holds the models, as for `read_3d_model_activity`.
+- `workspace`: The workspace, as for `create_3d_model`.
 
 The activity names each call only by what it works on. `ToolCall` is the call in full: the tool's `name`, the `input` it was called with, the `output` that came back as text with any images left out, or `None` while it runs, and whether it `failed`. A call the run does not have raises `Modeling3dError`. `interface.agent_tool_call(agent_provider)` reads it from the run's events.
 
@@ -354,7 +354,8 @@ def app_view() -> str
 ```
 
 The view's HTML, compiled from `app/` and offered as the `ui://modeling-3d/app` resource in the MCP server. Raises `Modeling3dError` naming the build command when the view is not compiled.
-It shows the models in the server's directory: it polls `list_3d_models`, opens on `last_viewed`, and renders the model in view in 3D, reading its GLB again whenever `built` changes. Picking a model calls `view_3d_model`. It switches models on its own only when `last_viewed` changes to one it did not pick, so `view_3d_model` from anywhere brings a model up. A run starting or working on a model never takes the view to it, apart from the person creating a model in the view, which picks it. It follows the model in view, and what the person has started for it, by its `id`, so a rename from anywhere keeps them.
+With no workspace, it asks for one first: the workspaces opened in the app, newest first, each one whose folder is gone marked to forget, the platform's folder dialog, and a new folder to make for one. The top bar names the workspace, and clicking it switches to another. Everything below starts afresh for it, and runs go on whatever the view shows. Each call it makes names its workspace, so one sent as the app switched, from this view, another, or a session's `open_app`, is refused with `workspace-changed`, and the view follows the switch.
+It shows the models in the server's workspace: it polls `list_3d_models`, opens on `last_viewed`, and renders the model in view in 3D, reading its GLB again whenever `built` changes. Picking a model calls `view_3d_model`. It switches models on its own only when `last_viewed` changes to one it did not pick, so `view_3d_model` from anywhere brings a model up. A run starting or working on a model never takes the view to it, apart from the person creating a model in the view, which picks it. It follows the model in view, and what the person has started for it, by its `id`, so a rename from anywhere keeps them.
 It can also show the renders the agent made, in a strip with the one picked large below; the model's latest check, read again whenever `checked` changes, by group, with each check's renders, whether `model.glb` changed since, and a button that checks it again; and the model's size and makeup, computed from the loaded GLB for display only.
 Its rig view marks each marker and the pivot of each part that slides or turns, draws the path of each slide and the axis of each turn, and poses the model: a slider for each slide, hinge, and spin over its range, a switch for each part that can be hidden, and a pick of the part each swap group shows. A part a bone moves is hidden by shrinking its bone, since hiding a bone leaves the mesh skinned to it drawn.
 A detail texture the model's materials declare shades it as a renderer would, its base color times twice the detail, whichever view is on.
@@ -362,17 +363,17 @@ Its surface view shows the model's colors and detail together, or either alone, 
 Beside the model it shows the model's activity, polled from `read_3d_model_activity`, with each run's mode and the check sent to its agent as it finished. The person creates a model there from a prompt, which starts as the last one a model was created from there, and references picked from a library: what they pinned, the models in the directory, what was used there before, and folders they pinned, each showing what is in it or opening the platform's file dialog there; prompts can be pinned too. They ask for a change in the mode they pick, Shape, Rig, Color, or Detail, which starts as the mode of the model's last run, with a rig, coloring, or detailing needing no prompt, and a switch to one of those putting its default prompt in; once a run is done, start the next stage at once or switch to it, from a line above the composer; continue the model's session unless they switch that off, pick a model of another agent provider, or switch to a mode other than the session's, and a request that starts a fresh session gets the references the last fresh one started with; steer a run, with images too; and stop one. Boxes the person draws on the 3D view, with a note on each, go into the message as images with their notes, to send from there. Each step opens to the call in full from `read_3d_model_tool_call`, a few lines at first and all of it on request. Reference images and the images the agent looked at open large, and the model's folder opens in the person's file manager. Each model in Your models can be renamed in place and deleted, each after the person confirms it; Rename waits for a run to be stopped, and Delete stops it. Under the composer it totals what the agents' sessions on the model have cost, or used in tokens, from `usage`. The view calls the capabilities for each, as from `app`, and sends nothing to any session.
 
 ```python
-def app_server(directory: Path | None = None) -> AppServer
+def app_server(workspace: Path | None = None) -> AppServer
 ```
 
-- `directory`: The directory that holds the models that the app shows. If you do not give a directory, the tool uses `.modeling-3d` in the working directory. The `open_app` tool can change it.
+- `workspace`: The workspace whose models the app shows, as for `create_3d_model`. If you do not give a workspace, the app opens on the one opened last that is still a folder, or on none until one is picked; the tools that need one fail with `no-workspace` until then. The `open_app` tool can change it.
 
-The app's MCP server: `open_app`; the app-only `list_3d_models`, `view_3d_model`, `rename_3d_model`, `delete_3d_model`, `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, `steer_3d_model`, `cancel_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`, each the library's on the app's directory with origin `app`; the app-only `check_3d_model`, the library's against the model's own budgets, which returns `{"checking": true}` for a check still going after a while, so that a call never outlasts what a host waits for, and waits on the same check when called again; the app-only `list_intelligence_models` and `choose_intelligence_model`, the picker's options and the person's last pick for each mode, kept in `.app-state/app.json` in the app's directory; the app-only `read_app_settings` and `save_app_settings`, the person's theme, pane sizes, and viewport tools, kept for every directory in `app-settings.json` in their config directory; the app-only `read_activity_steps` and `save_activity_step`, the groups of steps the person opened or closed in each model's activity, kept for the app's directory in `.app-state/steps.json`, which forgets those of models no longer there; the app-only `read_app_folders` and `open_app_folder`, which name where those are kept and open the settings folder, the app's directory, or a model's folder in the person's file manager; the app-only `read_app_library` and `save_app_pins`, the references, folders, and prompts the person pinned in the app's directory, the last 50 files and folders used there, chosen there or given to its models, and the last prompt a model was created from there, all kept in `.app-state/app.json` in that directory, which an earlier version kept in `.app.json` and is moved there when next written, along with the default prompts of the modes that need none; the app-only `choose_reference_files` and `choose_reference_folder`, the platform's file and folder dialogs, opened where files were last chosen from; the app-only `list_reference_folder`, what is in a folder pinned to show its files; the view; each model's GLB, renders, and reference images as base64 blob resources at `modeling-3d://models/{name}/{+path}`; and the images the library offers, pinned, in a pinned folder, or used in the app's directory, at `modeling-3d://references/{+path}`. Only the files a model's summary lists in `files` and `references`, and the files in the folders it lists there, and of those only the GLB and images, can be read, along with its latest check's `checks/report.json` and the renders beside it. Its `create_3d_model`, `rig_3d_model`, `color_3d_model`, and `detail_3d_model` always detach, so runs outlive the server. Its `rename_3d_model` and `delete_3d_model` raise `model-busy` while its own check of the model runs. The app-only `upload_reference` takes each file or folder the person adds in pieces, under an upload id of the view's, and `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, and `steer_3d_model` name the uploads to send, so no request outgrows what the transport takes. The app-only `choose_reference_files` and `stage_reference_files` stage files and folders on this machine by path as uploads the same way, and the app-only `keep_upload` keeps a copy of a dropped or pasted upload in `.app-state/pins/` in the app's directory to pin, cleared once it is unpinned. Uploads no request took are cleared when the server closes, or a day on by the next to start.
+The app's MCP server: `open_app`; the app-only `list_3d_models`, `view_3d_model`, `rename_3d_model`, `delete_3d_model`, `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, `steer_3d_model`, `cancel_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`, each the library's on the app's workspace with origin `app`; the app-only `check_3d_model`, the library's against the model's own budgets, which returns `{"checking": true}` for a check still going after a while, so that a call never outlasts what a host waits for, and waits on the same check when called again; the app-only `list_intelligence_models` and `choose_intelligence_model`, the picker's options and the person's last pick for each mode, kept in `.app-state/app.json` in the app's `.modeling-3d`; the app-only `read_app_settings` and `save_app_settings`, the person's theme, pane sizes, and viewport tools, kept for every workspace in `app-settings.json` in their config directory; the app-only `read_activity_steps` and `save_activity_step`, the groups of steps the person opened or closed in each model's activity, kept for the app's workspace in `.app-state/steps.json`, which forgets those of models no longer there; the app-only `read_app_folders` and `open_app_folder`, which name where those are kept and open the settings folder, the app's workspace, its models directory, or a model's folder in the person's file manager; the app-only `read_app_workspaces`, `open_app_workspace`, `choose_app_workspace`, `create_app_workspace`, and `forget_app_workspace`, the workspace the app shows and the last 20 opened in it, each with whether it is still a folder, kept for the person in `app-workspaces.json` beside `app-settings.json`, switching to one, which writes nothing in it, the platform's folder dialog to choose one or the folder to make one in, making a new folder for one, beside the one shown or opened last unless another is chosen, and switching to it, and dropping one from those offered; the app-only `read_app_library` and `save_app_pins`, the references, folders, and prompts the person pinned in the app's workspace, the last 50 files and folders used there, chosen there or given to its models, and the last prompt a model was created from there, all kept in `.app-state/app.json` in that directory, which an earlier version kept in `.app.json` and is moved there when next written, along with the default prompts of the modes that need none; the app-only `choose_reference_files` and `choose_reference_folder`, the platform's file and folder dialogs, opened where files were last chosen from; the app-only `list_reference_folder`, what is in a folder pinned to show its files; the view; each model's GLB, renders, and reference images as base64 blob resources at `modeling-3d://models/{name}/{+path}`; and the images the library offers, pinned, in a pinned folder, or used in the app's workspace, at `modeling-3d://references/{+path}`. Only the files a model's summary lists in `files` and `references`, and the files in the folders it lists there, and of those only the GLB and images, can be read, along with its latest check's `checks/report.json` and the renders beside it. Its `create_3d_model`, `rig_3d_model`, `color_3d_model`, and `detail_3d_model` always detach, so runs outlive the server. Its `rename_3d_model` and `delete_3d_model` raise `model-busy` while its own check of the model runs. The app-only `upload_reference` takes each file or folder the person adds in pieces, under an upload id of the view's, and `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, and `steer_3d_model` name the uploads to send, so no request outgrows what the transport takes. The app-only `choose_reference_files` and `stage_reference_files` stage files and folders on this machine by path as uploads the same way, and the app-only `keep_upload` keeps a copy of a dropped or pasted upload in `.app-state/pins/` in the app's `.modeling-3d` to pin, cleared once it is unpinned. Uploads no request took are cleared when the server closes, or a day on by the next to start. Each app-only tool that works in the app's workspace takes an optional `workspace`, and works in the one shown as it arrives to its end; a call for another fails with `workspace-changed`. They fail with `no-workspace` before one is picked, and with `no-such-workspace` once its folder is gone, so nothing makes it again.
 
 ```python
 class AppServer:
     server: Server
-    directory: Path
+    workspace: Path | None
 
     def open(self, port: int | None = None) -> App: ...
     def close(self) -> None: ...
@@ -380,19 +381,19 @@ class AppServer:
 
 - `port`: The port for the browser page, on `127.0.0.1`. If you do not give a port, the tool selects a free port. If another program uses the port, `open` raises `Modeling3dError`.
 
-`server` is an MCP SDK low-level server to run over any transport; several at once share the state. `open` serves the browser host page on `127.0.0.1` from daemon threads and returns once it listens, or returns the one already open. The page reaches the same server at its own `/mcp` and renders the view behind a sandbox proxy on a second port, a separate origin as the MCP Apps spec requires. `close` stops serving. `App.url` is where to open the page.
+`server` is an MCP SDK low-level server to run over any transport; several at once share the state. `open` serves the browser host page on `127.0.0.1` from daemon threads and returns once it listens, or returns the one already open. The page reaches the same server at its own `/mcp` and renders the view behind a sandbox proxy on a second port, a separate origin as the MCP Apps spec requires. `close` stops serving. `App.url` is where to open the page. `workspace` is the one the app shows, `None` before one is picked. Opening the app, or switching it, keeps its workspace as the one opened last, so making a server that is never opened keeps nothing.
 
 ## MCP server
 
 The app's MCP server over stdio, a thin surface over the library like the CLI, in `modeling_3d.adapters.mcp`.
 
 ```python
-def run_stdio(directory: Path | None = None) -> None
+def run_stdio(workspace: Path | None = None) -> None
 ```
 
-- `directory`: The directory that holds the models that the app shows, as for `app_server`.
+- `workspace`: The workspace whose models the app shows, as for `app_server`. If you do not give a workspace, the tool uses the working directory, the session's own project.
 
-It runs `app_server(directory=directory).server` over stdio. Nothing the person does in the app is sent to the session; the server's instructions point it at `list_3d_models` and `read_3d_model_activity`.
+It runs `app_server(workspace=workspace).server` over stdio. Nothing the person does in the app is sent to the session; the server's instructions point it at `list_3d_models` and `read_3d_model_activity`.
 
 ## Manifest
 

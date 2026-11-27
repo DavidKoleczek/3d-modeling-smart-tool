@@ -27,7 +27,7 @@ Prerequisites:
    npx skills add DavidKoleczek/3d-modeling-smart-tool
    ```
 
-1. Start your agent in the directory where the models should live and ask for one:
+1. Start your agent in your project's top-level directory and ask for one:
 
    > Open the 3D modeling app and make a brown bear like bear.png
 
@@ -44,7 +44,7 @@ Keep going from either side:
 modeling-3d app
 ```
 
-This serves the app at the printed URL for the models in `.modeling-3d`. Everything an agent can do, you can do from there.
+This serves the app at the printed URL, on the workspace you opened last. The first time, pick your project's top-level folder in it, or make a new one. Everything an agent can do, you can do from there.
 
 ## Command line
 
@@ -113,9 +113,9 @@ modeling-3d delete-3d-model --name grizzly
 # Optionally, make `blender` run your installed Blender, for opening models in it
 modeling-3d add-blender-to-path
 
-# Serve the app in the browser
+# Serve the app in the browser, on the workspace opened last or the one named
 modeling-3d app
-modeling-3d app --directory path/to/models
+modeling-3d app --workspace path/to/project
 
 # Serve the app as an MCP App; an MCP client launches this
 modeling-3d mcp

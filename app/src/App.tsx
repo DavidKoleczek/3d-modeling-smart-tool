@@ -8,18 +8,20 @@ import {
   NewModelDialog,
   type NewModelRequest,
 } from "@/components/NewModelDialog";
+import { Panes } from "@/components/Panes";
+import { SettingsMenu } from "@/components/SettingsMenu";
 import { ShortcutsDialog } from "@/components/ShortcutsDialog";
 import { StatusBar } from "@/components/StatusBar";
 import { TopBar, type NarrowPane, type Pane } from "@/components/TopBar";
 import { Segmented } from "@/components/ui/segmented";
 import { Viewport, type ViewMode } from "@/components/Viewport";
 import type { ViewTool } from "@/components/viewport/ViewportToolbar";
-import { Workspace } from "@/components/Workspace";
+import { AppMark, Wordmark } from "@/components/Wordmark";
+import { WorkspacePicker } from "@/components/WorkspacePicker";
 import type { ModelMode } from "@/lib/api";
 import { onDisplay, requestDisplayMode } from "@/lib/host";
 import { useIntelligence } from "@/lib/intelligence";
 import { paneLayout, useBreakpoint } from "@/lib/layout";
-import { followDirectory } from "@/lib/library";
 import { loadSteps } from "@/lib/steps";
 import { useModels } from "@/lib/models";
 import type { Handoff, NextRequest } from "@/lib/requests";
@@ -27,13 +29,84 @@ import { useShortcuts } from "@/lib/shortcuts";
 import { updateSettings, useSettings } from "@/lib/settings";
 import { counted, dimensions, type SceneStats } from "@/lib/stats";
 import { cn } from "@/lib/utils";
+import { useWorkspaces, useWorkspaceWait } from "@/lib/workspaces";
 
+type Display = { fullscreen: boolean; expandable: boolean };
+
+/**
+ * The workspace the app shows, or picking one first when it shows none. Everything of a workspace mounts afresh for
+ * each, so nothing of the last one shows in the next.
+ */
 function App() {
-  const [root, breakpoint, width] = useBreakpoint();
-  const [display, setDisplay] = useState({
+  const [display, setDisplay] = useState<Display>({
     fullscreen: false,
     expandable: false,
   });
+  const { shown } = useWorkspaces();
+  useWorkspaceWait(shown === null);
+
+  useEffect(
+    () =>
+      onDisplay(({ mode, available }) =>
+        setDisplay({
+          fullscreen: mode === "fullscreen",
+          expandable: mode !== "fullscreen" && available.includes("fullscreen"),
+        }),
+      ),
+    [],
+  );
+
+  return shown === null ? (
+    <FirstStep fullscreen={display.fullscreen} />
+  ) : (
+    <InWorkspace key={shown} display={display} />
+  );
+}
+
+/** Picking a workspace, in place of everything else, until the app shows one. */
+function FirstStep({ fullscreen }: { fullscreen: boolean }) {
+  const [root, breakpoint] = useBreakpoint();
+  return (
+    <div
+      ref={root}
+      className={cn(
+        "flex flex-col overflow-hidden bg-canvas text-ink",
+        fullscreen ? "h-dvh" : "h-[560px]",
+      )}
+    >
+      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-line bg-panel pr-2 pl-3">
+        {breakpoint === "narrow" ? (
+          <AppMark />
+        ) : (
+          <h1 className="flex shrink-0 items-center">
+            <Wordmark />
+          </h1>
+        )}
+        <span className="flex-1" />
+        <SettingsMenu />
+      </header>
+      <main className="flex min-h-0 flex-1 justify-center overflow-y-auto px-4 py-8">
+        <section
+          aria-labelledby="choose-workspace"
+          className="w-full max-w-110"
+        >
+          <h2 id="choose-workspace" className="text-title">
+            Choose a workspace
+          </h2>
+          <p className="mt-1 mb-4 text-ink-muted">
+            Your project's top-level folder. The app keeps its models in the
+            folder's .modeling-3d.
+          </p>
+          <WorkspacePicker />
+        </section>
+      </main>
+    </div>
+  );
+}
+
+/** The models of the workspace the app shows, the one in view, and its activity. */
+function InWorkspace({ display }: { display: Display }) {
+  const [root, breakpoint, width] = useBreakpoint();
   const [creating, setCreating] = useState(false);
   const [request, setRequest] = useState<NewModelRequest>({ id: 0 });
   const [narrowPane, setNarrowPane] = useState<NarrowPane>("model");
@@ -42,13 +115,7 @@ function App() {
   const [fits, setFits] = useState(0);
   const [stats, setStats] = useState<SceneStats | null>(null);
   const { listing, model, error, pick, rename, remove } = useModels();
-  const directory = listing?.directory ?? null;
-  useEffect(() => followDirectory(directory), [directory]);
-  useEffect(() => {
-    if (directory !== null) {
-      void loadSteps();
-    }
-  }, [directory]);
+  useEffect(() => void loadSteps(), []);
   // By model id, which a rename keeps, the mode the person picked, and whether they switched Continue session on or
   // off since, which the composer's requests follow. A switch holds only until the next run starts, with the id of the
   // run before it, so a fresh session asked for once is continued by the request after.
@@ -96,17 +163,6 @@ function App() {
   const search = useRef<HTMLInputElement>(null);
   // A pane opened or closed from the top bar, which the next layout change saves like a drag.
   const toggled = useRef(false);
-
-  useEffect(
-    () =>
-      onDisplay(({ mode, available }) =>
-        setDisplay({
-          fullscreen: mode === "fullscreen",
-          expandable: mode !== "fullscreen" && available.includes("fullscreen"),
-        }),
-      ),
-    [],
-  );
 
   const select = (name: string) => {
     setCreating(false);
@@ -274,7 +330,7 @@ function App() {
         }
       />
       <main className="flex min-h-0 flex-1">
-        <ErrorBoundary what="The workspace" className="m-4 flex-1">
+        <ErrorBoundary what="This view" className="m-4 flex-1">
           {breakpoint === "narrow" ? (
             <div className="flex min-w-0 flex-1 flex-col">
               {narrowPane === "model" ? (
@@ -292,7 +348,7 @@ function App() {
               )}
             </div>
           ) : (
-            <Workspace
+            <Panes
               key={`${layoutKey}-${layouts}`}
               wide={breakpoint === "wide"}
               layout={layout}

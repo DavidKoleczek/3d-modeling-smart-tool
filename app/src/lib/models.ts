@@ -29,7 +29,7 @@ function selectedIn(
 }
 
 /**
- * The models in the app's directory, polled, which one is in view, and renaming and deleting them.
+ * The models in the app's workspace, polled, which one is in view, and renaming and deleting them.
  *
  * The view opens on the model viewed last. After that it switches only when the person picks a model, or when the
  * model viewed last changes to one it did not pick itself, so `modeling-3d view-3d-model` from the host session brings

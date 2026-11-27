@@ -68,7 +68,7 @@ function FolderRow({
   );
 }
 
-/** Where the person's settings and this directory's models are kept, read each time Settings opens. */
+/** Where the person's settings, this workspace, and its models are kept, read each time Settings opens. */
 function Folders() {
   const [folders, setFolders] = useState<AppFolders | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +86,7 @@ function Folders() {
     };
   }, []);
 
-  const open = (folder: "settings" | "models") => {
+  const open = (folder: "settings" | "workspace" | "models") => {
     setError(null);
     openAppFolder(folder).catch((cause: unknown) => setError(describe(cause)));
   };
@@ -95,23 +95,33 @@ function Folders() {
     <Section label="Kept in">
       <FolderRow
         name="Your settings"
-        detail="These settings, the same in every directory"
+        detail="These settings and the workspaces you opened, the same in every workspace"
         path={folders?.settings}
         onOpen={() => open("settings")}
       />
-      <FolderRow
-        name="This directory"
-        detail="Its models, their runs, and what you pinned, last picked, and viewed here"
-        path={folders?.models}
-        onOpen={() => open("models")}
-      />
+      {folders?.workspace !== null && (
+        <>
+          <FolderRow
+            name="This workspace"
+            detail="Your project, where its models' agents work"
+            path={folders?.workspace ?? undefined}
+            onOpen={() => open("workspace")}
+          />
+          <FolderRow
+            name="Its models"
+            detail="Their runs, and what you pinned, last picked, and viewed here"
+            path={folders?.models ?? undefined}
+            onOpen={() => open("models")}
+          />
+        </>
+      )}
       {error && <Notice className="mt-1">{error}</Notice>}
     </Section>
   );
 }
 
 /** What is about the app itself: its theme, where it keeps things, its keys, its layout, and its docs. */
-export function SettingsMenu({ onShortcuts }: { onShortcuts: () => void }) {
+export function SettingsMenu({ onShortcuts }: { onShortcuts?: () => void }) {
   const { settings, error } = useSettings();
   const documentation = DOCUMENTATION;
   const set = (change: Partial<AppSettings>) =>
@@ -144,13 +154,17 @@ export function SettingsMenu({ onShortcuts }: { onShortcuts: () => void }) {
         <Folders />
         {error && <Notice className="mx-1 mb-1">{error}</Notice>}
         <hr className="-mx-1 my-1 border-line" />
-        <PopoverClose className={ROW} onClick={onShortcuts}>
-          <span className="flex-1">Keyboard shortcuts</span>
-          <Kbd>?</Kbd>
-        </PopoverClose>
-        <button type="button" className={ROW} onClick={resetLayout}>
-          Reset layout
-        </button>
+        {onShortcuts && (
+          <>
+            <PopoverClose className={ROW} onClick={onShortcuts}>
+              <span className="flex-1">Keyboard shortcuts</span>
+              <Kbd>?</Kbd>
+            </PopoverClose>
+            <button type="button" className={ROW} onClick={resetLayout}>
+              Reset layout
+            </button>
+          </>
+        )}
         {documentation && (
           <button
             type="button"

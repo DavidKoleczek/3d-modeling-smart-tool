@@ -25,6 +25,11 @@ const READ_STEPS_TOOL = "read_activity_steps";
 const SAVE_STEP_TOOL = "save_activity_step";
 const READ_FOLDERS_TOOL = "read_app_folders";
 const OPEN_FOLDER_TOOL = "open_app_folder";
+const READ_WORKSPACES_TOOL = "read_app_workspaces";
+const OPEN_WORKSPACE_TOOL = "open_app_workspace";
+const CHOOSE_WORKSPACE_TOOL = "choose_app_workspace";
+const CREATE_WORKSPACE_TOOL = "create_app_workspace";
+const FORGET_WORKSPACE_TOOL = "forget_app_workspace";
 const CHOOSE_FILES_TOOL = "choose_reference_files";
 const STAGE_FILES_TOOL = "stage_reference_files";
 const CHOOSE_FOLDER_TOOL = "choose_reference_folder";
@@ -42,6 +47,27 @@ const CHECK_TIMEOUT_MS = 60_000;
 const DELETE_TIMEOUT_MS = 60_000;
 // The file dialog waits on the person, who may take a while to choose.
 const CHOOSE_TIMEOUT_MS = 30 * 60_000;
+// What a call fails with when the app no longer shows the workspace the view does.
+const WORKSPACE_LOST: ReadonlySet<FailureReason | null> = new Set([
+  "workspace-changed",
+  "no-workspace",
+  "no-such-workspace",
+]);
+
+// The workspace the view shows, which every call names, so the server refuses one sent as the app switched rather
+// than make it in the other workspace; null before one is picked.
+let shown: string | null = null;
+let lost: () => void = () => {};
+
+/** Name `workspace` in every call from now on. */
+export function showWorkspace(workspace: string | null) {
+  shown = workspace;
+}
+
+/** Call `listener` whenever a call finds the app shows another workspace, none, or one whose folder is gone. */
+export function onWorkspaceLost(listener: () => void) {
+  lost = listener;
+}
 
 /** `ModelStatus` in schemas.py. */
 export type ModelStatus =
@@ -98,6 +124,7 @@ export type ModelSummary = {
 
 /** `ModelListing` in schemas.py. */
 export type ModelListing = {
+  workspace: string;
   directory: string;
   models: ModelSummary[];
   last_viewed: string | null;
@@ -274,7 +301,25 @@ export type AppSteps = {
 };
 
 /** `AppFolders` in schemas.py. */
-export type AppFolders = { settings: string; models: string };
+export type AppFolders = {
+  settings: string;
+  /** Null, as is `models`, before a workspace is picked. */
+  workspace: string | null;
+  models: string | null;
+};
+
+/** `RecentWorkspace` in schemas.py. */
+export type RecentWorkspace = { path: string; missing: boolean };
+
+/** `AppWorkspaces` in schemas.py. */
+export type AppWorkspaces = {
+  /** Null before one is picked, or once its folder is gone. */
+  current: string | null;
+  /** Newest first. */
+  recent: RecentWorkspace[];
+  /** Where a new workspace is made unless another folder is picked. */
+  new_in: string;
+};
 
 /** What a request on a model asks for; a name a model has already changes that model. */
 export type ModelRequest = {
@@ -386,12 +431,15 @@ async function call(
   timeout?: number,
 ): Promise<CallToolResult> {
   const result = await app.callServerTool(
-    { name, arguments: args },
+    { name, arguments: shown === null ? args : { ...args, workspace: shown } },
     timeout ? { timeout } : undefined,
   );
   if (result.isError) {
     const failure = result.structuredContent as
       { reason?: FailureReason | null; model?: string | null } | undefined;
+    if (WORKSPACE_LOST.has(failure?.reason ?? null)) {
+      lost();
+    }
     throw new AppError(
       textOf(result) || `\`${name}\` failed.`,
       failure?.reason ?? null,
@@ -415,7 +463,7 @@ async function structuredFrom(
   return result.structuredContent as Record<string, unknown>;
 }
 
-/** The models in the app's directory, newest first, and the one viewed last. */
+/** The models in the app's workspace, newest first, and the one viewed last. */
 export async function listModels(): Promise<ModelListing> {
   const structured = await structuredFrom(LIST_TOOL, {});
   if (!Array.isArray(structured.models)) {
@@ -586,7 +634,7 @@ export async function readToolCall(
   })) as ToolCall;
 }
 
-/** The AI models and reasoning efforts to pick from, and the ones picked last in the app's directory. */
+/** The AI models and reasoning efforts to pick from, and the ones picked last in the app's workspace. */
 export async function listIntelligenceModels(): Promise<AppIntelligence> {
   return (await structuredFrom(LIST_INTELLIGENCE_TOOL, {})) as AppIntelligence;
 }
@@ -604,7 +652,7 @@ export async function chooseIntelligenceModel(
   })) as AppIntelligence;
 }
 
-/** How the person set up the app, the same in every directory. */
+/** How the person set up the app, the same in every workspace. */
 export async function readAppSettings(): Promise<AppSettings> {
   return (await structuredFrom(READ_SETTINGS_TOOL, {})) as AppSettings;
 }
@@ -618,7 +666,7 @@ export async function saveAppSettings(
   })) as AppSettings;
 }
 
-/** The groups of steps the person opened or closed in each model's activity in the app's directory. */
+/** The groups of steps the person opened or closed in each model's activity in the app's workspace. */
 export async function readActivitySteps(): Promise<AppSteps> {
   return (await structuredFrom(READ_STEPS_TOOL, {})) as AppSteps;
 }
@@ -636,14 +684,54 @@ export async function saveActivityStep(
   })) as AppSteps;
 }
 
-/** Where the app keeps the person's settings, and the models it shows. */
+/** Where the app keeps the person's settings, the workspace it shows, and that workspace's models. */
 export async function readAppFolders(): Promise<AppFolders> {
   return (await structuredFrom(READ_FOLDERS_TOOL, {})) as AppFolders;
 }
 
-/** Show the folder of the person's settings, of the models here, or of the model `name` in their file manager. */
+/** The workspace the app shows, and those opened in it, newest first. */
+export async function readAppWorkspaces(): Promise<AppWorkspaces> {
+  return (await structuredFrom(READ_WORKSPACES_TOOL, {})) as AppWorkspaces;
+}
+
+/** Show the models in the workspace at `path`, keeping it as the one opened last. */
+export async function openAppWorkspace(path: string): Promise<AppWorkspaces> {
+  return (await structuredFrom(OPEN_WORKSPACE_TOOL, { path })) as AppWorkspaces;
+}
+
+/** Ask the person for a workspace in their folder dialog, or with `parent` for a folder to make one in; null if they cancel. */
+export async function chooseAppWorkspace(
+  parent = false,
+): Promise<string | null> {
+  const structured = await structuredFrom(
+    CHOOSE_WORKSPACE_TOOL,
+    parent ? { parent } : {},
+    CHOOSE_TIMEOUT_MS,
+  );
+  return (structured.path as string | null) ?? null;
+}
+
+/** Make the folder `name` in `parent` as a new workspace, and show it. */
+export async function createAppWorkspace(
+  name: string,
+  parent: string,
+): Promise<AppWorkspaces> {
+  return (await structuredFrom(CREATE_WORKSPACE_TOOL, {
+    name,
+    parent,
+  })) as AppWorkspaces;
+}
+
+/** Drop the workspace at `path` from those offered, leaving its folder as it is. */
+export async function forgetAppWorkspace(path: string): Promise<AppWorkspaces> {
+  return (await structuredFrom(FORGET_WORKSPACE_TOOL, {
+    path,
+  })) as AppWorkspaces;
+}
+
+/** Show the folder of the person's settings, the workspace, its models, or the model `name` in their file manager. */
 export async function openAppFolder(
-  folder: "settings" | "models" | "model",
+  folder: "settings" | "workspace" | "models" | "model",
   name?: string,
 ): Promise<void> {
   await call(
@@ -685,12 +773,12 @@ export async function chooseReferenceFolder(): Promise<string | null> {
   return (structured.path as string | null) ?? null;
 }
 
-/** What was pinned and used in the app's directory, and what the last model created there was asked. */
+/** What was pinned and used in the app's workspace, and what the last model created there was asked. */
 export async function readAppLibrary(): Promise<AppLibrary> {
   return (await structuredFrom(READ_LIBRARY_TOOL, {})) as AppLibrary;
 }
 
-/** Keep the person's pins for the app's directory, replacing the ones kept before. */
+/** Keep the person's pins for the app's workspace, replacing the ones kept before. */
 export async function saveAppPins(pins: AppPins): Promise<AppPins> {
   return (await structuredFrom(SAVE_PINS_TOOL, { pins })) as AppPins;
 }

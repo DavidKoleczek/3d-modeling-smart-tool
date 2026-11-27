@@ -1,7 +1,7 @@
 ---
 smart_tool_format: 1
 name: modeling-3d
-version: 0.4.2
+version: 0.5.0
 description: >-
   Creates and edits 3D models from a description of what to build
 use_cases:
@@ -38,10 +38,14 @@ wrapper over it, so anything you can do from the shell you can also do from Pyth
   - Use `create-3d-model` for both use cases, with `--detach` for a run that should go on by itself.
   - Use `rig-3d-model` once a model's shape is right, to ready it to move, then `color-3d-model` to color it by
     role, `detail-3d-model` to paint its surface detail, and `check-3d-model` to measure it.
-  - Use `list-3d-models` to find the models already made in a directory, and how their runs went.
+  - Use `list-3d-models` to find the models already made in a workspace, and how their runs went.
   - Use `read-3d-model-activity` before acting on a model: it shows what was asked of it and by whom, what its
     agent did, and how its runs ended, including what the person did in the app.
   - Use `read-3d-model-tool-call` for one of its agent's tool calls in full, such as why a command failed.
+
+Every capability works in a workspace, the top-level directory of the user's project: the
+working directory, or the one `--workspace` names. The models are kept in its `.modeling-3d`,
+and their agents run in the workspace, so they can use the rest of the project.
 
 ## Before writing code
 

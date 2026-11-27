@@ -63,25 +63,52 @@ def make_model(
 
 
 @pytest.mark.parametrize("exists", [False, True], ids=["missing", "empty"])
-def test_a_missing_or_empty_directory_lists_no_models(working_directory: Path, exists: bool) -> None:
+def test_a_workspace_with_a_missing_or_empty_models_directory_lists_no_models(
+    working_directory: Path, exists: bool
+) -> None:
     if exists:
         (working_directory / ".modeling-3d").mkdir()
 
     listing = lib.list_3d_models()
 
     assert listing == ModelListing(
-        directory=working_directory / ".modeling-3d", models=[], last_viewed=None, unreadable=[]
+        workspace=working_directory,
+        directory=working_directory / ".modeling-3d",
+        models=[],
+        last_viewed=None,
+        unreadable=[],
     )
 
 
-def test_a_file_in_place_of_the_directory_names_the_fix(working_directory: Path) -> None:
-    (working_directory / "models").write_text("", encoding="utf-8")
+def test_a_file_in_place_of_the_models_directory_names_the_fix(working_directory: Path) -> None:
+    (working_directory / ".modeling-3d").write_text("", encoding="utf-8")
 
     with pytest.raises(Modeling3dError) as failure:
-        lib.list_3d_models(Path("models"))
+        lib.list_3d_models()
 
     assert "is a file, not a directory of models" in str(failure.value)
-    assert "--directory" in str(failure.value)
+    assert "--workspace" in str(failure.value)
+
+
+@pytest.mark.parametrize("given", ["gone", "notes.txt"])
+def test_a_workspace_that_is_not_a_folder_is_refused_naming_it(working_directory: Path, given: str) -> None:
+    (working_directory / "notes.txt").write_text("", encoding="utf-8")
+
+    with pytest.raises(Modeling3dError) as failure:
+        lib.list_3d_models(Path(given))
+
+    assert failure.value.reason == "no-such-workspace"
+    assert f"{working_directory / given} is not a folder" in str(failure.value)
+    assert "--workspace" in str(failure.value)
+
+
+def test_a_models_directory_given_as_the_workspace_stands_for_the_folder_that_holds_it(working_directory: Path) -> None:
+    make_model("bear")
+
+    listing = lib.list_3d_models(Path(".modeling-3d"))
+
+    assert (listing.workspace, listing.directory) == (working_directory, working_directory / ".modeling-3d")
+    assert [model.name for model in listing.models] == ["bear"]
 
 
 def test_models_list_newest_first_with_their_files_and_folders_without_a_record_are_skipped(
@@ -220,21 +247,21 @@ def test_a_broken_record_is_named_in_unreadable_and_the_rest_still_list() -> Non
         assert "Fix" in message
 
 
-def test_viewing_a_model_makes_it_the_one_viewed_last_in_its_directory(working_directory: Path) -> None:
+def test_viewing_a_model_makes_it_the_one_viewed_last_in_its_workspace(working_directory: Path) -> None:
     make_model("bear")
     make_model("fox", minutes=30)
-    make_model("owl", root=Path("models"))
+    make_model("owl", root=Path("garden") / ".modeling-3d")
 
     summary = lib.view_3d_model("bear")
     after_bear = lib.list_3d_models()
     lib.view_3d_model("fox")
-    lib.view_3d_model("owl", Path("models"))
+    lib.view_3d_model("owl", Path("garden"))
 
     assert summary == after_bear.models[1]
     assert after_bear.last_viewed == "bear"
     assert lib.list_3d_models().last_viewed == "fox"
-    assert lib.list_3d_models(Path("models")).last_viewed == "owl"
-    assert (working_directory / "models" / ".state.json").is_file()
+    assert lib.list_3d_models(Path("garden")).last_viewed == "owl"
+    assert (working_directory / "garden" / ".modeling-3d" / ".state.json").is_file()
 
 
 def test_viewing_models_at_once_never_fails() -> None:

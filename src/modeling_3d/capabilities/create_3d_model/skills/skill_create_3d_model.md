@@ -1,6 +1,6 @@
 `create-3d-model` has an agent create a 3D model, or change one, as a Blender script. The agent
 writes `model.py`, builds `model.glb` with it, renders the result, looks at the renders, and fixes
-what does not match, until it is done. Every model has a name, unique in its directory. Naming a
+what does not match, until it is done. Every model has a name, unique in its workspace. Naming a
 model that exists changes it; any other name creates a new model.
 
 This is the shape of the model, built from named parts, with no materials unless the request asks
@@ -13,11 +13,11 @@ The agent has `check-3d-model` as a skill and is told to check the model before 
 finishes without a check of the `model.glb` it left, the run checks it once and sends it the
 report to act on, as a `checked` event.
 
-The agent runs in the working directory, so run from the project the model is for: the agent
-reads its docs, conventions, and assets for context, and writes only in the model's directory.
-An `AGENTS.md` in the models directory is the project's guidance for every model there, such as
-which way models face, their roles and palette, and the budgets for each kind of model. A fresh
-session is told to read it, and the request decides over it.
+The agent runs in the workspace, the top-level directory of the user's project: it reads the
+project's docs, conventions, and assets for context, and writes only in the model's directory.
+An `AGENTS.md` in the workspace's `.modeling-3d` is the project's guidance for every model there,
+such as which way models face, their roles and palette, and the budgets for each kind of model. A
+fresh session is told to read it, and the request decides over it.
 
 A models directory the tool makes gets a `.gitignore` of its own, which commits only `AGENTS.md`
 and each opted-in model's `model.json`, `model.py`, `validate.py`, and `README.md`. Opt a model
@@ -126,9 +126,10 @@ budgets when they are left out, and `none` removes one.
 ## Arguments
 
 - `PROMPT`: what to build, or what to change.
-- `--name NAME`: required. The model's name and directory. A model by that name in the directory
-  is changed; any other name creates one. Letters, digits, `.`, `_`, and `-`.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--name NAME`: required. The model's name, which its directory takes. A model by that name in
+  the workspace is changed; any other name creates one. Letters, digits, `.`, `_`, and `-`.
+- `--workspace DIR`: the top-level directory of the project, where the agent runs and whose
+  `.modeling-3d` holds the models; the working directory when omitted.
 - `--reference PATH`: a file or folder to work from, repeatable: an image, a model, another
   model's `model.py`, `model.glb`, or render, or a folder of them. Each is copied into the model's
   `references/`, a folder whole but for its hidden folders, `node_modules`, and `__pycache__`, and
@@ -171,7 +172,7 @@ The last line is `finished` or `failed`. Its `data` is the result: `status` (`do
 `done`, otherwise 1. With `--detach`, the one line is `started`, whose `data` holds the request,
 and it exits 0.
 
-The model's directory, `<directory>/<name>/`:
+The model's directory, `<workspace>/.modeling-3d/<name>/`:
 
 ```
 model.json        marks it as a model made by modeling-3d

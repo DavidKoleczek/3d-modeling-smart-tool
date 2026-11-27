@@ -29,15 +29,15 @@ modeling-3d manifest
 ## modeling-3d app
 
 ```bash
-modeling-3d app [--port <n>] [--directory <dir>]
+modeling-3d app [--port <n>] [--workspace <dir>]
 ```
 
-`lib.app_server().open()`, with its URL printed. The command then keeps serving until Ctrl+C, which exits 0; runs started in the app go on after. Exits 1 when `--port` names a held port; without `--port` a free one is chosen.
+`lib.app_server().open()`, with its URL printed. Without `--workspace` it opens on the workspace opened last, or asks for one. The command then keeps serving until Ctrl+C, which exits 0; runs started in the app go on after. Exits 1 when `--port` names a held port; without `--port` a free one is chosen.
 
 ## modeling-3d create-3d-model
 
 ```bash
-modeling-3d create-3d-model PROMPT --name <name> [--directory <dir>] [--reference <path>]...
+modeling-3d create-3d-model PROMPT --name <name> [--workspace <dir>] [--reference <path>]...
     [--max-triangles <n|none>] [--max-draw-calls <n|none>] [--screen-size <smallest-largest|none>]
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
     [--reasoning-effort xhigh] [--timeout-seconds 3600] [--detach]
@@ -63,7 +63,7 @@ An agent harness with its own way to run a command in the background can use tha
 ## modeling-3d rig-3d-model
 
 ```bash
-modeling-3d rig-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
+modeling-3d rig-3d-model [PROMPT] --name <name> [--workspace <dir>] [--reference <path>]...
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
     [--reasoning-effort xhigh] [--timeout-seconds 3600] [--detach]
 ```
@@ -73,7 +73,7 @@ modeling-3d rig-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference
 ## modeling-3d color-3d-model
 
 ```bash
-modeling-3d color-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
+modeling-3d color-3d-model [PROMPT] --name <name> [--workspace <dir>] [--reference <path>]...
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
     [--reasoning-effort xhigh] [--timeout-seconds 3600] [--detach]
 ```
@@ -83,7 +83,7 @@ modeling-3d color-3d-model [PROMPT] --name <name> [--directory <dir>] [--referen
 ## modeling-3d detail-3d-model
 
 ```bash
-modeling-3d detail-3d-model [PROMPT] --name <name> [--directory <dir>] [--reference <path>]...
+modeling-3d detail-3d-model [PROMPT] --name <name> [--workspace <dir>] [--reference <path>]...
     [--resume-session true|false|<session id>] [--agent-provider claude] [--model <model>]
     [--reasoning-effort xhigh] [--timeout-seconds 3600] [--detach]
 ```
@@ -93,7 +93,7 @@ modeling-3d detail-3d-model [PROMPT] --name <name> [--directory <dir>] [--refere
 ## modeling-3d steer-3d-model
 
 ```bash
-modeling-3d steer-3d-model --name <name> --message <text> [--directory <dir>] [--reference <path> ...]
+modeling-3d steer-3d-model --name <name> --message <text> [--workspace <dir>] [--reference <path> ...]
 ```
 
 `lib.steer_3d_model()`, with the origin from `CLAUDE_CODE_SESSION_ID` as for `create-3d-model`. Prints nothing; exits 1 when nothing is working on the model.
@@ -101,7 +101,7 @@ modeling-3d steer-3d-model --name <name> --message <text> [--directory <dir>] [-
 ## modeling-3d cancel-3d-model
 
 ```bash
-modeling-3d cancel-3d-model --name <name> [--directory <dir>]
+modeling-3d cancel-3d-model --name <name> [--workspace <dir>]
 ```
 
 `lib.cancel_3d_model()`. Prints nothing; exits 1 when nothing is working on the model.
@@ -110,7 +110,7 @@ modeling-3d cancel-3d-model --name <name> [--directory <dir>]
 
 ```bash
 modeling-3d check-3d-model --name <name> [--check <check>]... [--max-triangles <n|none>]
-    [--max-draw-calls <n|none>] [--screen-size <smallest-largest|none>] [--directory <dir>]
+    [--max-draw-calls <n|none>] [--screen-size <smallest-largest|none>] [--workspace <dir>]
 ```
 
 `lib.check_3d_model()`, the report printed as JSON. `--check` is repeatable, and the budget options take `none` as for `create-3d-model`. Exits 0 once it has checked, whatever it found, and 1 when it cannot check.
@@ -118,15 +118,15 @@ modeling-3d check-3d-model --name <name> [--check <check>]... [--max-triangles <
 ## modeling-3d list-3d-models
 
 ```bash
-modeling-3d list-3d-models [--directory <dir>]
+modeling-3d list-3d-models [--workspace <dir>]
 ```
 
-`lib.list_3d_models()`, printed as JSON. Exits 1 when the directory is a file.
+`lib.list_3d_models()`, printed as JSON. Exits 1 when the workspace is not a folder, or its `.modeling-3d` is a file.
 
 ## modeling-3d read-3d-model-activity
 
 ```bash
-modeling-3d read-3d-model-activity --name <name> [--after <cursor>] [--directory <dir>]
+modeling-3d read-3d-model-activity --name <name> [--after <cursor>] [--workspace <dir>]
 ```
 
 `lib.read_3d_model_activity()`, printed as JSON. Exits 1 when there is no model by that name, or `--after` is not a cursor into its activity.
@@ -134,7 +134,7 @@ modeling-3d read-3d-model-activity --name <name> [--after <cursor>] [--directory
 ## modeling-3d read-3d-model-tool-call
 
 ```bash
-modeling-3d read-3d-model-tool-call --name <name> --run <run_id> --id <id> [--directory <dir>]
+modeling-3d read-3d-model-tool-call --name <name> --run <run_id> --id <id> [--workspace <dir>]
 ```
 
 `lib.read_3d_model_tool_call()`, printed as JSON. Exits 1 when there is no model by that name, or its run has no call with that id.
@@ -142,7 +142,7 @@ modeling-3d read-3d-model-tool-call --name <name> --run <run_id> --id <id> [--di
 ## modeling-3d view-3d-model
 
 ```bash
-modeling-3d view-3d-model --name <name> [--directory <dir>]
+modeling-3d view-3d-model --name <name> [--workspace <dir>]
 ```
 
 `lib.view_3d_model()`, the model's summary printed as JSON. Exits 1 when there is no model by that name.
@@ -150,7 +150,7 @@ modeling-3d view-3d-model --name <name> [--directory <dir>]
 ## modeling-3d rename-3d-model
 
 ```bash
-modeling-3d rename-3d-model --name <name> --new-name <new-name> [--directory <dir>]
+modeling-3d rename-3d-model --name <name> --new-name <new-name> [--workspace <dir>]
 ```
 
 `lib.rename_3d_model()`, the model's summary under its new name printed as JSON. Exits 1 when there is no model by that name, the new name is not one the tool gives or is held, or a run is working on the model.
@@ -158,7 +158,7 @@ modeling-3d rename-3d-model --name <name> --new-name <new-name> [--directory <di
 ## modeling-3d delete-3d-model
 
 ```bash
-modeling-3d delete-3d-model --name <name> [--directory <dir>]
+modeling-3d delete-3d-model --name <name> [--workspace <dir>]
 ```
 
 `lib.delete_3d_model()`, which stops a run working on the model first. Prints nothing; exits 1 when there is no model by that name, or its run has not ended in time.
@@ -182,10 +182,10 @@ modeling-3d add-blender-to-path [--blender-path <path>]
 ## modeling-3d mcp
 
 ```bash
-modeling-3d mcp [--directory <dir>]
+modeling-3d mcp [--workspace <dir>]
 ```
 
-`modeling_3d.adapters.mcp.run_stdio()`, the app as an MCP App, for MCP clients that launch the server themselves. stdin and stdout carry only MCP messages until the client disconnects.
+`modeling_3d.adapters.mcp.run_stdio()`, the app as an MCP App, for MCP clients that launch the server themselves. Without `--workspace` it shows the working directory, the session's own project. stdin and stdout carry only MCP messages until the client disconnects.
 
 ## Adding a command
 

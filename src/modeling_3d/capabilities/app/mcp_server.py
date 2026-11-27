@@ -63,10 +63,13 @@ from modeling_3d.capabilities.app.tools import (
     CHOOSE_FILES,
     CHOOSE_FOLDER,
     CHOOSE_INTELLIGENCE,
+    CHOOSE_WORKSPACE,
     COLOR_MODEL,
+    CREATE_WORKSPACE,
     DETAIL_MODEL,
     CREATE_MODEL,
     DELETE_MODEL,
+    FORGET_WORKSPACE,
     KEEP_UPLOAD,
     LIST_FOLDER,
     LIST_INTELLIGENCE,
@@ -75,12 +78,14 @@ from modeling_3d.capabilities.app.tools import (
     MODEL_FILE_PREFIX,
     OPEN_APP,
     OPEN_FOLDER,
+    OPEN_WORKSPACE,
     READ_ACTIVITY,
     READ_FOLDERS,
     READ_LIBRARY,
     READ_SETTINGS,
     READ_STEPS,
     READ_TOOL_CALL,
+    READ_WORKSPACES,
     REFERENCE_FILE,
     REFERENCE_FILE_PREFIX,
     RENAME_MODEL,
@@ -97,9 +102,18 @@ from modeling_3d.capabilities.app.tools import (
     VIEW_TOOLS,
     VIEW_URI,
 )
+from modeling_3d.capabilities.app.workspaces import (
+    default_folder,
+    forget_workspace,
+    last_workspace,
+    make_workspace,
+    read_app_workspaces,
+    record_workspace,
+)
 from modeling_3d.schemas import (
     AGENT_PROVIDERS,
     DEFAULT_REASONING_EFFORT,
+    MODELS_FOLDER,
     NOT_GIVEN,
     REASONING_EFFORTS,
     AppFolders,
@@ -108,6 +122,7 @@ from modeling_3d.schemas import (
     AppPins,
     AppState,
     AppSteps,
+    AppWorkspaces,
     DefaultPrompt,
     IntelligenceChoice,
     IntelligenceModels,
@@ -157,6 +172,11 @@ PREVIEW_TYPES = {**{suffix: kind for suffix, kind in MODEL_FILE_TYPES.items() if
 PREVIEW_BYTES = 8 * 1024 * 1024
 CHOOSE_TITLE = "Choose references"
 CHOOSE_FOLDER_TITLE = "Choose a folder to pin"
+# What to do when the file dialog cannot show.
+DROP_INSTEAD = "Drop or paste the files onto the app instead."
+CHOOSE_WORKSPACE_TITLE = "Choose a workspace, your project's top-level folder"
+CHOOSE_PARENT_TITLE = "Choose the folder to make the new workspace in"
+WORKSPACE_INSTEAD = "Start the app on the folder instead, with `modeling-3d app --workspace <folder>`."
 # What a folder staged from this machine leaves out: what a folder reference leaves out when it is copied in, hidden
 # folders and tool caches, along with hidden files.
 STAGE_SKIPPED = shutil.ignore_patterns(".*", "node_modules", "__pycache__")
@@ -175,8 +195,10 @@ SEES_THE_APP = (
     "was asked of one and what its agent did with `modeling-3d read-3d-model-activity --name <name>`."
 )
 INSTRUCTIONS = f"""\
-3D Modeling has an app where the user watches the models in one directory being made, and creates, changes, steers, \
-and stops them. Call `open_app` when they ask for it. `modeling-3d view-3d-model --name <name>` brings a model up in it.
+3D Modeling has an app where the user watches the models in one workspace being made, and creates, changes, steers, \
+and stops them. A workspace is the top-level directory of the user's project, whose .modeling-3d holds its models, \
+and the user can switch workspaces in the app. Call `open_app` when they ask for it. \
+`modeling-3d view-3d-model --name <name>` brings a model up in it.
 
 {SEES_THE_APP} Read a model's activity before acting on it, since they may have changed or steered it in the app."""
 # endregion
@@ -200,7 +222,7 @@ class AppServer:
         self,
         server_name: str,
         version: str,
-        directory: Path,
+        workspace: Path | None,
         list_models: Callable[[Path], ModelListing],
         view_model: Callable[[str, Path], ModelSummary],
         rename_model: Callable[[str, str, Path], ModelSummary],
@@ -217,12 +239,15 @@ class AppServer:
         list_intelligence: Callable[[], IntelligenceModels],
         default_prompts: Mapping[ModelMode, DefaultPrompt],
         settings_path: Path,
+        workspaces_path: Path,
         open_folder: Callable[[Path], None],
-        choose_files: Callable[[Path, str], list[Path]],
-        choose_folder: Callable[[Path, str], Path | None],
+        choose_files: Callable[[Path, str, str], list[Path]],
+        choose_folder: Callable[[Path, str, str], Path | None],
     ) -> None:
-        self.directory = directory
+        # None until one is picked, when none was given and none opened before is still a folder.
+        self.workspace = workspace if workspace is not None else last_workspace(workspaces_path)
         self.settings_path = settings_path
+        self.workspaces_path = workspaces_path
         self._open_folder = open_folder
         self._choose_files = choose_files
         self._choose_folder = choose_folder
@@ -268,11 +293,13 @@ class AppServer:
         self.server.extensions[EXTENSION_ID] = {}
 
     def open(self, port: int | None = None) -> App:
-        """Serve the browser host page, unless it already is, and return it."""
+        """Serve the browser host page, unless it already is, and return it, keeping its workspace as opened last."""
         with self._lock:
             if self._app is None:
                 self._app = serve_app(self.server, port)
-            return self._app
+            app = self._app
+        self._record()
+        return app
 
     def close(self) -> None:
         """Stop serving the browser host page, if it was opened, and clear the uploads no request took."""
@@ -283,6 +310,46 @@ class AppServer:
             for upload in self._uploads:
                 shutil.rmtree(UPLOADS / upload, ignore_errors=True)
             self._uploads.clear()
+
+    def _for_call(self, arguments: dict[str, Any]) -> Path | None:
+        """The workspace the app shows as a call arrives, which the call works in to its end, refusing a call sent for
+        another, as one on its way while the app switched."""
+        shown = self.workspace
+        sent = arguments.get("workspace")
+        if sent is not None and (shown is None or Path(sent) != shown):
+            raise Modeling3dError(
+                f"The app now shows {shown or 'no workspace'}, so this call, sent for {sent}, was not made. Read "
+                "`read_app_workspaces`, and call again for the workspace it shows.",
+                "workspace-changed",
+            )
+        return shown
+
+    def _switch(self, workspace: Path) -> None:
+        """Show the models in `workspace`, or in the workspace of the models directory it names."""
+        # Listed first, so a path the app cannot show is refused before the app switches to it.
+        self.workspace = self._list_models(workspace).workspace
+
+    def _record(self) -> None:
+        """Keep the workspace the app shows as the one opened last, for the next app to open on and to offer."""
+        if self.workspace is None:
+            return
+        # Losing it costs only an entry in what the app offers to switch to, so an app that cannot keep it still opens.
+        with self._lock, contextlib.suppress(OSError):
+            record_workspace(self.workspace, self.workspaces_path)
+
+    def _workspaces(self) -> AppWorkspaces:
+        return read_app_workspaces(self.workspace, self.workspaces_path)
+
+    def _forget(self, workspace: Path) -> AppWorkspaces:
+        try:
+            with self._lock:
+                forget_workspace(workspace.resolve(), self.workspaces_path)
+        except OSError as error:
+            raise Modeling3dError(
+                f"Could not forget {workspace} in {self.workspaces_path}: {error}. Check that the folder can be "
+                "written."
+            ) from None
+        return self._workspaces()
 
     async def _list_tools(
         self, ctx: ServerRequestContext[Any], params: PaginatedRequestParams | None
@@ -310,7 +377,8 @@ class AppServer:
         for prefix, read in ((MODEL_FILE_PREFIX, self._model_file), (REFERENCE_FILE_PREFIX, self._reference_file)):
             if params.uri.startswith(prefix):
                 try:
-                    return await asyncio.to_thread(read, params.uri)
+                    # A read carries no arguments, so it is of the workspace shown as it arrives.
+                    return await asyncio.to_thread(read, params.uri, _needed(self.workspace))
                 except Modeling3dError as error:
                     raise MCPError(INVALID_PARAMS, str(error)) from None
         raise MCPError(
@@ -320,9 +388,9 @@ class AppServer:
             f"{REFERENCE_FILE.uri_template}.",
         )
 
-    def _model_file(self, uri: str) -> ReadResourceResult:
+    def _model_file(self, uri: str, workspace: Path) -> ReadResourceResult:
         name, _, path = (unquote(part) for part in uri.removeprefix(MODEL_FILE_PREFIX).partition("/"))
-        summary = self._summary(name)
+        summary = self._summary(name, workspace)
         # Only what the model's summary lists, and what is in the folders it was given, so no other path in the
         # directory can be read through this.
         listed = [*summary.files, *summary.references]
@@ -336,10 +404,10 @@ class AppServer:
         mime_type = MODEL_FILE_TYPES.get(PurePosixPath(path).suffix.lower(), "application/json")
         return ReadResourceResult(contents=[BlobResourceContents(uri=uri, mime_type=mime_type, blob=data)])
 
-    def _reference_file(self, uri: str) -> ReadResourceResult:
+    def _reference_file(self, uri: str, workspace: Path) -> ReadResourceResult:
         path = Path(unquote(uri.removeprefix(REFERENCE_FILE_PREFIX)))
         kind = PREVIEW_TYPES.get(path.suffix.lower())
-        if kind is None or not self._in_library(path):
+        if kind is None or not self._in_library(path, workspace / MODELS_FOLDER):
             raise Modeling3dError(
                 f"{path} is not an image the app offers to work from. Pin it, pin the folder it is in, or choose it."
             )
@@ -353,19 +421,19 @@ class AppServer:
             ) from None
         return ReadResourceResult(contents=[BlobResourceContents(uri=uri, mime_type=kind, blob=data)])
 
-    def _in_library(self, path: Path) -> bool:
-        """Whether the app's library offers `path`: pinned, in a folder pinned to show its files, used here, or given
-        to a model here, in its references/."""
-        state = self._app_state()
+    def _in_library(self, path: Path, models: Path) -> bool:
+        """Whether the app's library in the models directory `models` offers `path`: pinned, in a folder pinned to show
+        its files, used there, or given to a model there, in its references/."""
+        state = self._app_state(models)
         if any(reference.path == path for reference in state.pins.references):
             return True
         if any(folder.shows == "files" and folder.path == path.parent for folder in state.pins.folders):
             return True
         if path in state.used:
             return True
-        if not path.is_relative_to(self.directory):
+        if not path.is_relative_to(models):
             return False
-        parts = path.relative_to(self.directory).parts
+        parts = path.relative_to(models).parts
         return len(parts) > 2 and parts[1] == "references"
 
     async def _call_tool_or_explain(
@@ -389,114 +457,144 @@ class AppServer:
         arguments = params.arguments or {}
         if params.name == OPEN_APP.name:
             return await self._open_app(ctx, params)
-        if params.name == LIST_MODELS.name:
-            listing = await asyncio.to_thread(self._list_models, self.directory)
-            return _structured(listing.model_dump(mode="json"))
-        if params.name == VIEW_MODEL.name:
-            summary = await asyncio.to_thread(self._view_model, arguments["name"], self.directory)
-            return _structured(summary.model_dump(mode="json"))
-        if params.name == CREATE_MODEL.name:
-            return await self._start(arguments, "shape")
-        if params.name == RIG_MODEL.name:
-            return await self._start(arguments, "rig")
-        if params.name == COLOR_MODEL.name:
-            return await self._start(arguments, "color")
-        if params.name == DETAIL_MODEL.name:
-            return await self._start(arguments, "detail")
-        if params.name == CHECK_MODEL.name:
-            return await self._check(arguments["name"])
+        # Those that work in no workspace, so are never refused for one.
         if params.name == UPLOAD_REFERENCE.name:
             received = await asyncio.to_thread(
                 self._receive, arguments["upload"], arguments["path"], arguments["offset"], arguments["data"]
             )
             return _structured({"received": received})
-        if params.name == STEER_MODEL.name:
-            return await self._steer(arguments)
-        if params.name == RENAME_MODEL.name:
-            summary = await asyncio.to_thread(self._rename, arguments["name"], arguments["new_name"])
-            return _structured(summary.model_dump(mode="json"))
-        if params.name == DELETE_MODEL.name:
-            await asyncio.to_thread(self._delete, arguments["name"])
-            return _text(f"Deleted {arguments['name']}.")
-        if params.name == CANCEL_MODEL.name:
-            await asyncio.to_thread(self._cancel_model, arguments["name"], self.directory)
-            return _text("Stopping; the model's activity shows the run end.")
-        if params.name == READ_ACTIVITY.name:
-            activity = await asyncio.to_thread(
-                self._read_activity, arguments["name"], self.directory, arguments.get("after")
-            )
-            return _structured(activity.model_dump(mode="json"))
-        if params.name == READ_TOOL_CALL.name:
-            call = await asyncio.to_thread(
-                self._read_tool_call, arguments["name"], arguments["run_id"], arguments["call_id"], self.directory
-            )
-            return _structured(call.model_dump(mode="json"))
-        if params.name == LIST_INTELLIGENCE.name:
-            options = await asyncio.to_thread(self._intelligence)
-            return _structured(options.model_dump(mode="json"))
-        if params.name == CHOOSE_INTELLIGENCE.name:
-            options = await asyncio.to_thread(
-                self._choose, arguments["mode"], arguments["model"], arguments["reasoning_effort"]
-            )
-            return _structured(options.model_dump(mode="json"))
+        if params.name == STAGE_FILES.name:
+            return await self._staged_references([Path(path) for path in arguments["paths"]])
         if params.name == READ_SETTINGS.name:
             settings = await asyncio.to_thread(read_app_settings, self.settings_path)
             return _structured(settings.model_dump(mode="json"))
         if params.name == SAVE_SETTINGS.name:
             settings = await asyncio.to_thread(save_app_settings, arguments["settings"], self.settings_path)
             return _structured(settings.model_dump(mode="json"))
+        if params.name == READ_WORKSPACES.name:
+            workspaces = await asyncio.to_thread(self._workspaces)
+            return _structured(workspaces.model_dump(mode="json"))
+        if params.name == OPEN_WORKSPACE.name:
+            await asyncio.to_thread(self._switch, Path(arguments["path"]))
+            await asyncio.to_thread(self._record)
+            workspaces = await asyncio.to_thread(self._workspaces)
+            return _structured(workspaces.model_dump(mode="json"))
+        if params.name == CHOOSE_WORKSPACE.name:
+            opened = await asyncio.to_thread(default_folder, self.workspace, self.workspaces_path)
+            title = CHOOSE_PARENT_TITLE if arguments.get("parent") else CHOOSE_WORKSPACE_TITLE
+            folder = await self._in_dialog(self._choose_folder, opened, title, WORKSPACE_INSTEAD)
+            return _structured({"path": str(folder.resolve()) if folder else None})
+        if params.name == CREATE_WORKSPACE.name:
+            made = await asyncio.to_thread(make_workspace, arguments["name"], Path(arguments["parent"]))
+            await asyncio.to_thread(self._switch, made)
+            await asyncio.to_thread(self._record)
+            workspaces = await asyncio.to_thread(self._workspaces)
+            return _structured(workspaces.model_dump(mode="json"))
+        if params.name == FORGET_WORKSPACE.name:
+            workspaces = await asyncio.to_thread(self._forget, Path(arguments["path"]))
+            return _structured(workspaces.model_dump(mode="json"))
+        shown = self._for_call(arguments)
+        if params.name == READ_FOLDERS.name:
+            models = None if shown is None else shown / MODELS_FOLDER
+            folders = AppFolders(settings=self.settings_path.parent, workspace=shown, models=models)
+            return _structured(folders.model_dump(mode="json"))
+        if params.name == OPEN_FOLDER.name:
+            folder = await asyncio.to_thread(self._folder, arguments["folder"], arguments.get("name"), shown)
+            await asyncio.to_thread(self._open_folder, folder)
+            return _structured({"opened": str(folder)})
+        workspace = await asyncio.to_thread(_needed, shown)
+        models = workspace / MODELS_FOLDER
+        if params.name == LIST_MODELS.name:
+            listing = await asyncio.to_thread(self._list_models, workspace)
+            return _structured(listing.model_dump(mode="json"))
+        if params.name == VIEW_MODEL.name:
+            summary = await asyncio.to_thread(self._view_model, arguments["name"], workspace)
+            return _structured(summary.model_dump(mode="json"))
+        if params.name == CREATE_MODEL.name:
+            return await self._start(arguments, "shape", workspace)
+        if params.name == RIG_MODEL.name:
+            return await self._start(arguments, "rig", workspace)
+        if params.name == COLOR_MODEL.name:
+            return await self._start(arguments, "color", workspace)
+        if params.name == DETAIL_MODEL.name:
+            return await self._start(arguments, "detail", workspace)
+        if params.name == CHECK_MODEL.name:
+            return await self._check(arguments["name"], workspace)
+        if params.name == STEER_MODEL.name:
+            return await self._steer(arguments, workspace)
+        if params.name == RENAME_MODEL.name:
+            summary = await asyncio.to_thread(self._rename, arguments["name"], arguments["new_name"], workspace)
+            return _structured(summary.model_dump(mode="json"))
+        if params.name == DELETE_MODEL.name:
+            await asyncio.to_thread(self._delete, arguments["name"], workspace)
+            return _text(f"Deleted {arguments['name']}.")
+        if params.name == CANCEL_MODEL.name:
+            await asyncio.to_thread(self._cancel_model, arguments["name"], workspace)
+            return _text("Stopping; the model's activity shows the run end.")
+        if params.name == READ_ACTIVITY.name:
+            activity = await asyncio.to_thread(
+                self._read_activity, arguments["name"], workspace, arguments.get("after")
+            )
+            return _structured(activity.model_dump(mode="json"))
+        if params.name == READ_TOOL_CALL.name:
+            call = await asyncio.to_thread(
+                self._read_tool_call, arguments["name"], arguments["run_id"], arguments["call_id"], workspace
+            )
+            return _structured(call.model_dump(mode="json"))
+        if params.name == LIST_INTELLIGENCE.name:
+            options = await asyncio.to_thread(self._intelligence, models)
+            return _structured(options.model_dump(mode="json"))
+        if params.name == CHOOSE_INTELLIGENCE.name:
+            options = await asyncio.to_thread(
+                self._choose, arguments["mode"], arguments["model"], arguments["reasoning_effort"], models
+            )
+            return _structured(options.model_dump(mode="json"))
         if params.name == READ_STEPS.name:
-            steps = await asyncio.to_thread(read_activity_steps, self.directory)
+            steps = await asyncio.to_thread(read_activity_steps, models)
             return _structured(steps.model_dump(mode="json"))
         if params.name == SAVE_STEP.name:
             steps = await asyncio.to_thread(
-                self._save_step, arguments["model_id"], arguments["group"], arguments["open"]
+                self._save_step, arguments["model_id"], arguments["group"], arguments["open"], workspace
             )
             return _structured(steps.model_dump(mode="json"))
-        if params.name == READ_FOLDERS.name:
-            folders = AppFolders(settings=self.settings_path.parent, models=self.directory)
-            return _structured(folders.model_dump(mode="json"))
-        if params.name == OPEN_FOLDER.name:
-            folder = await asyncio.to_thread(self._folder, arguments["folder"], arguments.get("name"))
-            await asyncio.to_thread(self._open_folder, folder)
-            return _structured({"opened": str(folder)})
         if params.name == CHOOSE_FILES.name:
             directory = arguments.get("directory")
-            opened = Path(directory).expanduser() if directory else await asyncio.to_thread(self._last_folder)
-            chosen = await self._in_dialog(self._choose_files, opened, CHOOSE_TITLE)
+            opened = Path(directory).expanduser() if directory else await asyncio.to_thread(self._last_folder, models)
+            chosen = await self._in_dialog(self._choose_files, opened, CHOOSE_TITLE, DROP_INSTEAD)
             staged = await self._staged_references(chosen)
             if chosen:
                 folder = chosen[0].parent.resolve()
-                await asyncio.to_thread(self._update_state, lambda _: {"last_folder": folder})
+                await asyncio.to_thread(self._update_state, lambda _: {"last_folder": folder}, models)
             return staged
-        if params.name == STAGE_FILES.name:
-            return await self._staged_references([Path(path) for path in arguments["paths"]])
         if params.name == CHOOSE_FOLDER.name:
-            opened = await asyncio.to_thread(self._last_folder)
-            folder = await self._in_dialog(self._choose_folder, opened, CHOOSE_FOLDER_TITLE)
+            opened = await asyncio.to_thread(self._last_folder, models)
+            folder = await self._in_dialog(self._choose_folder, opened, CHOOSE_FOLDER_TITLE, DROP_INSTEAD)
             return _structured({"path": str(folder.resolve()) if folder else None})
         if params.name == READ_LIBRARY.name:
-            library = await asyncio.to_thread(self._library)
+            library = await asyncio.to_thread(self._library, workspace)
             return _structured(library.model_dump(mode="json"))
         if params.name == SAVE_PINS.name:
-            pins = await asyncio.to_thread(self._save_pins, arguments["pins"])
+            pins = await asyncio.to_thread(self._save_pins, arguments["pins"], models)
             return _structured(pins.model_dump(mode="json"))
         if params.name == LIST_FOLDER.name:
-            entries = await asyncio.to_thread(self._pinned_folder, Path(arguments["path"]))
+            entries = await asyncio.to_thread(self._pinned_folder, Path(arguments["path"]), models)
             return _structured({"entries": [entry.model_dump(mode="json") for entry in entries]})
         if params.name == KEEP_UPLOAD.name:
-            kept = await asyncio.to_thread(self._keep, arguments["upload"])
+            kept = await asyncio.to_thread(self._keep, arguments["upload"], models)
             return _structured({"path": str(kept)})
         known = ", ".join(tool.name for tool in [OPEN_APP, *VIEW_TOOLS])
         raise Modeling3dError(f"'{params.name}' is not a tool of this server. The tools are: {known}.")
 
-    async def _start(self, arguments: dict[str, Any], mode: ModelMode) -> CallToolResult:
-        """Start a run that shapes, rigs, or colors the model, with what the view sent."""
+    async def _start(self, arguments: dict[str, Any], mode: ModelMode, workspace: Path) -> CallToolResult:
+        """Start a run that shapes, rigs, or colors the model in `workspace`, with what the view sent."""
+        models = workspace / MODELS_FOLDER
         uploads: list[str] = arguments.get("uploads") or []
         references = [await asyncio.to_thread(_staged, upload) for upload in uploads]
-        references += await asyncio.to_thread(self._model_references, arguments.get("reference_models") or [])
+        references += await asyncio.to_thread(
+            self._model_references, arguments.get("reference_models") or [], workspace
+        )
         start = self._starts[mode]
-        created = mode == "shape" and not (self.directory / arguments["name"]).exists()
+        created = mode == "shape" and not (models / arguments["name"]).exists()
         # Only shaping takes budgets; the other modes work to the model's own.
         budgets: dict[str, Any] = {}
         if mode == "shape":
@@ -509,7 +607,7 @@ class AppServer:
         run = await start(
             prompt=arguments.get("prompt"),
             name=arguments["name"],
-            directory=self.directory,
+            workspace=workspace,
             references=references,
             resume_session=arguments.get("resume_session", False),
             agent_provider=arguments.get("agent_provider"),
@@ -519,27 +617,27 @@ class AppServer:
             detach=True,
             **budgets,
         )
-        await asyncio.to_thread(self._remember_sent, uploads)
+        await asyncio.to_thread(self._remember_sent, uploads, models)
         # Cleared only once the run has started, having copied them into the model: a request that is refused is
         # usually sent again, with the same references.
         await self._clear(uploads)
         if created:
-            await asyncio.to_thread(self._update_state, lambda _: {"last_prompt": arguments["prompt"]})
+            await asyncio.to_thread(self._update_state, lambda _: {"last_prompt": arguments["prompt"]}, models)
         # Not recorded as viewed: the run starts long after it is asked for, by when the person may be viewing another.
-        summary = await asyncio.to_thread(self._summary, run.name)
+        summary = await asyncio.to_thread(self._summary, run.name, workspace)
         return _structured(summary.model_dump(mode="json"))
 
-    async def _check(self, name: str) -> CallToolResult:
+    async def _check(self, name: str, workspace: Path) -> CallToolResult:
         """The report of the model's check under way, or of a new one, once it ends or the call has waited long enough.
 
         Each check runs to its end in a thread of its own, so one a call stopped waiting on is there for the next call.
         """
-        target = self.directory / name
+        target = workspace / MODELS_FOLDER / name
         with self._lock:
             future = self._checks.get(target)
             if future is None:
                 future = self._checks[target] = concurrent.futures.Future()
-                threading.Thread(target=self._run_check, args=(name, self.directory, future), daemon=True).start()
+                threading.Thread(target=self._run_check, args=(name, workspace, future), daemon=True).start()
         done, _ = await asyncio.to_thread(concurrent.futures.wait, [future], CHECK_WAIT_SECONDS)
         if not done:
             return _structured({"checking": True})
@@ -548,17 +646,17 @@ class AppServer:
                 del self._checks[target]
         return _structured({"report": future.result().model_dump(mode="json")})
 
-    def _rename(self, name: str, new_name: str) -> ModelSummary:
-        self._not_checking(name, "renamed")
-        return self._rename_model(name, new_name, self.directory)
+    def _rename(self, name: str, new_name: str, workspace: Path) -> ModelSummary:
+        self._not_checking(name, "renamed", workspace)
+        return self._rename_model(name, new_name, workspace)
 
-    def _delete(self, name: str) -> None:
-        self._not_checking(name, "deleted")
-        self._delete_model(name, self.directory)
+    def _delete(self, name: str, workspace: Path) -> None:
+        self._not_checking(name, "deleted", workspace)
+        self._delete_model(name, workspace)
 
-    def _not_checking(self, name: str, done: str) -> None:
+    def _not_checking(self, name: str, done: str, workspace: Path) -> None:
         """Refuse while the model's check runs, since it writes into the model's directory and cannot be stopped."""
-        target = self.directory / name
+        target = workspace / MODELS_FOLDER / name
         with self._lock:
             future = self._checks.get(target)
             if future is not None and not future.done():
@@ -571,31 +669,34 @@ class AppServer:
             # One that ended unread is of the model as it was, and must not answer for another by its name.
             self._checks.pop(target, None)
 
-    def _run_check(self, name: str, directory: Path, future: concurrent.futures.Future[ModelCheck]) -> None:
+    def _run_check(self, name: str, workspace: Path, future: concurrent.futures.Future[ModelCheck]) -> None:
         try:
-            future.set_result(self._check_model(name, directory))
+            future.set_result(self._check_model(name, workspace))
         except Exception as error:
             future.set_exception(error)
 
-    async def _steer(self, arguments: dict[str, Any]) -> CallToolResult:
+    async def _steer(self, arguments: dict[str, Any], workspace: Path) -> CallToolResult:
         uploads: list[str] = arguments.get("uploads") or []
         references = [await asyncio.to_thread(_staged, upload) for upload in uploads]
         await asyncio.to_thread(
-            self._steer_model, arguments["name"], arguments["message"], self.directory, ORIGIN, references
+            self._steer_model, arguments["name"], arguments["message"], workspace, ORIGIN, references
         )
-        await asyncio.to_thread(self._remember_sent, uploads)
+        await asyncio.to_thread(self._remember_sent, uploads, workspace / MODELS_FOLDER)
         # As for a request: kept until the message has them, since one that is refused is usually sent again.
         await self._clear(uploads)
         return _text("Sent; the model's activity shows it once its agent has it.")
 
-    async def _in_dialog[Chosen](self, ask: Callable[[Path, str], Chosen], directory: Path, title: str) -> Chosen:
-        """What the person chose in the dialog `ask` shows, one dialog at a time."""
+    async def _in_dialog[Chosen](
+        self, ask: Callable[[Path, str, str], Chosen], directory: Path, title: str, instead: str
+    ) -> Chosen:
+        """What the person chose in the dialog `ask` shows, one dialog at a time; `instead` says what to do when it
+        cannot show."""
         with self._lock:
             if self._choosing:
                 raise Modeling3dError("A file dialog is already showing. Choose there or cancel it, then try again.")
             self._choosing = True
         try:
-            return await asyncio.to_thread(ask, directory, title)
+            return await asyncio.to_thread(ask, directory, title, instead)
         finally:
             with self._lock:
                 self._choosing = False
@@ -604,17 +705,17 @@ class AppServer:
         files = [await asyncio.to_thread(self._stage, path) for path in paths]
         return _structured({"files": [file.model_dump(mode="json") for file in files]})
 
-    def _library(self) -> AppLibrary:
-        state = self._app_state()
+    def _library(self, workspace: Path) -> AppLibrary:
+        state = self._app_state(workspace / MODELS_FOLDER)
         return AppLibrary(
             **dict(state.pins),
-            used=used_here(state.used, self._list_models(self.directory).models),
+            used=used_here(state.used, self._list_models(workspace).models),
             last_prompt=state.last_prompt,
             default_prompts=self._default_prompts,
         )
 
-    def _pinned_folder(self, path: Path) -> list[ReferenceEntry]:
-        pinned = [folder.path for folder in self._app_state().pins.folders if folder.shows == "files"]
+    def _pinned_folder(self, path: Path, models: Path) -> list[ReferenceEntry]:
+        pinned = [folder.path for folder in self._app_state(models).pins.folders if folder.shows == "files"]
         if path not in pinned:
             raise Modeling3dError(
                 f"{path} is not a folder pinned to show its files. Those pinned so are: "
@@ -622,45 +723,46 @@ class AppServer:
             )
         return list_folder(path)
 
-    def _save_pins(self, pins: dict[str, Any]) -> AppPins:
-        """Keep `pins` for the app's directory, replacing those kept before, and clear what was kept for pins gone."""
+    def _save_pins(self, pins: dict[str, Any], models: Path) -> AppPins:
+        """Keep `pins` for the models directory `models`, replacing those kept before, and clear what was kept for
+        pins gone."""
         checked = check_pins(pins)
-        self._update_state(lambda state: {"pins": checked})
-        clear_unpinned(self.directory, checked)
+        self._update_state(lambda state: {"pins": checked}, models)
+        clear_unpinned(models, checked)
         return checked
 
-    def _save_step(self, model_id: str, group: str, opened: bool) -> AppSteps:
+    def _save_step(self, model_id: str, group: str, opened: bool, workspace: Path) -> AppSteps:
         """Keep a group of steps in a model's activity as opened or closed, one change at a time."""
-        models = {model.id for model in self._list_models(self.directory).models}
+        models = {model.id for model in self._list_models(workspace).models}
         with self._lock:
-            return save_activity_step(self.directory, model_id, group, opened, models)
+            return save_activity_step(workspace / MODELS_FOLDER, model_id, group, opened, models)
 
-    def _keep(self, upload: str) -> Path:
-        return keep(_staged(upload), self.directory)
+    def _keep(self, upload: str, models: Path) -> Path:
+        return keep(_staged(upload), models)
 
-    def _last_folder(self) -> Path:
+    def _last_folder(self, models: Path) -> Path:
         """Where the file dialogs open: where files were last chosen from, while it is there, else the home folder."""
-        folder = self._app_state().last_folder
+        folder = self._app_state(models).last_folder
         return folder if folder is not None and folder.is_dir() else Path.home()
 
-    def _remember_sent(self, uploads: list[str]) -> None:
-        """Remember what the sent `uploads` were staged from on this machine as used in the app's directory, so
-        what is picked and left out again is not."""
+    def _remember_sent(self, uploads: list[str], models: Path) -> None:
+        """Remember what the sent `uploads` were staged from on this machine as used in the models directory
+        `models`, so what is picked and left out again is not."""
         with self._lock:
             sources = [source for upload in uploads if (source := self._uploads.get(upload)) is not None]
         if sources:
-            self._update_state(lambda state: {"used": remember(state.used, sources)})
+            self._update_state(lambda state: {"used": remember(state.used, sources)}, models)
 
-    def _update_state(self, change: Callable[[AppState], dict[str, Any]]) -> None:
-        """Change what the app remembers in its directory, one change at a time."""
+    def _update_state(self, change: Callable[[AppState], dict[str, Any]], models: Path) -> None:
+        """Change what the app remembers in the models directory `models`, one change at a time."""
         with self._lock:
-            state = self._app_state()
+            state = self._app_state(models)
             try:
-                write_app_state(self.directory, state.model_copy(update=change(state)))
+                write_app_state(models, state.model_copy(update=change(state)))
             except OSError as error:
                 raise Modeling3dError(
-                    f"Could not save what the app remembers to {app_state_path(self.directory)}: {error}. Check that "
-                    "the folder can be written."
+                    f"Could not save what the app remembers to {app_state_path(models)}: {error}. Check that the "
+                    "folder can be written."
                 ) from None
 
     def _stage(self, path: Path) -> StagedReference:
@@ -745,11 +847,11 @@ class AppServer:
                 f"Could not keep the reference {path}: {error}. Add it again.", "bad-upload"
             ) from None
 
-    def _intelligence(self) -> AppIntelligence:
+    def _intelligence(self, models: Path) -> AppIntelligence:
         options = self._list_intelligence()
         offered = {
             mode: choice
-            for mode, choice in self._app_state().last_intelligence.items()
+            for mode, choice in self._app_state(models).last_intelligence.items()
             if any(
                 model.id == choice.model and choice.reasoning_effort in model.reasoning_efforts
                 for model in options.models
@@ -757,7 +859,7 @@ class AppServer:
         }
         return AppIntelligence(models=options.models, defaults=options.defaults, chosen=offered)
 
-    def _choose(self, mode: ModelMode, model: str, reasoning_effort: str) -> AppIntelligence:
+    def _choose(self, mode: ModelMode, model: str, reasoning_effort: str, models: Path) -> AppIntelligence:
         options = self._list_intelligence()
         picked = next((candidate for candidate in options.models if candidate.id == model), None)
         if picked is None:
@@ -773,27 +875,30 @@ class AppServer:
                 "bad-reasoning-effort",
             )
         choice = IntelligenceChoice(agent_provider=picked.agent_provider, model=picked.id, reasoning_effort=effort)
-        self._update_state(lambda state: {"last_intelligence": {**state.last_intelligence, mode: choice}})
-        return self._intelligence()
+        self._update_state(lambda state: {"last_intelligence": {**state.last_intelligence, mode: choice}}, models)
+        return self._intelligence(models)
 
-    def _app_state(self) -> AppState:
-        """What the person pinned, picked, and used in the app; nothing when it was never written or cannot be read."""
-        return read_app_state(self.directory) or AppState()
+    def _app_state(self, models: Path) -> AppState:
+        """What the person pinned, picked, and used in the app in the models directory `models`; nothing when it was
+        never written or cannot be read."""
+        return read_app_state(models) or AppState()
 
-    def _folder(self, folder: str, name: str | None) -> Path:
+    def _folder(self, folder: str, name: str | None, shown: Path | None) -> Path:
         if folder == "settings":
             return self.settings_path.parent
+        if folder == "workspace":
+            return _needed(shown)
         if folder == "models":
-            return self.directory
+            return _needed(shown) / MODELS_FOLDER
         if folder != "model" or name is None:
             raise Modeling3dError(
                 f"There is no app folder {folder!r}{'' if name is None else f' named {name!r}'}. Pass `settings`, "
-                "`models`, or `model` with the model's `name`."
+                "`workspace`, `models`, or `model` with the model's `name`."
             )
-        return self._summary(name).directory
+        return self._summary(name, _needed(shown)).directory
 
-    def _summary(self, name: str) -> ModelSummary:
-        listing = self._list_models(self.directory)
+    def _summary(self, name: str, workspace: Path) -> ModelSummary:
+        listing = self._list_models(workspace)
         summary = next((model for model in listing.models if model.name == name), None)
         if summary is None:
             known = ", ".join(model.name for model in listing.models) or "none"
@@ -804,16 +909,17 @@ class AppServer:
             )
         return summary
 
-    def _model_references(self, names: list[str]) -> list[Path]:
-        """The files that stand for each named model as a reference: its script, its GLB, and its first render."""
-        models = {model.name: model for model in self._list_models(self.directory).models}
+    def _model_references(self, names: list[str], workspace: Path) -> list[Path]:
+        """The files that stand for each named model in `workspace` as a reference: its script, its GLB, and its first
+        render."""
+        models = {model.name: model for model in self._list_models(workspace).models}
         paths: list[Path] = []
         for name in names:
             files = models[name].files if name in models else []
             own = [file for file in files if PurePosixPath(file).suffix in REFERENCE_TYPES]
             if not own:
                 raise Modeling3dError(
-                    f"There is no built model named {name!r} in {self.directory} to work from.",
+                    f"There is no built model named {name!r} in {workspace / MODELS_FOLDER} to work from.",
                     "no-reference-model",
                     name,
                 )
@@ -824,12 +930,9 @@ class AppServer:
     async def _open_app(
         self, ctx: ServerRequestContext[Any], params: CallToolRequestParams
     ) -> CallToolResult | InputRequiredResult:
-        directory = (params.arguments or {}).get("directory")
-        if directory is not None:
-            resolved = Path(directory).resolve()
-            # Listed first, so a path the app cannot show is refused before the app switches to it.
-            await asyncio.to_thread(self._list_models, resolved)
-            self.directory = resolved
+        workspace = (params.arguments or {}).get("workspace")
+        if workspace is not None:
+            await asyncio.to_thread(self._switch, Path(workspace))
         app = await asyncio.to_thread(self.open)
         embedded = client_supports_apps(ctx)
         answer = (params.input_responses or {}).get(OPEN_REQUEST)
@@ -854,10 +957,35 @@ class AppServer:
             where = f"The user opened the app at {app.url}."
         else:
             where = f"Give the user this URL to open the app: {app.url}"
+        if self.workspace is None:
+            return _text(
+                f"{where} It shows no workspace yet: the user picks one there, or call `open_app` again with "
+                "`workspace`."
+            )
+        # The session's commands run in its own project, so they need the workspace named when the app shows another.
+        elsewhere = self.workspace != Path.cwd().resolve()
+        commands = f' Pass `--workspace "{self.workspace}"` to those commands for its models.' if elsewhere else ""
         return _text(
-            f"{where} It shows the models in {self.directory}. There the user creates models, asks for changes, and "
-            f"steers and stops runs themselves. {SEES_THE_APP}"
+            f"{where} It shows the models in the workspace {self.workspace}. There the user creates models, asks for "
+            f"changes, and steers and stops runs themselves. {SEES_THE_APP}{commands}"
         )
+
+
+def _needed(workspace: Path | None) -> Path:
+    """`workspace`, refusing a call that needs one before one is picked, or once its folder is gone, which a write
+    there would make again, empty."""
+    if workspace is None:
+        raise Modeling3dError(
+            "The app shows no workspace yet. Pick one in it, or open it with `workspace` naming the project's "
+            "top-level directory.",
+            "no-workspace",
+        )
+    if not workspace.is_dir():
+        raise Modeling3dError(
+            f"The workspace {workspace} is no longer a folder. Pick another in the app, or open it with `workspace`.",
+            "no-such-workspace",
+        )
+    return workspace
 
 
 def _upload_folder(upload: str) -> Path:

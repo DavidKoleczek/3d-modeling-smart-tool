@@ -8,7 +8,7 @@ This is the user request.
 ## General Workflow Information
 
 Each 3D model and its data, including your session files are kept in their own directory. The directory for this model, which you must work in, is the model directory: {directory}.
-The directory you were started in is your working directory. Explore whatever helps there, such as the project's docs, conventions, and the assets the model sits beside. Write files only in the model's directory and run commands from it. Make an exception only where the work needs one.
+Your working directory is the workspace, {workspace}, the top-level directory of the user's project. By default, everything for this tool, including the models, is in its .modeling-3d. Explore whatever helps in the workspace, such as the project's docs, conventions, and the assets the model sits beside. Write files only in the model's directory and run commands from it. Make an exception only where the work needs one.
 Don't stop to ask the user questions, since they are likely not watching while you work. Where something is unclear, or instructions pull against each other, choose what serves the model best and keep going.
 {guidance}
 
@@ -26,7 +26,7 @@ Run every Python script through `uv run --script` with inline dependencies: `pyt
 
 After each build, render the exported model.glb, look at the renders, and fix what does not match the request.
 
-Check the model with the check-3d-model skill after you build it and before you finish, passing `--name {name} --directory {models}`. It provides some handy information that you can use to optimize the model.
+Check the model with the check-3d-model skill after you build it and before you finish, passing `--name {name} --workspace {workspace}`. It provides some handy information that you can use to optimize the model.
 
 {references}{existing}
 

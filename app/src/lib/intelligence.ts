@@ -80,7 +80,7 @@ export type Intelligence = {
   options: AppIntelligence | null;
   /**
    * What the next request runs with: the person's pick in its mode, else what the model in view last ran with when that
-   * was in the same mode, else their last pick for the mode in the directory, else the mode's default; null until read.
+   * was in the same mode, else their last pick for the mode in the workspace, else the mode's default; null until read.
    */
   choice: IntelligenceChoice | null;
   error: string | null;
@@ -91,14 +91,17 @@ export type Intelligence = {
   label: (model: string) => string;
 };
 
-// The AI models to pick from and the picks the directory keeps, shared, so a pick in one picker shows in the others.
+// The AI models to pick from and the picks the workspace keeps, shared, so a pick in one picker shows in the others.
 type Listed = { options: AppIntelligence | null; error: string | null };
 
 const listeners = new Set<() => void>();
 let listed: Listed = { options: null, error: null };
 let listing: Promise<void> | null = null;
-// One pick recorded at a time, so the last one made is the one the directory keeps.
+// One pick recorded at a time, so the last one made is the one the workspace keeps.
 let recording: Promise<unknown> = Promise.resolve();
+// Counts the workspaces shown, each keeping its own picks, so what was listed or picked for one never lands in the
+// next.
+let generation = 0;
 
 function publish(next: Partial<Listed>) {
   listed = { ...listed, ...next };
@@ -115,9 +118,17 @@ function subscribe(listener: () => void) {
 }
 
 function list() {
+  const asked = generation;
   listing = listIntelligenceModels().then(
-    (options) => publish({ options, error: null }),
+    (options) => {
+      if (asked === generation) {
+        publish({ options, error: null });
+      }
+    },
     (cause: unknown) => {
+      if (asked !== generation) {
+        return;
+      }
       // Listed again by the next picker to show, should the server come back.
       listing = null;
       publish({ error: `Could not list the AI models: ${describe(cause)}` });
@@ -125,9 +136,17 @@ function list() {
   );
 }
 
+/** Forget what was listed and picked, for a workspace shown next, which lists its own. */
+export function forgetIntelligence() {
+  generation += 1;
+  listing = null;
+  recording = Promise.resolve();
+  publish({ options: null, error: null });
+}
+
 /**
  * The AI models and reasoning efforts to pick from, and the pick for a request in `mode`, remembered for that mode in
- * the app's directory. For a request on `shown`, the pick starts on what its last run used when that run was in `mode`,
+ * the app's workspace. For a request on `shown`, the pick starts on what its last run used when that run was in `mode`,
  * so a request goes on in that session unless the person picks otherwise, and a pick they make lasts while that model
  * is in view in that mode. In another mode a request starts a fresh session, so it starts on that mode's own.
  */
@@ -168,11 +187,18 @@ export function useIntelligence(
       },
     });
     setError(null);
+    const asked = generation;
     recording = recording.then(() =>
-      chooseIntelligenceModel(mode, model, effort).then(
-        (options) => publish({ options }),
-        (cause: unknown) => setError(describe(cause)),
-      ),
+      asked === generation
+        ? chooseIntelligenceModel(mode, model, effort).then(
+            (options) => {
+              if (asked === generation) {
+                publish({ options });
+              }
+            },
+            (cause: unknown) => setError(describe(cause)),
+          )
+        : undefined,
     );
   };
 

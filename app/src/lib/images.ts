@@ -9,7 +9,13 @@ const CACHED = 48;
 // Twice the largest a thumbnail shows, for screens of twice the pixel density.
 const THUMBNAIL = 256;
 
+// Of the workspace shown, by model name, which another's model by the same name shares.
 const cache = new Map<string, Promise<string>>();
+
+/** Forget the images read, for a workspace shown next. */
+export function forgetImages() {
+  cache.clear();
+}
 
 /**
  * The image at the data URL `url` at most `THUMBNAIL` pixels on its shorter side, for a thumbnail: a grid of full size
@@ -41,11 +47,12 @@ function readImage(
   const key = JSON.stringify([model, path, version]);
   let image = cache.get(key);
   if (!image) {
-    image = readModelFile(model, path).then(
+    const read = readModelFile(model, path).then(
       (file) => `data:${file.mimeType};base64,${file.base64}`,
     );
+    image = read;
     // A failed read is tried again next time.
-    image.catch(() => cache.delete(key));
+    read.catch(() => cache.get(key) === read && cache.delete(key));
     cache.set(key, image);
     for (const old of cache.keys()) {
       if (cache.size <= CACHED) {

@@ -1,22 +1,80 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import type { Picker } from "@/components/ModelList";
 import { ModelSwitcher } from "@/components/ModelSwitcher";
 import { SettingsMenu } from "@/components/SettingsMenu";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Segmented } from "@/components/ui/segmented";
 import { StatusMark } from "@/components/ui/status-mark";
 import { Tooltip } from "@/components/ui/tooltip";
 import { AppMark, Wordmark } from "@/components/Wordmark";
+import { WorkspacePicker } from "@/components/WorkspacePicker";
 import type { ModelSummary } from "@/lib/api";
 import type { Breakpoint } from "@/lib/layout";
+import { baseName } from "@/lib/library";
+import { refreshWorkspaces, useWorkspaces } from "@/lib/workspaces";
 
 export type Pane = "models" | "activity";
 export type NarrowPane = "model" | "activity";
 
 function Divider() {
   return <span aria-hidden className="mx-1 h-5 w-px shrink-0 bg-line" />;
+}
+
+/** The workspace the app shows, by its folder's name, opening the workspaces to switch to; its icon alone when narrow. */
+function WorkspaceSwitcher({ compact }: { compact: boolean }) {
+  const { shown } = useWorkspaces();
+  const [open, setOpen] = useState(false);
+  const name = shown === null ? "Workspace" : baseName(shown);
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        // Another app may have opened, or a folder gone, since they were read.
+        if (next) {
+          void refreshWorkspaces();
+        }
+      }}
+    >
+      <Tooltip content={shown ?? "Workspace"}>
+        <PopoverTrigger
+          render={
+            <Button
+              size="sm"
+              icon={compact}
+              aria-label={`Workspace: ${name}`}
+              className={compact ? undefined : "min-w-0 shrink"}
+            />
+          }
+        >
+          <Icon name="folder" />
+          {!compact && (
+            <>
+              <span className="min-w-0 truncate text-body font-medium">
+                {name}
+              </span>
+              <Icon name="chevron" className="text-ink-muted" />
+            </>
+          )}
+        </PopoverTrigger>
+      </Tooltip>
+      <PopoverContent
+        label="Workspaces"
+        align="start"
+        className="w-90 max-w-[calc(100vw-16px)]"
+      >
+        <p className="px-2 pt-1 pb-1.5 text-label text-ink-muted">Workspaces</p>
+        <WorkspacePicker onPicked={() => setOpen(false)} />
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 function PaneToggle({
@@ -44,7 +102,7 @@ function PaneToggle({
   );
 }
 
-/** The bar along the top: the brand, the model in view and how it is doing, and the app's controls. */
+/** The bar along the top: the brand, the workspace, the model in view and how it is doing, and the app's controls. */
 export function TopBar({
   breakpoint,
   picker,
@@ -82,6 +140,12 @@ export function TopBar({
         </h1>
       )}
       {breakpoint !== "narrow" && <Divider />}
+      <WorkspaceSwitcher compact={breakpoint === "narrow"} />
+      {(breakpoint !== "wide" || model) && (
+        <span aria-hidden className="shrink-0 text-ink-faint">
+          /
+        </span>
+      )}
       {breakpoint === "wide" ? (
         model && (
           <span className="min-w-0 truncate font-medium">{model.name}</span>

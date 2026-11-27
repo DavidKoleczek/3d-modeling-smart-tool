@@ -19,7 +19,7 @@ export type PaneRefs = {
   activity: RefObject<PanelImperativeHandle | null>;
 };
 
-/** Where the panes start: as the person left them, as percentages of the width the workspace has now. */
+/** Where the panes start: as the person left them, as percentages of the width they have now. */
 function startingLayout(
   wide: boolean,
   layout: AppLayout,
@@ -47,7 +47,7 @@ function startingLayout(
  * The viewport between Your models and Activity, each resizable and collapsible; at medium widths, the viewport and
  * Activity alone. The viewport never goes below 360px.
  */
-export function Workspace({
+export function Panes({
   wide,
   layout,
   width,

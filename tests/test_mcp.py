@@ -49,6 +49,11 @@ VIEW_TOOLS = (
     "save_activity_step",
     "read_app_folders",
     "open_app_folder",
+    "read_app_workspaces",
+    "open_app_workspace",
+    "choose_app_workspace",
+    "create_app_workspace",
+    "forget_app_workspace",
     "choose_reference_files",
     "stage_reference_files",
     "choose_reference_folder",
@@ -175,28 +180,34 @@ def test_an_mcp_apps_host_gets_the_view_the_tools_it_calls_and_the_model_files(w
     assert SEES_THE_APP in opened
 
 
-def test_the_app_shows_the_directory_it_was_started_on_until_open_app_names_another_and_exits_when_left(
+def test_the_app_shows_the_workspace_it_was_started_on_until_open_app_names_another_and_exits_when_left(
     tmp_path: Path,
 ) -> None:
     (tmp_path / "first").mkdir()
+    (tmp_path / "second").mkdir()
     (tmp_path / "file").write_text("", encoding="utf-8")
-    wire = Wire(arguments=["--directory", str(tmp_path / "first")])
+    (tmp_path / "taken").mkdir()
+    (tmp_path / "taken" / ".modeling-3d").write_text("", encoding="utf-8")
+    wire = Wire(arguments=["--workspace", str(tmp_path / "first")])
     try:
         wire.initialize(MCP_APPS_HOST)
-        started = wire.call_tool("list_3d_models", {})["structuredContent"]["directory"]
-        opened = text_of(wire.call_tool("open_app", {"directory": str(tmp_path / "second")}))
-        switched = wire.call_tool("list_3d_models", {})["structuredContent"]["directory"]
-        refused = wire.call_tool("open_app", {"directory": str(tmp_path / "file")})
-        kept = wire.call_tool("list_3d_models", {})["structuredContent"]["directory"]
+        started = wire.call_tool("list_3d_models", {})["structuredContent"]["workspace"]
+        opened = text_of(wire.call_tool("open_app", {"workspace": str(tmp_path / "second")}))
+        switched = wire.call_tool("list_3d_models", {})["structuredContent"]["workspace"]
+        refused = [wire.call_tool("open_app", {"workspace": str(tmp_path / name)}) for name in ("file", "taken")]
+        kept = wire.call_tool("list_3d_models", {})["structuredContent"]["workspace"]
     finally:
         exit_code = wire.close()
 
+    second = (tmp_path / "second").resolve()
     assert exit_code == 0
     assert started == str((tmp_path / "first").resolve())
-    assert f"It shows the models in {tmp_path / 'second'}." in opened
-    assert switched == kept == str((tmp_path / "second").resolve())
-    assert refused["isError"]
-    assert "is a file, not a directory of models" in text_of(refused)
+    assert f"It shows the models in the workspace {second}." in opened
+    assert f'Pass `--workspace "{second}"` to those commands' in opened
+    assert switched == kept == str(second)
+    assert all(result["isError"] for result in refused)
+    assert "is not a folder, so it cannot be the workspace" in text_of(refused[0])
+    assert "is a file, not a directory of models" in text_of(refused[1])
 
 
 # "auto" lands on 2026-07-28, where the question rides back on the result and the client retries; "legacy" is the

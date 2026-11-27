@@ -144,7 +144,8 @@ material declares is not read.
 - `--max-triangles N|none`, `--max-draw-calls N|none`, `--screen-size SMALLEST-LARGEST|none`:
   the budgets to measure against. Each one omitted is the model's own, from its last run, and
   `none` is no budget. The defaults a new model is given are never used.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models; the working directory when omitted.
 
 ## Result
 

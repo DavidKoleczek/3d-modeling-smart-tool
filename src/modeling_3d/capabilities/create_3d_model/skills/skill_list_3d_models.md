@@ -1,10 +1,10 @@
-`list-3d-models` lists the models made in a directory, most recently updated first, with what
+`list-3d-models` lists the models made in a workspace, most recently updated first, with what
 state each is in, its files, and the model viewed last there. It only reads, so it is safe while
 runs are working. Use it to find a model to change, or to check on runs started elsewhere.
 
 ```bash
 modeling-3d list-3d-models
-modeling-3d list-3d-models --directory models
+modeling-3d list-3d-models --workspace ~/projects/garden
 ```
 
 ```python
@@ -14,12 +14,13 @@ listing = list_3d_models()
 [(model.name, model.status) for model in listing.models]
 ```
 
-A directory that does not exist lists as empty. A model whose `model.json` or `runs.json` cannot
+A workspace without a `.modeling-3d` lists as empty. A model whose `model.json` or `runs.json` cannot
 be read is left out and named in `unreadable`, with what is wrong with it.
 
 ## Arguments
 
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models; the working directory when omitted.
 
 ## Result
 
@@ -27,6 +28,7 @@ JSON on stdout:
 
 ```json
 {
+  "workspace": "/work",
   "directory": "/work/.modeling-3d",
   "models": [
     {

@@ -66,7 +66,7 @@ CAPABILITIES = (
     ),
     Capability(
         "list-3d-models",
-        "List the models in a directory, newest first, with their state and the one viewed last; prints JSON.",
+        "List the models in a workspace, newest first, with their state and the one viewed last; prints JSON.",
         model_backed=False,
         skill="capabilities/create_3d_model/skills/skill_list_3d_models.md",
     ),
@@ -84,7 +84,7 @@ CAPABILITIES = (
     ),
     Capability(
         "view-3d-model",
-        "Record a model as the one viewed last in its directory and print its summary as JSON.",
+        "Record a model as the one viewed last in its workspace and print its summary as JSON.",
         model_backed=False,
         skill="capabilities/create_3d_model/skills/skill_view_3d_model.md",
     ),

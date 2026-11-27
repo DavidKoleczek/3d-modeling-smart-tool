@@ -1,9 +1,10 @@
-"""The app's settings: kept once for the person rather than in each directory, so the app looks the same everywhere."""
+"""The app's settings: kept once for the person rather than in each workspace, so the app looks the same everywhere."""
 
 import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 from typing import Any
 
 from pydantic import ValidationError
@@ -12,6 +13,9 @@ from modeling_3d.core.skill import DISTRIBUTION
 from modeling_3d.schemas import AppSettings, Modeling3dError
 
 SETTINGS = "app-settings.json"
+# How long a read or a write waits out another app replacing or reading the same file.
+REPLACE_ATTEMPTS = 20
+REPLACE_WAIT_SECONDS = 0.05
 
 
 def settings_path() -> Path:
@@ -54,8 +58,21 @@ def save_app_settings(settings: dict[str, Any], path: Path) -> AppSettings:
     return checked
 
 
+def read_atomically(path: Path) -> str:
+    """The text at `path`, waiting out the moment another app replaces it, which Windows refuses to open it in."""
+    for _ in range(REPLACE_ATTEMPTS - 1):
+        try:
+            return path.read_text(encoding="utf-8")
+        except PermissionError:
+            time.sleep(REPLACE_WAIT_SECONDS)
+    return path.read_text(encoding="utf-8")
+
+
 def write_atomically(path: Path, text: str) -> None:
-    """Write `text` to `path` beside it and move it into place, so an app reading it at once never sees half a file."""
+    """Write `text` to `path` beside it and move it into place, so an app reading it at once never sees half a file.
+
+    Windows refuses to replace a file another app has open, which is brief, so the move is tried again.
+    """
     temporary: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +81,14 @@ def write_atomically(path: Path, text: str) -> None:
         ) as file:
             temporary = Path(file.name)
             file.write(text)
-        temporary.replace(path)
+        for attempt in range(REPLACE_ATTEMPTS):
+            try:
+                temporary.replace(path)
+                return
+            except PermissionError:
+                if attempt == REPLACE_ATTEMPTS - 1:
+                    raise
+                time.sleep(REPLACE_WAIT_SECONDS)
     except OSError:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

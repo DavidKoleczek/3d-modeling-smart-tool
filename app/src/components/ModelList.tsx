@@ -31,7 +31,7 @@ export type Picker = {
   onNew: () => void;
 };
 
-/** Your models: every model in the app's directory, newest first, to search, pick from, rename, and delete. */
+/** Your models: every model in the app's workspace, newest first, to search, pick from, rename, and delete. */
 export function ModelList({
   listing,
   selected,

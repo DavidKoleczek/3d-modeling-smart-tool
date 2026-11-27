@@ -28,7 +28,8 @@ new request instead. Run from Claude Code, the message is recorded as from
 
 - `--name NAME`: the model being worked on.
 - `--message TEXT`: what to tell its agent.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models; the working directory when omitted.
 - `--reference PATH`: a file or folder to send with the message, such as an image; repeatable.
 
 ## Result

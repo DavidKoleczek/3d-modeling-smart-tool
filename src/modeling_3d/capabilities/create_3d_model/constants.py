@@ -3,8 +3,8 @@
 from modeling_3d.schemas import DefaultPrompt, ModelMode
 
 # region: fresh_session.md
-# Its {directory}, {name}, and {models} are the model's directory, its name, and the directory its models are kept in,
-# {bpy} is BPY_REQUIREMENT from schemas.py, {budgets} is budgets.md filled, and {mode} is the mode's instructions.
+# Its {directory}, {name}, and {workspace} are the model's directory, its name, and its workspace, {bpy} is
+# BPY_REQUIREMENT from schemas.py, {budgets} is budgets.md filled, and {mode} is the mode's instructions.
 
 # {capability} in fresh_session.md, the capability a mode's agent was started through, which `next` names too.
 MODE_CAPABILITIES: dict[ModelMode, str] = {
@@ -68,10 +68,11 @@ CHANGED_MODE = (
     "This request moves on to another stage of the work, whose instructions take the place of the last stage's:"
 )
 # {moved} in resume.md, before the request, for a session that last worked on the model in another directory, as
-# after a rename: {old} is the name it knew, {name} and {directory} the model's own, and {models} its models directory.
+# after a rename: {old} is the name it knew, {name} and {directory} the model's own, and {workspace} its workspace.
 MOVED = (
     "Since you last worked on it, the model was renamed from {old} to {name}, and its model directory is now "
-    "{directory}. Work there from now on, and pass `--name {name} --directory {models}` to the check-3d-model skill."
+    "{directory}. Work there from now on, and pass `--name {name} --workspace {workspace}` to the check-3d-model "
+    "skill."
 )
 # {references} in resume.md, and after a steering message, heading the references that came with it.
 ADDED_REFERENCES = "Additional references the user has attached, with paths from the model directory:"

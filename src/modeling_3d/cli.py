@@ -135,17 +135,22 @@ def manifest() -> None:
 @app.command("app")
 def app_(
     port: Annotated[int | None, typer.Option(help="The port to bind; a free one is chosen when omitted.")] = None,
-    directory: Annotated[
+    workspace: Annotated[
         Path | None,
-        typer.Option("--directory", help="Where the models to show are kept; .modeling-3d here when omitted."),
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models to show; the one opened "
+            "last when omitted.",
+        ),
     ] = None,
 ) -> None:
     """Serve the app in a browser page on this machine and print its URL. Deterministic.
 
-    The person creates, changes, steers, and stops models in it without an agent session. Keeps serving until Ctrl+C;
-    runs started in it go on after. Exits 1 with the cause and remedy when the port is held.
+    The person creates, changes, steers, and stops models in it without an agent session, and picks the workspace in
+    it. Keeps serving until Ctrl+C; runs started in it go on after. Exits 1 with the cause and remedy when the port is
+    held.
     """
-    app_server = lib.app_server(directory=directory)
+    app_server = lib.app_server(workspace=workspace)
     typer.echo(app_server.open(port).url)
     with contextlib.suppress(KeyboardInterrupt):
         while True:
@@ -157,10 +162,15 @@ def app_(
 def create_3d_model(
     prompt: Annotated[str, typer.Argument(help="What to build, or what to change.", show_default=False)],
     name: Annotated[
-        str, typer.Option("--name", help="The model's name; a model by that name in the directory is changed.")
+        str, typer.Option("--name", help="The model's name; a model by that name in the workspace is changed.")
     ],
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, where the agent runs and whose .modeling-3d holds the "
+            "models; here when omitted.",
+        ),
     ] = None,
     references: Annotated[
         list[Path] | None,
@@ -224,7 +234,7 @@ def create_3d_model(
             lib.create_3d_model(
                 prompt=prompt,
                 name=name,
-                directory=directory,
+                workspace=workspace,
                 references=references,
                 max_triangles=_count("--max-triangles", max_triangles),
                 max_draw_calls=_count("--max-draw-calls", max_draw_calls),
@@ -253,8 +263,13 @@ def rig_3d_model(
             show_default=False,
         ),
     ] = None,
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, where the agent runs and whose .modeling-3d holds the "
+            "models; here when omitted.",
+        ),
     ] = None,
     references: Annotated[
         list[Path] | None,
@@ -288,7 +303,7 @@ def rig_3d_model(
             lib.rig_3d_model(
                 name=name,
                 prompt=prompt,
-                directory=directory,
+                workspace=workspace,
                 references=references,
                 resume_session={"true": True, "false": False}.get(resume_session.lower(), resume_session),
                 agent_provider=agent_provider,
@@ -314,8 +329,13 @@ def color_3d_model(
             show_default=False,
         ),
     ] = None,
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, where the agent runs and whose .modeling-3d holds the "
+            "models; here when omitted.",
+        ),
     ] = None,
     references: Annotated[
         list[Path] | None,
@@ -351,7 +371,7 @@ def color_3d_model(
             lib.color_3d_model(
                 name=name,
                 prompt=prompt,
-                directory=directory,
+                workspace=workspace,
                 references=references,
                 resume_session={"true": True, "false": False}.get(resume_session.lower(), resume_session),
                 agent_provider=agent_provider,
@@ -377,8 +397,13 @@ def detail_3d_model(
             show_default=False,
         ),
     ] = None,
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, where the agent runs and whose .modeling-3d holds the "
+            "models; here when omitted.",
+        ),
     ] = None,
     references: Annotated[
         list[Path] | None,
@@ -416,7 +441,7 @@ def detail_3d_model(
             lib.detail_3d_model(
                 name=name,
                 prompt=prompt,
-                directory=directory,
+                workspace=workspace,
                 references=references,
                 resume_session={"true": True, "false": False}.get(resume_session.lower(), resume_session),
                 agent_provider=agent_provider,
@@ -436,8 +461,12 @@ def detail_3d_model(
 def steer_3d_model(
     name: Annotated[str, typer.Option("--name", help="The model being worked on.")],
     message: Annotated[str, typer.Option("--message", help="What to tell its agent.")],
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
     references: Annotated[
         list[Path] | None,
@@ -445,18 +474,22 @@ def steer_3d_model(
     ] = None,
 ) -> None:
     """Send a message to the agent working on a model. Deterministic."""
-    lib.steer_3d_model(name=name, message=message, directory=directory, origin=_origin(), references=references)
+    lib.steer_3d_model(name=name, message=message, workspace=workspace, origin=_origin(), references=references)
 
 
 @app.command()
 def cancel_3d_model(
     name: Annotated[str, typer.Option("--name", help="The model being worked on.")],
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
 ) -> None:
     """Stop the run working on a model at once; its session can still be resumed. Deterministic."""
-    lib.cancel_3d_model(name=name, directory=directory)
+    lib.cancel_3d_model(name=name, workspace=workspace)
 
 
 @app.command()
@@ -493,14 +526,18 @@ def check_3d_model(
             help="The sizes on screen to measure at, in pixels along its longest side at 1080p. Omitted, the model's own.",
         ),
     ] = None,
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
 ) -> None:
     """Measure a model's model.glb against its budgets and the workflow, printing the report as JSON. Deterministic."""
     report = lib.check_3d_model(
         name=name,
-        directory=directory,
+        workspace=workspace,
         checks=checks,
         max_triangles=_count("--max-triangles", max_triangles),
         max_draw_calls=_count("--max-draw-calls", max_draw_calls),
@@ -511,12 +548,16 @@ def check_3d_model(
 
 @app.command()
 def list_3d_models(
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
 ) -> None:
-    """List the models in a directory, newest first, with their state, printed as JSON. Deterministic."""
-    typer.echo(lib.list_3d_models(directory=directory).model_dump_json(indent=2))
+    """List the models in a workspace, newest first, with their state, printed as JSON. Deterministic."""
+    typer.echo(lib.list_3d_models(workspace=workspace).model_dump_json(indent=2))
 
 
 @app.command()
@@ -525,12 +566,16 @@ def read_3d_model_activity(
     after: Annotated[
         str | None, typer.Option("--after", help="The cursor of an earlier read, for only what came since.")
     ] = None,
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
 ) -> None:
     """Print a model's summary and its activity across every run as JSON. Deterministic."""
-    typer.echo(lib.read_3d_model_activity(name=name, directory=directory, after=after).model_dump_json(indent=2))
+    typer.echo(lib.read_3d_model_activity(name=name, workspace=workspace, after=after).model_dump_json(indent=2))
 
 
 @app.command()
@@ -538,48 +583,64 @@ def read_3d_model_tool_call(
     name: Annotated[str, typer.Option("--name", help="The model whose agent made the call.")],
     run: Annotated[str, typer.Option("--run", help="The run_id of the call's tool entry in the model's activity.")],
     call: Annotated[str, typer.Option("--id", help="The id in that entry's data.")],
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
 ) -> None:
     """Print one tool call of a model's agent in full, its arguments and output, as JSON. Deterministic."""
     typer.echo(
-        lib.read_3d_model_tool_call(name=name, run_id=run, call_id=call, directory=directory).model_dump_json(indent=2)
+        lib.read_3d_model_tool_call(name=name, run_id=run, call_id=call, workspace=workspace).model_dump_json(indent=2)
     )
 
 
 @app.command()
 def view_3d_model(
     name: Annotated[str, typer.Option("--name", help="The model to record as the one viewed last.")],
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
 ) -> None:
-    """Record a model as the one viewed last in its directory, printing its summary as JSON. Deterministic."""
-    typer.echo(lib.view_3d_model(name=name, directory=directory).model_dump_json(indent=2))
+    """Record a model as the one viewed last in its workspace, printing its summary as JSON. Deterministic."""
+    typer.echo(lib.view_3d_model(name=name, workspace=workspace).model_dump_json(indent=2))
 
 
 @app.command()
 def rename_3d_model(
     name: Annotated[str, typer.Option("--name", help="The model to rename.")],
     new_name: Annotated[str, typer.Option("--new-name", help="Its new name, which its directory takes.")],
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
 ) -> None:
     """Rename a model, its directory and what names it, printing its summary as JSON. Deterministic."""
-    typer.echo(lib.rename_3d_model(name=name, new_name=new_name, directory=directory).model_dump_json(indent=2))
+    typer.echo(lib.rename_3d_model(name=name, new_name=new_name, workspace=workspace).model_dump_json(indent=2))
 
 
 @app.command()
 def delete_3d_model(
     name: Annotated[str, typer.Option("--name", help="The model to delete.")],
-    directory: Annotated[
-        Path | None, typer.Option("--directory", help="Where models are kept; .modeling-3d here when omitted.")
+    workspace: Annotated[
+        Path | None,
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models; here when omitted.",
+        ),
     ] = None,
 ) -> None:
     """Delete a model and everything in its directory, stopping a run working on it first. Deterministic."""
-    lib.delete_3d_model(name=name, directory=directory)
+    lib.delete_3d_model(name=name, workspace=workspace)
 
 
 @app.command()
@@ -601,9 +662,12 @@ def add_blender_to_path(
 
 @app.command()
 def mcp(
-    directory: Annotated[
+    workspace: Annotated[
         Path | None,
-        typer.Option("--directory", help="Where the models to show are kept; .modeling-3d here when omitted."),
+        typer.Option(
+            "--workspace",
+            help="The project's top-level directory, whose .modeling-3d holds the models to show; here when omitted.",
+        ),
     ] = None,
 ) -> None:
     """Serve the app's MCP server on stdio, with the app as an MCP App. Deterministic.
@@ -611,7 +675,7 @@ def mcp(
     For MCP clients that launch the server themselves. Reads and writes MCP messages on stdin and stdout until the
     client disconnects; prints nothing else to stdout.
     """
-    mcp_adapter.run_stdio(directory)
+    mcp_adapter.run_stdio(workspace)
 
 
 async def _run_model(starting: Coroutine[Any, Any, lib.ModelRun], detach: bool) -> int:

@@ -1,5 +1,5 @@
-`view-3d-model` records a model as the one viewed last in its directory, and prints its summary.
-An open app on that directory switches to it within a second, so use it to show the person a
+`view-3d-model` records a model as the one viewed last in its workspace, and prints its summary.
+An open app on that workspace switches to it within a second, so use it to show the person a
 model. `list-3d-models` reports it as `last_viewed`, and the app opens on it next time. The
 record is `.state.json` in the models directory.
 
@@ -19,7 +19,8 @@ names the models there.
 ## Arguments
 
 - `--name NAME`: the model to record as the one viewed last.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models; the working directory when omitted.
 
 ## Result
 

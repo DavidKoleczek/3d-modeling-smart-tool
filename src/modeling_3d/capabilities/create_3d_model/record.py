@@ -10,10 +10,17 @@ import time
 
 from pydantic import ValidationError
 
-from modeling_3d.schemas import APP_STATE_FOLDER, ModelEvent, Modeling3dError, ModelRecord, ModelRunRecord, ModelRuns
+from modeling_3d.schemas import (
+    APP_STATE_FOLDER,
+    MODELS_FOLDER,
+    ModelEvent,
+    Modeling3dError,
+    ModelRecord,
+    ModelRunRecord,
+    ModelRuns,
+)
 
 # region: A models directory
-DEFAULT_DIRECTORY = Path(".modeling-3d")
 # What a model the tool makes or renames is named, which is its directory's name.
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # Written into a models directory the tool makes. Its patterns start with / so they reach only that directory, and
@@ -47,12 +54,34 @@ REPLACE_ATTEMPTS = 20
 REPLACE_WAIT_SECONDS = 0.05
 
 
+def resolve_workspace(workspace: Path | None) -> Path:
+    """The workspace as an absolute path, the working directory when None, refusing one that is not a folder.
+
+    A models directory given in its place stands for its workspace, the folder that holds it.
+    """
+    resolved = (workspace or Path.cwd()).resolve()
+    if resolved.name == MODELS_FOLDER:
+        resolved = resolved.parent
+    if not resolved.is_dir():
+        raise Modeling3dError(
+            f"{resolved} is not a folder, so it cannot be the workspace. Pass the project's top-level "
+            "directory as --workspace.",
+            "no-such-workspace",
+        )
+    return resolved
+
+
+def models_directory(workspace: Path | None) -> Path:
+    """Where the models of `workspace`, the working directory when None, are kept: its `.modeling-3d`."""
+    return resolve_workspace(workspace) / MODELS_FOLDER
+
+
 def load_record(target: Path) -> ModelRecord:
     path = target / RECORD
     if not path.is_file():
         raise Modeling3dError(
             f"{target} is not a model made by modeling-3d: it has no {RECORD}. Choose another name, or another "
-            "--directory."
+            "--workspace."
         )
     try:
         record = ModelRecord.model_validate_json(read_atomically(path))
@@ -203,7 +232,7 @@ def missing_model(root: Path, name: str) -> Modeling3dError:
     known = ", ".join(model_names(root)) or "none"
     return Modeling3dError(
         f"There is no model named {name!r} in {root}. The models there: {known}. Name one of them, or pass the "
-        "--directory the model was created in.",
+        "--workspace the model was created in.",
         "no-such-model",
         name,
     )

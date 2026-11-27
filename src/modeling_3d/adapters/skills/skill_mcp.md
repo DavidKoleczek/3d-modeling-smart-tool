@@ -12,25 +12,25 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
 
 ## Arguments
 
-- `--directory DIR`: where the models the app shows are kept; `.modeling-3d` in the working
-  directory when omitted. `open_app` can switch it.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models the app shows; the working directory when omitted. `open_app` can switch it.
 
 ## Tools
 
-- `open_app` with an optional `directory`: serves the app and returns its browser URL. Its
+- `open_app` with an optional `workspace`: serves the app and returns its browser URL. Its
   `_meta.ui.resourceUri` names the view, so a host that renders MCP Apps shows it inline. A
   client that takes URL elicitation, such as Claude Code, is asked to open the URL in the
-  browser. Calling it again returns the same URL. `directory` switches which models it shows.
+  browser. Calling it again returns the same URL. `workspace` switches which models it shows.
 - `list_3d_models`, `view_3d_model`, `read_3d_model_activity`, and `read_3d_model_tool_call`: the
-  library's, on the app's directory, which the view polls and calls when the person picks a model
+  library's, on the app's workspace, which the view polls and calls when the person picks a model
   or opens a step.
 - `create_3d_model`, `rig_3d_model`, `color_3d_model`, `detail_3d_model`, `steer_3d_model`, and
-  `cancel_3d_model`: the library's, on the app's directory with origin `app`, which the view calls
+  `cancel_3d_model`: the library's, on the app's workspace with origin `app`, which the view calls
   for the person. `create_3d_model`, `rig_3d_model`, `color_3d_model`, and `detail_3d_model`, the
   request box's Shape, Rig, Color, and Detail modes, always detach, so their runs outlive the
   server, and take the agent provider, model, and reasoning effort the person picked, the models in
-  the directory to work from, and the uploads to work from.
-- `rename_3d_model` and `delete_3d_model`: the library's, on the app's directory, which the view
+  the workspace to work from, and the uploads to work from.
+- `rename_3d_model` and `delete_3d_model`: the library's, on the app's workspace, which the view
   calls once the person confirms. Delete stops a run working on the model first. Both refuse while
   the app's own check of the model runs.
 - `check_3d_model`: the library's, against the model's own budgets. A check still going after a
@@ -43,19 +43,26 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
   next server to start.
 - `list_intelligence_models` and `choose_intelligence_model`: what the view's picker offers, from
   the library's `list_intelligence_models`, and the person's last pick, which the app keeps in
-  `.app-state/app.json` in its directory.
+  `.app-state/app.json` in its workspace's `.modeling-3d`.
 - `read_app_settings` and `save_app_settings`: how the person set the app up, its theme, pane
-  sizes, and viewport tools, kept for them in every directory in `app-settings.json` in their
+  sizes, and viewport tools, kept for them in every workspace in `app-settings.json` in their
   config directory. A setting that is not valid fails with reason `bad-settings`.
 - `read_activity_steps` and `save_activity_step`: the groups of steps the person opened or closed
-  in each model's activity, kept for the app's directory in `.app-state/steps.json`, which forgets
+  in each model's activity, kept for the app's workspace in `.app-state/steps.json`, which forgets
   those of models no longer there.
-- `read_app_folders` and `open_app_folder`: where the app keeps the person's settings and the
-  models it shows, and opening the folder of either, or of one model, in the person's file manager.
+- `read_app_folders` and `open_app_folder`: where the app keeps the person's settings, the
+  workspace it shows, and its models, and opening any of those folders, or one model's, in the
+  person's file manager.
+- `read_app_workspaces`, `open_app_workspace`, `choose_app_workspace`, `create_app_workspace`,
+  and `forget_app_workspace`: the workspace the app shows and the last 20 opened in it, kept for
+  the person in `app-workspaces.json` beside `app-settings.json`; switching to one, where a path
+  that is not a folder fails with reason `no-such-workspace`; the platform's folder dialog to
+  choose one, or the folder to make one in; making a new folder for one, and switching to it; and
+  dropping one from those offered, leaving its folder as it is.
 - `read_app_library` and `save_app_pins`: what the view offers to start a request from. The
-  references, folders, and prompts the person pinned in the app's directory, the last 50 files and
+  references, folders, and prompts the person pinned in the app's workspace, the last 50 files and
   folders used there, chosen there or given to its models, and the last prompt a model was created
-  from there are kept in `.app-state/app.json` in that directory; pins that are not valid fail with reason
+  from there are kept in `.app-state/app.json` in its `.modeling-3d`; pins that are not valid fail with reason
   `bad-pins`.
 - `choose_reference_files` and `choose_reference_folder`: the platform's file and folder dialogs,
   opened where files were last chosen from. Files chosen are staged as uploads and remembered as
@@ -66,16 +73,18 @@ The library has no `mcp` function. The command calls `run_stdio()` in `modeling_
   cleared once it is unpinned.
 
 All but `open_app` are listed only to hosts that render MCP Apps, with `visibility: ["app"]`, so
-no model sees them.
+no model sees them. Each that works in the app's workspace takes `workspace`, the one the view
+shows; a call for another fails with reason `workspace-changed`, so the view follows a switch
+rather than act in the other workspace.
 
 ## Resources
 
 - `ui://modeling-3d/app`: the view.
 - `modeling-3d://models/{name}/{+path}`: a model's `model.glb`, one of its renders, a reference
   image it was given, or its latest check's report and renders, as a base64 blob, which the view
-  reads to show it. Nothing else in the directory can be read.
+  reads to show it. Nothing else in the workspace can be read.
 - `modeling-3d://references/{+path}`: an image the view's library offers, by its absolute path, as
-  a base64 blob: one pinned, in a folder pinned to show its files, used in the app's directory, or
+  a base64 blob: one pinned, in a folder pinned to show its files, used in the app's workspace, or
   given to a model there. No other path can be read.
 
 ## What the person does in the app

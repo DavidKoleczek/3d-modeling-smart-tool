@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
 import threading
 import time
 from typing import Any
@@ -22,9 +23,9 @@ from mcp.types import BlobResourceContents, TextContent, TextResourceContents
 import pytest
 
 from modeling_3d import lib
-from modeling_3d.capabilities.app import mcp_server
+from modeling_3d.capabilities.app import folders, mcp_server
 from modeling_3d.capabilities.app import server as server_module
-from modeling_3d.capabilities.app.folders import choose_files
+from modeling_3d.capabilities.app.folders import choose_files, choose_folder
 from modeling_3d.capabilities.create_3d_model import constants, create, intelligence_models
 from modeling_3d.capabilities.create_3d_model.check import check
 from modeling_3d.capabilities.create_3d_model.record import write_record
@@ -40,6 +41,7 @@ from modeling_3d.schemas import (
     AppSettings,
     AppState,
     AppSteps,
+    AppWorkspaces,
     IntelligenceChoice,
     ModelActivity,
     ModelCheck,
@@ -52,6 +54,7 @@ from modeling_3d.schemas import (
     PinnedFolder,
     PinnedPrompt,
     PinnedReference,
+    RecentWorkspace,
     ToolCall,
 )
 
@@ -66,8 +69,10 @@ PIECE_BYTES = 2 * 1024 * 1024
 def open_app() -> Iterator[Callable[..., lib.AppServer]]:
     opened: list[lib.AppServer] = []
 
-    def open_with(directory: Path | None = None) -> lib.AppServer:
-        app_server = lib.app_server(directory)
+    def open_with(workspace: Path | None = None) -> lib.AppServer:
+        if workspace is not None:
+            workspace.mkdir(parents=True, exist_ok=True)
+        app_server = lib.app_server(workspace)
         app_server.open()
         opened.append(app_server)
         return app_server
@@ -109,9 +114,9 @@ async def send(client: Client, path: str, data: bytes, upload: str | None = None
     return upload
 
 
-def model_in(directory: Path, name: str, references: list[str] | None = None, **run: Any) -> Path:
-    """A model that has been built, whose one run was given `references`, and whatever else `run` sets."""
-    target = directory / name
+def model_in(workspace: Path, name: str, references: list[str] | None = None, **run: Any) -> Path:
+    """A model in `workspace` that has been built, whose one run was given `references`, and whatever else `run` sets."""
+    target = workspace / ".modeling-3d" / name
     (target / "renders").mkdir(parents=True)
     runs = [] if references is None else [run_record(prompt=f"A {name}", references=references, **run)]
     record = ModelRecord(id=f"id-{name}", name=name, created=datetime.now(UTC), runs=runs)
@@ -155,7 +160,7 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
     open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, uploads_directory: Path
 ) -> None:
     model_in(tmp_path, "bear")
-    app_server = open_app(directory=tmp_path)
+    app_server = open_app(workspace=tmp_path)
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         sketch = await send(client, "sketch.png", b"sketch-bytes", piece=5)
@@ -221,9 +226,10 @@ async def test_the_view_creates_steers_and_stops_models_as_the_app_and_reads_the
     assert isinstance(render, BlobResourceContents)
     assert base64.b64decode(sketched.blob) == b"sketch-bytes"
     assert base64.b64decode(render.blob) == b"png-bytes"
-    assert (tmp_path / "cub" / "references" / "kit" / "parts" / "wheel.png").read_bytes() == b"wheel-bytes"
-    assert (tmp_path / "cub" / "references" / "marked-view-1.png").read_bytes() == b"marked-bytes"
-    assert not (tmp_path / "cub" / "references" / "kit" / ".git").exists()
+    cub = tmp_path / ".modeling-3d" / "cub"
+    assert (cub / "references" / "kit" / "parts" / "wheel.png").read_bytes() == b"wheel-bytes"
+    assert (cub / "references" / "marked-view-1.png").read_bytes() == b"marked-bytes"
+    assert not (cub / "references" / "kit" / ".git").exists()
     assert list(uploads_directory.iterdir()) == []
 
 
@@ -232,7 +238,7 @@ async def test_the_view_rigs_a_model_as_the_app_to_its_own_budgets(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     model_in(tmp_path, "bear", references=[], max_triangles=2000, max_draw_calls=2, screen_size=(40, 240))
-    app_server = open_app(directory=tmp_path)
+    app_server = open_app(workspace=tmp_path)
     monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command("builds"))
 
     async with Client(f"{app_server.open().url}/mcp") as client:
@@ -256,7 +262,7 @@ async def test_the_view_checks_a_model_waiting_again_on_a_long_check_and_reads_t
     glb.node("Box", mesh=glb.mesh(box()))
     glb.write(bear / "model.glb")
     (model_in(tmp_path, "fox") / "model.glb").unlink()
-    app_server = open_app(directory=tmp_path)
+    app_server = open_app(workspace=tmp_path)
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         unchecked = ModelSummary.model_validate(
@@ -291,8 +297,8 @@ async def test_a_view_tool_that_cannot_run_is_a_tool_error_naming_the_fix(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, uploads_directory: Path
 ) -> None:
     model_in(tmp_path, "bear")
-    (tmp_path / "notes").mkdir()
-    app_server = open_app(directory=tmp_path)
+    (tmp_path / ".modeling-3d" / "notes").mkdir()
+    app_server = open_app(workspace=tmp_path)
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         taken = await client.call_tool("create_3d_model", {"prompt": "Notes", "name": "notes"})
@@ -394,7 +400,7 @@ def test_a_held_port_is_a_named_failure_until_close_frees_it() -> None:
     second.close()
 
 
-async def test_the_view_lists_views_and_reads_the_models_in_the_app_directory_and_their_agents_tool_calls(
+async def test_the_view_lists_views_and_reads_the_models_in_the_app_s_workspace_and_their_agents_tool_calls(
     open_app: Callable[..., lib.AppServer], tmp_path: Path
 ) -> None:
     bear = model_in(tmp_path, "bear", references=["references/kit/"])
@@ -411,7 +417,7 @@ async def test_the_view_lists_views_and_reads_the_models_in_the_app_directory_an
         ),
         encoding="utf-8",
     )
-    app_server = open_app(directory=tmp_path)
+    app_server = open_app(workspace=tmp_path)
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         view = (await client.read_resource("ui://modeling-3d/app")).contents[0]
@@ -431,7 +437,7 @@ async def test_the_view_lists_views_and_reads_the_models_in_the_app_directory_an
     assert isinstance(view, TextResourceContents)
     assert view.text == lib.app_view()
     listing = ModelListing.model_validate(listed.structured_content)
-    assert listing.directory == tmp_path.resolve()
+    assert (listing.workspace, listing.directory) == (tmp_path.resolve(), tmp_path.resolve() / ".modeling-3d")
     assert [model.name for model in listing.models] == ["bear"]
     assert listing.last_viewed is None
     assert ModelSummary.model_validate(viewed.structured_content) == listing.models[0]
@@ -455,8 +461,8 @@ async def test_only_a_model_s_glb_renders_and_reference_images_can_be_read(
     bear = model_in(tmp_path, "bear", references=["references/a.png", "references/notes.txt", "references/kit/"])
     (bear / "references" / "kit").mkdir(parents=True)
     (bear / "references" / "kit" / "notes.txt").write_text("notes", encoding="utf-8")
-    (tmp_path / "away.png").write_bytes(b"png-bytes")
-    app_server = open_app(directory=tmp_path)
+    (tmp_path / ".modeling-3d" / "away.png").write_bytes(b"png-bytes")
+    app_server = open_app(workspace=tmp_path)
     refused = {
         "modeling-3d://models/bear/model.json": "It has: model.glb, renders/front view.png, references/a.png.",
         "modeling-3d://models/bear/../bear/model.glb": "'../bear/model.glb' is not a file the app reads",
@@ -475,16 +481,16 @@ async def test_only_a_model_s_glb_renders_and_reference_images_can_be_read(
             assert message in str(failure.value), uri
 
 
-async def test_the_view_remembers_the_ai_model_picked_for_each_mode_in_the_app_directory_until_it_is_not_offered(
+async def test_the_view_remembers_the_ai_model_picked_for_each_mode_in_the_app_s_workspace_until_it_is_not_offered(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(intelligence_models, "installed", lambda agent_provider: agent_provider == "claude")
-    directory = tmp_path / "models"
-    directory.mkdir()
+    models = tmp_path / ".modeling-3d"
+    models.mkdir()
     # As kept before picks were by mode: one for every mode, which none is held to now.
     old = {"agent_provider": "claude", "model": "claude-sonnet-5-5", "reasoning_effort": "medium"}
-    (directory / ".app.json").write_text(json.dumps({"intelligence": old, "last_prompt": "A cub"}), encoding="utf-8")
-    app_server = open_app(directory=directory)
+    (models / ".app.json").write_text(json.dumps({"intelligence": old, "last_prompt": "A cub"}), encoding="utf-8")
+    app_server = open_app(workspace=tmp_path)
     options = lib.list_intelligence_models()
     picked = IntelligenceChoice(agent_provider="claude", model=options.models[-1].id, reasoning_effort="high")
     shaped = picked.model_copy(update={"model": options.models[0].id})
@@ -512,9 +518,9 @@ async def test_the_view_remembers_the_ai_model_picked_for_each_mode_in_the_app_d
     )
     assert AppIntelligence.model_validate(chosen.structured_content).chosen == {"color": picked}
     assert AppIntelligence.model_validate(after.structured_content).chosen == {"color": picked, "shape": shaped}
-    state = AppState.model_validate_json((directory / ".app-state" / "app.json").read_text(encoding="utf-8"))
+    state = AppState.model_validate_json((models / ".app-state" / "app.json").read_text(encoding="utf-8"))
     assert (state.last_intelligence, state.last_prompt) == ({"color": picked, "shape": shaped}, "A cub")
-    assert not (directory / ".app.json").exists()
+    assert not (models / ".app.json").exists()
     assert unknown.structured_content == {"reason": "no-such-intelligence-model", "model": None}
     assert ", ".join(model.id for model in options.models) in text_of(unknown)
     assert ultra.structured_content == {"reason": "bad-reasoning-effort", "model": None}
@@ -522,11 +528,11 @@ async def test_the_view_remembers_the_ai_model_picked_for_each_mode_in_the_app_d
     assert AppIntelligence.model_validate(gone.structured_content).chosen == {}
 
 
-async def test_the_view_keeps_the_person_s_settings_in_their_config_directory_for_every_directory(
+async def test_the_view_keeps_the_person_s_settings_in_their_config_directory_for_every_workspace(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
 ) -> None:
-    toys = open_app(directory=tmp_path / "toys")
-    tools = open_app(directory=tmp_path / "tools")
+    toys = open_app(workspace=tmp_path / "toys")
+    tools = open_app(workspace=tmp_path / "tools")
     settings = AppSettings(
         theme="dark",
         dimensions=True,
@@ -544,16 +550,16 @@ async def test_the_view_keeps_the_person_s_settings_in_their_config_directory_fo
     assert AppSettings.model_validate(elsewhere.structured_content) == settings
     kept = config_directory / "modeling-3d" / "app-settings.json"
     assert AppSettings.model_validate_json(kept.read_text(encoding="utf-8")) == settings
-    assert not (tmp_path / "toys" / "app-settings.json").exists()
+    assert not (tmp_path / "toys" / ".modeling-3d" / "app-settings.json").exists()
 
 
-async def test_the_steps_opened_in_a_model_s_activity_are_kept_for_the_app_s_directory_and_forget_deleted_models(
+async def test_the_steps_opened_in_a_model_s_activity_are_kept_for_the_app_s_workspace_and_forget_deleted_models(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
 ) -> None:
     model_in(tmp_path / "toys", "bear")
     model_in(tmp_path / "toys", "fox")
-    toys = open_app(directory=tmp_path / "toys")
-    tools = open_app(directory=tmp_path / "tools")
+    toys = open_app(workspace=tmp_path / "toys")
+    tools = open_app(workspace=tmp_path / "tools")
 
     async with Client(f"{toys.open().url}/mcp") as client:
         before = await client.call_tool("read_activity_steps", {})
@@ -574,7 +580,7 @@ async def test_the_steps_opened_in_a_model_s_activity_are_kept_for_the_app_s_dir
         steps={"id-bear": {"run:1": False, "run:3": False}}
     )
     assert AppSteps.model_validate(elsewhere.structured_content) == AppSteps()
-    kept = tmp_path / "toys" / ".app-state" / "steps.json"
+    kept = tmp_path / "toys" / ".modeling-3d" / ".app-state" / "steps.json"
     assert AppSteps.model_validate_json(kept.read_text(encoding="utf-8")) == AppSteps.model_validate(
         after.structured_content
     )
@@ -584,9 +590,9 @@ async def test_the_steps_opened_in_a_model_s_activity_are_kept_for_the_app_s_dir
 async def test_settings_that_are_not_valid_are_refused_naming_the_field_and_kept_ones_read_as_far_as_they_can(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
 ) -> None:
-    app_server = open_app(directory=tmp_path)
+    app_server = open_app(workspace=tmp_path)
     kept = config_directory / "modeling-3d" / "app-settings.json"
-    kept.parent.mkdir(parents=True)
+    kept.parent.mkdir(parents=True, exist_ok=True)
     kept.write_text("{not json", encoding="utf-8")
 
     async with Client(f"{app_server.open().url}/mcp") as client:
@@ -615,7 +621,7 @@ async def test_files_chosen_in_the_file_dialog_are_staged_as_uploads_a_request_t
     (pictures / "bear.png").write_bytes(b"png-bytes")
     (pictures / "notes.txt").write_text("brown fur", encoding="utf-8")
     file_dialog.files = [pictures / "bear.png", pictures / "notes.txt"]
-    app_server = open_app(directory=tmp_path / "models")
+    app_server = open_app(workspace=tmp_path / "project")
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         result = await client.call_tool("choose_reference_files", {"directory": str(pictures)})
@@ -647,7 +653,7 @@ async def test_files_and_folders_named_by_path_are_staged_as_uploads(
     (kit / "wheel.glb").write_bytes(b"glTF")
     (kit / "parts").mkdir()
     (kit / "parts" / "axle.obj").write_text("v 0 0 0", encoding="utf-8")
-    app_server = open_app(directory=tmp_path / "models")
+    app_server = open_app(workspace=tmp_path / "project")
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         result = await client.call_tool("stage_reference_files", {"paths": [str(kit), str(kit / "wheel.glb")]})
@@ -667,7 +673,7 @@ async def test_a_folder_chosen_in_the_folder_dialog_comes_back_by_path(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog
 ) -> None:
     file_dialog.folder = tmp_path / "pictures"
-    app_server = open_app(directory=tmp_path / "models")
+    app_server = open_app(workspace=tmp_path / "project")
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         chosen = await client.call_tool("choose_reference_folder", {})
@@ -681,10 +687,10 @@ async def test_a_folder_chosen_in_the_folder_dialog_comes_back_by_path(
 
 def test_the_file_dialog_names_a_folder_that_is_not_there(tmp_path: Path) -> None:
     with pytest.raises(Modeling3dError, match="is not a folder on this machine"):
-        choose_files(tmp_path / "gone", "Choose references")
+        choose_files(tmp_path / "gone", "Choose references", mcp_server.DROP_INSTEAD)
 
 
-async def test_the_person_s_pins_are_kept_for_the_app_s_directory_alone_and_refused_when_not_valid(
+async def test_the_person_s_pins_are_kept_for_the_app_s_workspace_alone_and_refused_when_not_valid(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path
 ) -> None:
     pins = {
@@ -692,8 +698,8 @@ async def test_the_person_s_pins_are_kept_for_the_app_s_directory_alone_and_refu
         "folders": [{"path": str(tmp_path / "pictures"), "shows": "dialog"}],
         "prompts": [{"text": "A low poly fox", "mode": "shape"}],
     }
-    here = open_app(directory=tmp_path / "here")
-    elsewhere = open_app(directory=tmp_path / "elsewhere")
+    here = open_app(workspace=tmp_path / "here")
+    elsewhere = open_app(workspace=tmp_path / "elsewhere")
 
     async with Client(f"{here.open().url}/mcp") as client:
         before = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
@@ -701,7 +707,7 @@ async def test_the_person_s_pins_are_kept_for_the_app_s_directory_alone_and_refu
         bad = await client.call_tool("save_app_pins", {"pins": {"prompts": [{"text": "", "mode": "shape"}]}})
     async with Client(f"{elsewhere.open().url}/mcp") as client:
         other = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
-    async with Client(f"{open_app(directory=tmp_path / 'here').open().url}/mcp") as client:
+    async with Client(f"{open_app(workspace=tmp_path / 'here').open().url}/mcp") as client:
         again = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
 
     assert before == AppLibrary(used=[], last_prompt=None, default_prompts=constants.UNASKED)
@@ -710,7 +716,9 @@ async def test_the_person_s_pins_are_kept_for_the_app_s_directory_alone_and_refu
     assert AppPins.model_validate(again.model_dump(include={"references", "folders", "prompts"})) == (
         AppPins.model_validate(pins)
     )
-    kept = AppState.model_validate_json((tmp_path / "here" / ".app-state" / "app.json").read_text(encoding="utf-8"))
+    kept = AppState.model_validate_json(
+        (tmp_path / "here" / ".modeling-3d" / ".app-state" / "app.json").read_text(encoding="utf-8")
+    )
     assert kept.pins == AppPins.model_validate(pins)
     assert not any(config_directory.rglob("*pins*"))
     assert bad.structured_content == {"reason": "bad-pins", "model": None}
@@ -720,10 +728,10 @@ async def test_the_person_s_pins_are_kept_for_the_app_s_directory_alone_and_refu
 async def test_what_was_sent_or_given_to_a_model_is_used_before_newest_first_and_at_most_50(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    bear = model_in(tmp_path / "models", "bear", references=["references/bear.png", "references/gone.png"])
+    bear = model_in(tmp_path / "project", "bear", references=["references/bear.png", "references/gone.png"])
     (bear / "references").mkdir()
     (bear / "references" / "bear.png").write_bytes(b"png-bytes")
-    cub = model_in(tmp_path / "models", "cub", references=["references/bear.png"])
+    cub = model_in(tmp_path / "project", "cub", references=["references/bear.png"])
     (cub / "references").mkdir()
     (cub / "references" / "bear.png").write_bytes(b"png-bytes")
     pictures = tmp_path / "pictures"
@@ -732,12 +740,12 @@ async def test_what_was_sent_or_given_to_a_model_is_used_before_newest_first_and
         (pictures / f"{index:02}.png").write_bytes(b"png-bytes")
     file_dialog.files = [pictures / "00.png"]
 
-    def steer(name: str, message: str, directory: Path, origin: str, references: list[Path]) -> None:
+    def steer(name: str, message: str, workspace: Path, origin: str, references: list[Path]) -> None:
         if message == "Refused.":
             raise Modeling3dError(f"No run is working on {name}.")
 
     monkeypatch.setattr(create, "steer_3d_model", steer)
-    app_server = open_app(directory=tmp_path / "models")
+    app_server = open_app(workspace=tmp_path / "project")
 
     async def library() -> AppLibrary:
         return AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
@@ -777,11 +785,11 @@ async def test_pinned_folders_list_what_is_in_them_and_only_the_library_s_images
     (pictures / "Fox.png").write_bytes(b"fox-bytes")
     (pictures / "bear.png").write_bytes(b"bear-bytes")
     (tmp_path / "away.png").write_bytes(b"away-bytes")
-    bear = model_in(tmp_path / "models", "bear", references=["references/bear.png"])
+    bear = model_in(tmp_path / "project", "bear", references=["references/bear.png"])
     (bear / "references").mkdir()
     (bear / "references" / "bear.png").write_bytes(b"given-bytes")
     pins = {"folders": [{"path": str(pictures), "shows": "files"}, {"path": str(tmp_path), "shows": "dialog"}]}
-    app_server = open_app(directory=tmp_path / "models")
+    app_server = open_app(workspace=tmp_path / "project")
 
     def uri(path: Path) -> str:
         return f"modeling-3d://references/{quote(str(path), safe='')}"
@@ -805,10 +813,10 @@ async def test_pinned_folders_list_what_is_in_them_and_only_the_library_s_images
     assert "is not an image the app offers to work from" in str(refused.value)
 
 
-async def test_a_dropped_file_pinned_is_kept_in_the_app_s_directory_until_it_is_unpinned(
+async def test_a_dropped_file_pinned_is_kept_in_the_app_s_workspace_until_it_is_unpinned(
     open_app: Callable[..., lib.AppServer], tmp_path: Path
 ) -> None:
-    app_server = open_app(directory=tmp_path / "models")
+    app_server = open_app(workspace=tmp_path / "project")
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         pasted = await send(client, "pasted.png", b"pasted-bytes")
@@ -818,7 +826,7 @@ async def test_a_dropped_file_pinned_is_kept_in_the_app_s_directory_until_it_is_
         pinned = kept.read_bytes()
         await client.call_tool("save_app_pins", {"pins": {}})
 
-    assert kept.is_relative_to(tmp_path / "models" / ".app-state" / "pins")
+    assert kept.is_relative_to(tmp_path / "project" / ".modeling-3d" / ".app-state" / "pins")
     assert pinned == b"pasted-bytes"
     assert not kept.parent.exists()
 
@@ -830,13 +838,13 @@ async def test_the_view_renames_and_deletes_models_but_not_one_the_app_is_checki
     model_in(tmp_path, "fox", references=[])
     released = threading.Event()
 
-    def held_check(name: str, directory: Path) -> ModelCheck:
+    def held_check(name: str, workspace: Path) -> ModelCheck:
         released.wait(TIMEOUT_SECONDS)
         raise Modeling3dError(f"The check of {name} was stopped.")
 
     monkeypatch.setattr(check, "check_3d_model", held_check)
     monkeypatch.setattr(mcp_server, "CHECK_WAIT_SECONDS", 0)
-    app_server = open_app(directory=tmp_path)
+    app_server = open_app(workspace=tmp_path)
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         checking = await client.call_tool("check_3d_model", {"name": "bear"})
@@ -855,7 +863,7 @@ async def test_the_view_renames_and_deletes_models_but_not_one_the_app_is_checki
         assert held.structured_content == {"reason": "model-busy", "model": "bear"}
         assert "being checked in the app" in text_of(held)
     assert stopped.is_error
-    assert ModelSummary.model_validate(renamed.structured_content).directory == tmp_path / "grizzly"
+    assert ModelSummary.model_validate(renamed.structured_content).directory == tmp_path / ".modeling-3d" / "grizzly"
     assert taken.structured_content == {"reason": "name-in-use", "model": "fox"}
     assert (deleted.is_error, text_of(deleted)) == (False, "Deleted fox.")
     assert [model.name for model in listing.models] == ["grizzly"]
@@ -864,9 +872,10 @@ async def test_the_view_renames_and_deletes_models_but_not_one_the_app_is_checki
 def test_renaming_or_deleting_a_model_moves_or_drops_the_person_s_pins_of_it_and_what_was_used_from_it(
     tmp_path: Path,
 ) -> None:
-    root = tmp_path / "models"
-    bear = model_in(root, "bear", references=[])
-    model_in(root, "fox", references=[])
+    workspace = tmp_path / "project"
+    root = workspace / ".modeling-3d"
+    bear = model_in(workspace, "bear", references=[])
+    model_in(workspace, "fox", references=[])
     pictures = tmp_path / "pictures"
     pins = AppPins(
         references=[
@@ -884,10 +893,10 @@ def test_renaming_or_deleting_a_model_moves_or_drops_the_person_s_pins_of_it_and
     (root / ".app-state").mkdir()
     (root / ".app-state" / "app.json").write_text(state.model_dump_json(), encoding="utf-8")
 
-    lib.rename_3d_model("bear", "grizzly", root)
+    lib.rename_3d_model("bear", "grizzly", workspace)
     renamed_state = AppState.model_validate_json((root / ".app-state" / "app.json").read_text(encoding="utf-8"))
     renamed = renamed_state.pins
-    lib.delete_3d_model("grizzly", root)
+    lib.delete_3d_model("grizzly", workspace)
     deleted_state = AppState.model_validate_json((root / ".app-state" / "app.json").read_text(encoding="utf-8"))
     deleted = deleted_state.pins
 
@@ -913,21 +922,320 @@ def test_renaming_or_deleting_a_model_moves_or_drops_the_person_s_pins_of_it_and
 async def test_the_view_names_and_opens_the_folders_where_the_app_keeps_things(
     open_app: Callable[..., lib.AppServer], tmp_path: Path, config_directory: Path, opened_folders: list[Path]
 ) -> None:
-    bear = model_in(tmp_path / "models", "bear")
-    app_server = open_app(directory=tmp_path / "models")
+    bear = model_in(tmp_path / "project", "bear")
+    app_server = open_app(workspace=tmp_path / "project")
 
     async with Client(f"{app_server.open().url}/mcp") as client:
         folders = await client.call_tool("read_app_folders", {})
-        for arguments in ({"folder": "settings"}, {"folder": "models"}, {"folder": "model", "name": "bear"}):
-            result = await client.call_tool("open_app_folder", arguments)
+        for folder in ("settings", "workspace", "models"):
+            result = await client.call_tool("open_app_folder", {"folder": folder})
             assert not result.is_error, text_of(result)
+        named = await client.call_tool("open_app_folder", {"folder": "model", "name": "bear"})
         missing = await client.call_tool("open_app_folder", {"folder": "model", "name": "fox"})
         unnamed = await client.call_tool("open_app_folder", {"folder": "model"})
 
+    workspace = (tmp_path / "project").resolve()
     assert AppFolders.model_validate(folders.structured_content) == AppFolders(
-        settings=config_directory / "modeling-3d", models=(tmp_path / "models").resolve()
+        settings=config_directory / "modeling-3d", workspace=workspace, models=workspace / ".modeling-3d"
     )
-    assert opened_folders == [config_directory / "modeling-3d", (tmp_path / "models").resolve(), bear.resolve()]
+    assert not named.is_error, text_of(named)
+    assert opened_folders == [config_directory / "modeling-3d", workspace, workspace / ".modeling-3d", bear.resolve()]
     assert missing.structured_content == {"reason": "no-such-model", "model": "fox"}
     assert "The models there: bear." in text_of(missing)
-    assert "Pass `settings`, `models`, or `model` with the model's `name`." in text_of(unnamed)
+    assert "Pass `settings`, `workspace`, `models`, or `model` with the model's `name`." in text_of(unnamed)
+
+
+async def test_with_no_workspace_given_the_app_opens_on_the_last_one_opened_that_is_still_a_folder_or_on_none(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path
+) -> None:
+    unopened = tmp_path / "unopened"
+    unopened.mkdir()
+    before = lib.app_server().workspace
+    first = open_app(workspace=tmp_path / "first").workspace
+    second = open_app(workspace=tmp_path / "second").workspace
+    lib.app_server(unopened)
+    assert first is not None
+    assert second is not None
+    last = lib.app_server().workspace
+    second.rmdir()
+    earlier = lib.app_server().workspace
+    first.rmdir()
+    app_server = open_app()
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        workspaces = await client.call_tool("read_app_workspaces", {})
+        listed = await client.call_tool("list_3d_models", {})
+        settings = await client.call_tool("read_app_settings", {})
+        folders = await client.call_tool("read_app_folders", {})
+        settings_folder = await client.call_tool("open_app_folder", {"folder": "settings"})
+        models_folder = await client.call_tool("open_app_folder", {"folder": "models"})
+        opened = await client.call_tool("open_app", {})
+
+    assert (before, last, earlier, app_server.workspace) == (None, second, first, None)
+    assert AppWorkspaces.model_validate(workspaces.structured_content) == AppWorkspaces(
+        current=None,
+        recent=[RecentWorkspace(path=second, missing=True), RecentWorkspace(path=first, missing=True)],
+        new_in=second.parent,
+    )
+    assert listed.structured_content == {"reason": "no-workspace", "model": None}
+    assert "The app shows no workspace yet." in text_of(listed)
+    assert not settings.is_error, text_of(settings)
+    assert (AppFolders.model_validate(folders.structured_content).workspace, settings_folder.is_error) == (None, False)
+    assert models_folder.structured_content == {"reason": "no-workspace", "model": None}
+    assert "It shows no workspace yet" in text_of(opened)
+
+
+async def test_the_view_switches_workspaces_showing_each_one_s_models_last_viewed_model_and_pins(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path
+) -> None:
+    garden, harbor, empty = tmp_path / "garden", tmp_path / "harbor", tmp_path / "empty"
+    model_in(garden, "bear")
+    model_in(harbor, "boat")
+    model_in(harbor, "gull")
+    empty.mkdir()
+    (tmp_path / "notes.txt").write_text("", encoding="utf-8")
+    app_server = open_app(workspace=garden)
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        await client.call_tool("view_3d_model", {"name": "bear"})
+        await client.call_tool("save_app_pins", {"pins": {"prompts": [{"text": "A low poly fox", "mode": "shape"}]}})
+        switched = await client.call_tool("open_app_workspace", {"path": str(harbor / ".modeling-3d")})
+        await client.call_tool("view_3d_model", {"name": "gull"})
+        there = ModelListing.model_validate((await client.call_tool("list_3d_models", {})).structured_content)
+        there_library = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+        refused = await client.call_tool("open_app_workspace", {"path": str(tmp_path / "notes.txt")})
+        kept = ModelListing.model_validate((await client.call_tool("list_3d_models", {})).structured_content)
+        await client.call_tool("open_app_workspace", {"path": str(empty)})
+        await client.call_tool("open_app_workspace", {"path": str(garden)})
+        back = ModelListing.model_validate((await client.call_tool("list_3d_models", {})).structured_content)
+        back_library = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
+
+    assert AppWorkspaces.model_validate(switched.structured_content).current == harbor.resolve()
+    assert (sorted(model.name for model in there.models), there.last_viewed) == (["boat", "gull"], "gull")
+    assert there_library.prompts == []
+    assert refused.structured_content == {"reason": "no-such-workspace", "model": None}
+    assert kept.workspace == harbor.resolve()
+    assert ([model.name for model in back.models], back.last_viewed) == (["bear"], "bear")
+    assert [prompt.text for prompt in back_library.prompts] == ["A low poly fox"]
+    assert list(empty.iterdir()) == []
+
+
+async def test_the_workspaces_opened_are_offered_newest_first_each_once_at_most_20_and_forgetting_one_leaves_it(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path
+) -> None:
+    projects = [tmp_path / f"project-{index}" for index in range(22)]
+    for project in projects:
+        project.mkdir()
+    app_server = open_app(workspace=projects[0])
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        for project in projects[1:]:
+            await client.call_tool("open_app_workspace", {"path": str(project)})
+        # The same folders, spelled another way.
+        await client.call_tool("open_app_workspace", {"path": f"{projects[5]}{os.sep}"})
+        again = await client.call_tool("open_app_workspace", {"path": str(projects[9] / ".." / projects[9].name)})
+        forgotten = await client.call_tool("forget_app_workspace", {"path": str(projects[20])})
+
+    newest = [projects[9], projects[5], *(projects[index] for index in range(21, 1, -1) if index not in (5, 9))]
+    offered = AppWorkspaces.model_validate(again.structured_content)
+    assert offered.current == projects[9].resolve()
+    assert [workspace.path for workspace in offered.recent] == [project.resolve() for project in newest]
+    assert not any(workspace.missing for workspace in offered.recent)
+    assert [workspace.path for workspace in AppWorkspaces.model_validate(forgotten.structured_content).recent] == [
+        project.resolve() for project in newest if project != projects[20]
+    ]
+    assert projects[20].is_dir()
+
+
+async def test_a_workspace_chosen_in_the_folder_dialog_comes_back_by_path_and_a_dialog_that_cannot_show_names_the_command(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file_dialog.folder = tmp_path / "harbor"
+    app_server = open_app(workspace=tmp_path / "garden")
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        chosen = await client.call_tool("choose_app_workspace", {})
+        file_dialog.folder = None
+        cancelled = await client.call_tool("choose_app_workspace", {})
+    monkeypatch.setattr(folders, "choose_folder", choose_folder)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "no-python"))
+    async with Client(f"{open_app(workspace=tmp_path / 'garden').open().url}/mcp") as client:
+        unshown = await client.call_tool("choose_app_workspace", {})
+
+    assert chosen.structured_content == {"path": str((tmp_path / "harbor").resolve())}
+    assert cancelled.structured_content == {"path": None}
+    assert file_dialog.shown == [tmp_path.resolve(), tmp_path.resolve()]
+    assert "Could not show a file dialog" in text_of(unshown)
+    assert "`modeling-3d app --workspace <folder>`" in text_of(unshown)
+
+
+async def test_a_new_workspace_is_a_folder_made_where_asked_and_opened_and_one_that_cannot_be_is_refused(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, file_dialog: FileDialog
+) -> None:
+    projects = tmp_path / "projects"
+    app_server = open_app(workspace=projects / "garden")
+    garden = app_server.workspace
+    (projects / "notes.txt").write_text("", encoding="utf-8")
+    file_dialog.folder = tmp_path / "elsewhere"
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        before = AppWorkspaces.model_validate((await client.call_tool("read_app_workspaces", {})).structured_content)
+        chosen = await client.call_tool("choose_app_workspace", {"parent": True})
+        made = await client.call_tool("create_app_workspace", {"name": " harbor ", "parent": str(before.new_in)})
+        refused = [
+            await client.call_tool("create_app_workspace", {"name": name, "parent": str(before.new_in)})
+            for name in ("garden", "notes.txt", "a/b", "..", "")
+        ]
+        nowhere = await client.call_tool("create_app_workspace", {"name": "dock", "parent": str(tmp_path / "gone")})
+
+    harbor = (projects / "harbor").resolve()
+    workspaces = AppWorkspaces.model_validate(made.structured_content)
+    assert before.new_in == projects.resolve()
+    assert chosen.structured_content == {"path": str((tmp_path / "elsewhere").resolve())}
+    assert file_dialog.shown == [projects.resolve()]
+    assert (workspaces.current, app_server.workspace) == (harbor, harbor)
+    assert [workspace.path for workspace in workspaces.recent] == [harbor, garden]
+    assert list(harbor.iterdir()) == []
+    assert "already exists. Open it with Open Workspace, or choose another name." in text_of(refused[0])
+    assert "already exists" in text_of(refused[1])
+    assert all("is not a folder's name" in text_of(result) for result in refused[2:])
+    assert "is not a folder, so no workspace can be made in it" in text_of(nowhere)
+    assert sorted(path.name for path in projects.iterdir()) == ["garden", "harbor", "notes.txt"]
+    assert not (tmp_path / "gone").exists()
+
+
+async def test_every_app_offers_the_workspaces_the_others_opened_too(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path
+) -> None:
+    garden, harbor, empty = tmp_path / "garden", tmp_path / "harbor", tmp_path / "empty"
+    empty.mkdir()
+    url = open_app(workspace=garden).open().url
+    open_app(workspace=harbor)
+
+    async with Client(f"{url}/mcp") as client:
+        switched = await client.call_tool("open_app_workspace", {"path": str(empty)})
+
+    offered = [workspace.path for workspace in AppWorkspaces.model_validate(switched.structured_content).recent]
+    assert offered == [empty.resolve(), harbor.resolve(), garden.resolve()]
+    assert lib.app_server().workspace == empty.resolve()
+
+
+async def test_a_call_for_a_workspace_the_app_no_longer_shows_is_refused_and_changes_nothing(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path
+) -> None:
+    garden, harbor = tmp_path / "garden", tmp_path / "harbor"
+    bears = [model_in(garden, "bear"), model_in(harbor, "bear")]
+    app_server = open_app(workspace=garden)
+    sent = str(app_server.workspace)
+    pins = {"prompts": [{"text": "A low poly fox", "mode": "shape"}]}
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        before = await client.call_tool("list_3d_models", {"workspace": sent})
+        await client.call_tool("open_app_workspace", {"path": str(harbor)})
+        polled = await client.call_tool("list_3d_models", {"workspace": sent})
+        deleted = await client.call_tool("delete_3d_model", {"name": "bear", "workspace": sent})
+        pinned = await client.call_tool("save_app_pins", {"pins": pins, "workspace": sent})
+        settings = await client.call_tool("read_app_settings", {"workspace": sent})
+        here = await client.call_tool("list_3d_models", {"workspace": str(harbor.resolve())})
+
+    assert not before.is_error, text_of(before)
+    for refused in (polled, deleted, pinned):
+        assert refused.structured_content == {"reason": "workspace-changed", "model": None}
+        assert f"The app now shows {harbor.resolve()}, so this call, sent for {sent}, was not made." in text_of(refused)
+    assert all(bear.is_dir() for bear in bears)
+    assert not (harbor / ".modeling-3d" / ".app-state").exists()
+    assert not settings.is_error, text_of(settings)
+    assert [model.name for model in ModelListing.model_validate(here.structured_content).models] == ["bear"]
+
+
+async def test_a_workspace_removed_while_the_app_shows_it_is_refused_and_not_made_again(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, opened_folders: list[Path]
+) -> None:
+    garden = tmp_path / "garden"
+    app_server = open_app(workspace=garden)
+    garden.rmdir()
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        listed = await client.call_tool("list_3d_models", {})
+        pinned = await client.call_tool("save_app_pins", {"pins": {"prompts": []}})
+        opened = await client.call_tool("open_app_folder", {"folder": "workspace"})
+        workspaces = AppWorkspaces.model_validate(
+            (await client.call_tool("read_app_workspaces", {})).structured_content
+        )
+        forgotten = await client.call_tool("forget_app_workspace", {"path": str(garden)})
+
+    assert AppWorkspaces.model_validate(forgotten.structured_content) == AppWorkspaces(
+        current=None, recent=[], new_in=garden.resolve().parent
+    )
+    for refused in (listed, pinned, opened):
+        assert refused.structured_content == {"reason": "no-such-workspace", "model": None}
+    assert f"The workspace {garden.resolve()} is no longer a folder." in text_of(pinned)
+    assert not garden.exists()
+    assert opened_folders == []
+    assert workspaces.current is None
+    assert [workspace.missing for workspace in workspaces.recent] == [True]
+
+
+@pytest.mark.detached
+async def test_a_request_sent_just_before_a_switch_creates_its_model_and_keeps_its_prompt_where_it_was_sent_for(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    garden, harbor = tmp_path / "garden", tmp_path / "harbor"
+    harbor.mkdir()
+    arrived, switched = threading.Event(), threading.Event()
+    start = create.create_3d_model
+
+    async def after_the_switch(**arguments: Any) -> Any:
+        arrived.set()
+        await asyncio.to_thread(switched.wait, RUN_TIMEOUT_SECONDS)
+        return await start(**arguments)
+
+    monkeypatch.setattr(create, "create_3d_model", after_the_switch)
+    monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command("builds"))
+    app_server = open_app(workspace=garden)
+    sent = str(app_server.workspace)
+
+    async with Client(f"{app_server.open().url}/mcp") as client, Client(f"{app_server.open().url}/mcp") as other:
+        request = asyncio.create_task(
+            client.call_tool("create_3d_model", {"prompt": "A cub", "name": "cub", "workspace": sent})
+        )
+        await asyncio.to_thread(arrived.wait, RUN_TIMEOUT_SECONDS)
+        await other.call_tool("open_app_workspace", {"path": str(harbor)})
+        switched.set()
+        created = await request
+        await other.call_tool("open_app_workspace", {"path": sent})
+        ended = await activity_until(client, "cub", 1)
+
+    assert (
+        ModelSummary.model_validate(created.structured_content).directory == garden.resolve() / ".modeling-3d" / "cub"
+    )
+    assert not (harbor / ".modeling-3d").exists()
+    kept = AppState.model_validate_json(
+        (garden / ".modeling-3d" / ".app-state" / "app.json").read_text(encoding="utf-8")
+    )
+    assert kept.last_prompt == "A cub"
+    assert [entry.data["status"] for entry in ended.entries if entry.kind == "ended"] == ["done"]
+
+
+@pytest.mark.detached
+async def test_a_run_goes_on_while_the_app_shows_another_workspace_and_is_there_whole_on_switching_back(
+    open_app: Callable[..., lib.AppServer], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    garden, harbor = tmp_path / "garden", tmp_path / "harbor"
+    model_in(harbor, "boat")
+    monkeypatch.setattr(create, "BACKGROUND_COMMAND", detached_agent.command("waits_for_steering"))
+    app_server = open_app(workspace=garden)
+
+    async with Client(f"{app_server.open().url}/mcp") as client:
+        await client.call_tool("create_3d_model", {"prompt": "A cub", "name": "cub"})
+        await client.call_tool("open_app_workspace", {"path": str(harbor)})
+        away = ModelListing.model_validate((await client.call_tool("list_3d_models", {})).structured_content)
+        await client.call_tool("open_app_workspace", {"path": str(garden)})
+        steered = await client.call_tool("steer_3d_model", {"name": "cub", "message": "Smaller."})
+        ended = await activity_until(client, "cub", 1)
+
+    assert [model.name for model in away.models] == ["boat"]
+    assert not steered.is_error, text_of(steered)
+    kinds = [(entry.kind, entry.text) for entry in ended.entries if entry.kind in ("request", "steered", "ended")]
+    assert kinds[:2] == [("request", "A cub"), ("steered", "Smaller.")]
+    assert [entry.data["status"] for entry in ended.entries if entry.kind == "ended"] == ["done"]

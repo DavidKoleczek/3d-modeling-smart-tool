@@ -52,20 +52,26 @@ else:
 """
 
 
-def choose_files(directory: Path, title: str) -> list[Path]:
-    """Ask the person for files in their platform's file dialog, opened at `directory`; none when they cancel."""
+def choose_files(directory: Path, title: str, instead: str) -> list[Path]:
+    """Ask the person for files in their platform's file dialog, opened at `directory`; none when they cancel.
+
+    `instead` says what to do when the dialog cannot show.
+    """
     if not directory.is_dir():
         raise Modeling3dError(f"{directory} is not a folder on this machine. Unpin it and pin the folder again.")
-    return _ask(directory, title, "files")
+    return _ask(directory, title, "files", instead)
 
 
-def choose_folder(directory: Path, title: str) -> Path | None:
-    """Ask the person for a folder in their platform's folder dialog, opened at `directory`; None when they cancel."""
-    chosen = _ask(directory, title, "folder")
+def choose_folder(directory: Path, title: str, instead: str) -> Path | None:
+    """Ask the person for a folder in their platform's folder dialog, opened at `directory`; None when they cancel.
+
+    `instead` says what to do when the dialog cannot show.
+    """
+    chosen = _ask(directory, title, "folder", instead)
     return chosen[0] if chosen else None
 
 
-def _ask(directory: Path, title: str, kind: str) -> list[Path]:
+def _ask(directory: Path, title: str, kind: str, instead: str) -> list[Path]:
     try:
         done = subprocess.run(
             [sys.executable, "-I", "-c", CHOOSE_SCRIPT, str(directory), title, kind],
@@ -76,13 +82,10 @@ def _ask(directory: Path, title: str, kind: str) -> list[Path]:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except OSError as error:
-        raise Modeling3dError(
-            f"Could not show a file dialog: {error}. Drop or paste the files onto the app instead."
-        ) from None
+        raise Modeling3dError(f"Could not show a file dialog: {error}. {instead}") from None
     if done.returncode != 0:
         reason = done.stderr.strip().splitlines()[-1] if done.stderr.strip() else f"exit code {done.returncode}"
         raise Modeling3dError(
-            f"Could not show a file dialog: {reason}. It needs Tk in the Python running the app; drop or paste the "
-            "files onto the app instead."
+            f"Could not show a file dialog: {reason}. It needs Tk in the Python running the app. {instead}"
         )
     return [Path(path) for path in json.loads(done.stdout or "[]")]

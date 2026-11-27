@@ -1,6 +1,11 @@
 `app` serves the app, named 3D Modeling Smart Tool, in a browser page on this machine, prints its URL, and keeps serving until interrupted. Only this machine can reach it.
 
-The app shows the models in one directory: each with its first render, its state, and when it was
+The app opens on the workspace opened last, or asks for one: the workspaces opened in it, newest
+first, the platform's folder dialog, and a new folder to make for one. The top bar names the
+workspace, and clicking it switches to another. Runs go on whatever it shows. The workspaces opened, the last 20, are kept in
+`app-workspaces.json` beside the settings.
+
+It shows the models in one workspace: each with its first render, its state, and when it was
 last updated. It opens on the model viewed last and renders it in 3D, with a grid, mesh edges, and
 dimension lines in meters to switch on, or shows the renders the agent made of it, in a strip with
 the one picked large below. It reloads the model each time a run rebuilds its GLB. `view-3d-model`
@@ -13,12 +18,12 @@ the composer is the model's folder, which opens in the person's file manager, an
 have cost or used in tokens in all, as of the end of each turn.
 
 The person works there without an agent session. New model starts one from a prompt and
-references: files, folders, and models in the directory. With a model in view, what they write
+references: files, folders, and models in the workspace. With a model in view, what they write
 asks for a change, continuing the model's session unless they switch that off or pick a model of
 another agent provider, or steers the run working on it, which Stop ends.
 Both pick the AI model and reasoning effort the next run uses, from those
 `list-intelligence-models` offers, starting on the mode's default. The app remembers the pick for
-each mode in the directory in `.app-state/app.json` beside the models; a pick made while a run works applies to the next one.
+each mode in the workspace in `.app-state/app.json` beside the models; a pick made while a run works applies to the next one.
 Runs started there go on after the app stops. Nothing done in the app is sent to an agent
 session; a session sees it with `read-3d-model-activity`.
 Each model's menu in the list renames it in place, or deletes it, each after the person
@@ -26,29 +31,30 @@ confirms it, as `rename-3d-model` and `delete-3d-model` do. Rename waits for a r
 to be stopped; Delete stops it.
 
 New model starts from the last prompt a model was created from there, and picks references with
-a click from a library: what the person pinned, the models in the directory, the last 50 files
+a click from a library: what the person pinned, the models in the workspace, the last 50 files
 and folders sent from there or given to its models, and pinned folders, each of which shows what is
 in it or opens the platform's file dialog in it. Prompts can be pinned too, and show as buttons
 under the prompt. When a change turns to a fresh agent session, by its mode or Continue session,
 the references the last fresh session started with are put in again. Pins and what was used
-are kept for the directory alone, in its `.app-state/app.json`, with dropped or pasted files that
-are pinned copied into its `.app-state/pins/`. The steps opened or closed in each model's activity are kept
-for the directory too, in `.app-state/steps.json`.
+are kept for the workspace alone, in `.modeling-3d/.app-state/app.json`, with dropped or pasted
+files that are pinned copied into `.modeling-3d/.app-state/pins/`. The steps opened or closed in each model's activity are kept
+for the workspace too, in `.modeling-3d/.app-state/steps.json`.
 
 How the person set the app up, its theme, pane sizes, and viewport tools, is theirs in every
-directory, kept in `app-settings.json` in their config directory: `%APPDATA%\modeling-3d` on Windows, `~/Library/Application Support/modeling-3d` on
+workspace, kept in `app-settings.json` in their config directory: `%APPDATA%\modeling-3d` on Windows, `~/Library/Application Support/modeling-3d` on
 macOS, and `$XDG_CONFIG_HOME/modeling-3d` or `~/.config/modeling-3d` on Linux. The app's
-Settings shows that folder and the models directory, and opens either in the file manager.
+Settings shows that folder, the workspace, and its `.modeling-3d`, and opens each in the file
+manager.
 
 The app's view is an MCP App. The page hosts it the way Claude or VS Code would inline, for
 agents that cannot. `mcp`'s `open_app` tool serves the same app from inside a session.
 
 ```bash
-# the models in .modeling-3d here, on a free port; prints the URL, then blocks until Ctrl+C
+# the workspace opened last, on a free port; prints the URL, then blocks until Ctrl+C
 modeling-3d app
 
-# another models directory, on a fixed port so a bookmark keeps working
-modeling-3d app --directory models --port 8788
+# another project's, on a fixed port so a bookmark keeps working
+modeling-3d app --workspace ~/projects/garden --port 8788
 ```
 
 ```python
@@ -56,7 +62,7 @@ from pathlib import Path
 
 from modeling_3d.lib import app_server, app_view
 
-app = app_server(Path("models"))
+app = app_server(Path("~/projects/garden").expanduser())
 app.open().url  # the browser host page, which reaches app.server at its own /mcp
 app.close()
 app_view()  # the view's HTML, the MCP App resource
@@ -68,8 +74,8 @@ threads until `close` or the process exits.
 ## Arguments
 
 - `--port N`: the port to bind on `127.0.0.1`. A free one is chosen when omitted.
-- `--directory DIR`: where the models to show are kept; `.modeling-3d` in the working directory
-  when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models to show; the one opened last when omitted, or none until the person picks one.
 
 ## Result
 

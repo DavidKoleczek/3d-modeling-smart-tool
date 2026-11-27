@@ -24,7 +24,8 @@ since = read_3d_model_activity("bear", after=activity.cursor)
 
 - `--name NAME`: the model to read, exactly as its directory is named.
 - `--after CURSOR`: the `cursor` of an earlier read, for only the activity since.
-- `--directory DIR`: where models are kept; `.modeling-3d` in the working directory when omitted.
+- `--workspace DIR`: the top-level directory of the project, whose `.modeling-3d` holds the
+  models; the working directory when omitted.
 
 ## Result
 

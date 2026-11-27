@@ -1,4 +1,4 @@
-"""List the models in a directory, remember the one viewed last, and rename and delete them."""
+"""List the models in a workspace, remember the one viewed last, and rename and delete them."""
 
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -11,7 +11,6 @@ import time
 from typing import Any
 
 from modeling_3d.capabilities.create_3d_model.record import (
-    DEFAULT_DIRECTORY,
     GLB,
     RECORD,
     REPORT,
@@ -22,6 +21,7 @@ from modeling_3d.capabilities.create_3d_model.record import (
     missing_model,
     model_files,
     model_names,
+    models_directory,
     move_directory,
     read_atomically,
     require_name,
@@ -48,12 +48,13 @@ STOP_POLL_SECONDS = 0.1
 IGNORES = ".gitignore"
 
 
-def list_3d_models(directory: Path | None = None) -> ModelListing:
-    """Every model in the directory, newest first, and the one viewed last. Reads only."""
-    root = (directory or DEFAULT_DIRECTORY).resolve()
+def list_3d_models(workspace: Path | None = None) -> ModelListing:
+    """Every model in the workspace, newest first, and the one viewed last. Reads only."""
+    root = models_directory(workspace)
     if root.exists() and not root.is_dir():
         raise Modeling3dError(
-            f"{root} is a file, not a directory of models. Pass the --directory the models are kept in."
+            f"{root} is a file, not a directory of models. Move it aside, or pass the --workspace the models are "
+            "kept in."
         )
     models: list[ModelSummary] = []
     unreadable: list[str] = []
@@ -66,6 +67,7 @@ def list_3d_models(directory: Path | None = None) -> ModelListing:
     models.sort(key=lambda summary: summary.updated, reverse=True)
     last_viewed = _state(root).last_viewed
     return ModelListing(
+        workspace=root.parent,
         directory=root,
         models=models,
         last_viewed=last_viewed if any(summary.name == last_viewed for summary in models) else None,
@@ -73,9 +75,9 @@ def list_3d_models(directory: Path | None = None) -> ModelListing:
     )
 
 
-def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary:
+def view_3d_model(name: str, workspace: Path | None = None) -> ModelSummary:
     """Record the model as the one viewed last in its directory, and return its summary."""
-    root = (directory or DEFAULT_DIRECTORY).resolve()
+    root = models_directory(workspace)
     target = _model(root, name)
     summary = model_summary(target, load_record(target))
     state = _state(root).model_copy(update={"last_viewed": name})
@@ -83,9 +85,9 @@ def view_3d_model(name: str, directory: Path | None = None) -> ModelSummary:
     return summary
 
 
-def rename_3d_model(name: str, new_name: str, directory: Path | None = None) -> ModelSummary:
+def rename_3d_model(name: str, new_name: str, workspace: Path | None = None) -> ModelSummary:
     """Move the model's directory to `new_name`, with the records that name it, and return its summary there."""
-    root = (directory or DEFAULT_DIRECTORY).resolve()
+    root = models_directory(workspace)
     target = _model(root, name)
     require_name(new_name)
     record = load_record(target)
@@ -127,9 +129,9 @@ def rename_3d_model(name: str, new_name: str, directory: Path | None = None) -> 
     return model_summary(renamed, record)
 
 
-def delete_3d_model(name: str, directory: Path | None = None) -> Path:
+def delete_3d_model(name: str, workspace: Path | None = None) -> Path:
     """Remove the model's directory and all in it, stopping a run working on it first, and return where it was."""
-    root = (directory or DEFAULT_DIRECTORY).resolve()
+    root = models_directory(workspace)
     target = _model(root, name)
     try:
         working = _working(load_record(target))

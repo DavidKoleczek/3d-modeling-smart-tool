@@ -133,6 +133,12 @@ async def builds(run: FakeRun) -> AgentResult:
     return AgentResult(text="A bear.", session_id=run.session_id)
 
 
+async def builds_and_says_where_it_ran(run: FakeRun) -> AgentResult:
+    build(run)
+    assert run.request.workspace is not None
+    return AgentResult(text=str(run.request.workspace.path), session_id=run.session_id)
+
+
 async def builds_nothing(run: FakeRun) -> AgentResult:
     return AgentResult(text="I could not.", session_id=run.session_id)
 
@@ -194,10 +200,10 @@ class FileDialog:
         self.folder: Path | None = None
         self.shown: list[Path] = []
 
-    def choose(self, directory: Path, title: str) -> list[Path]:
+    def choose(self, directory: Path, title: str, instead: str) -> list[Path]:
         self.shown.append(directory)
         return list(self.files)
 
-    def choose_folder(self, directory: Path, title: str) -> Path | None:
+    def choose_folder(self, directory: Path, title: str, instead: str) -> Path | None:
         self.shown.append(directory)
         return self.folder

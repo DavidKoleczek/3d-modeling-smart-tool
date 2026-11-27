@@ -1,5 +1,8 @@
 /** `FailureReason` in schemas.py. */
 export type FailureReason =
+  | "no-such-workspace"
+  | "no-workspace"
+  | "workspace-changed"
   | "invalid-name"
   | "name-in-use"
   | "no-such-model"
@@ -48,6 +51,12 @@ export class AppError extends Error {
 function worded(error: AppError): string | null {
   const model = error.model ?? "That model";
   switch (error.reason) {
+    case "no-such-workspace":
+      return "That folder isn't there anymore, or isn't a folder. Pick another workspace.";
+    case "no-workspace":
+      return "Pick a workspace first: your project's top-level folder.";
+    case "workspace-changed":
+      return "The app had switched to another workspace, so that wasn't done. Try it again here.";
     case "invalid-name":
       return "A name can use letters, digits, dots, dashes, and underscores, and starts with a letter or digit.";
     case "name-in-use":
