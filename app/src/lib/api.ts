@@ -333,10 +333,17 @@ export type AppPins = {
   prompts: PinnedPrompt[];
 };
 
+/** `DefaultPrompt` in schemas.py. */
+export type DefaultPrompt = {
+  with_references: string;
+  without_references: string;
+};
+
 /** `AppLibrary` in schemas.py. */
 export type AppLibrary = AppPins & {
   used: ReferenceEntry[];
   last_prompt: string | null;
+  default_prompts: Partial<Record<ModelMode, DefaultPrompt>>;
 };
 
 /** One of a model's files as the server gives it: base64, with its media type. */

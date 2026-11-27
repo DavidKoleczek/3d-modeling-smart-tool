@@ -10,7 +10,7 @@ from modeling_3d.capabilities.app import server as app_module
 from modeling_3d.capabilities.app import settings as app_settings
 from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.capabilities.blender import blender
-from modeling_3d.capabilities.create_3d_model import activity, create, intelligence_models, models, runs
+from modeling_3d.capabilities.create_3d_model import activity, constants, create, intelligence_models, models, runs
 from modeling_3d.capabilities.create_3d_model.check import check
 from modeling_3d.capabilities.create_3d_model.record import DEFAULT_DIRECTORY
 from modeling_3d.capabilities.create_3d_model.runs import ModelRun
@@ -87,6 +87,7 @@ def app_server(directory: Path | None = None) -> AppServer:
         read_activity=activity.read_3d_model_activity,
         read_tool_call=activity.read_3d_model_tool_call,
         list_intelligence=intelligence_models.list_intelligence_models,
+        default_prompts=constants.UNASKED,
         settings_path=app_settings.settings_path(),
         open_folder=app_folders.open_folder,
         choose_files=app_folders.choose_files,

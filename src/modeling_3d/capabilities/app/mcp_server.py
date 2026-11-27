@@ -3,7 +3,7 @@
 import asyncio
 import base64
 import binascii
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 import concurrent.futures
 import contextlib
 import json
@@ -108,6 +108,7 @@ from modeling_3d.schemas import (
     AppPins,
     AppState,
     AppSteps,
+    DefaultPrompt,
     IntelligenceChoice,
     IntelligenceModels,
     Modeling3dError,
@@ -214,6 +215,7 @@ class AppServer:
         read_activity: Callable[[str, Path, str | None], ModelActivity],
         read_tool_call: Callable[[str, str, str, Path], ToolCall],
         list_intelligence: Callable[[], IntelligenceModels],
+        default_prompts: Mapping[ModelMode, DefaultPrompt],
         settings_path: Path,
         open_folder: Callable[[Path], None],
         choose_files: Callable[[Path, str], list[Path]],
@@ -245,6 +247,7 @@ class AppServer:
         self._read_activity = read_activity
         self._read_tool_call = read_tool_call
         self._list_intelligence = list_intelligence
+        self._default_prompts = dict(default_prompts)
         self._lock = threading.Lock()
         # Each upload no request took yet, with the file or folder on this machine it was staged from, to remember as
         # used once a request or steering message sends it; None for one the view sent.
@@ -607,6 +610,7 @@ class AppServer:
             **dict(state.pins),
             used=used_here(state.used, self._list_models(self.directory).models),
             last_prompt=state.last_prompt,
+            default_prompts=self._default_prompts,
         )
 
     def _pinned_folder(self, path: Path) -> list[ReferenceEntry]:

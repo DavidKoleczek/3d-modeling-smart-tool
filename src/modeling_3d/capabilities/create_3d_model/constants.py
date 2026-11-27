@@ -1,6 +1,6 @@
 """The text that fills the templates in prompts/, each with the placeholder it fills and where."""
 
-from modeling_3d.schemas import ModelMode
+from modeling_3d.schemas import DefaultPrompt, ModelMode
 
 # region: fresh_session.md
 # Its {directory}, {name}, and {models} are the model's directory, its name, and the directory its models are kept in,
@@ -15,16 +15,32 @@ MODE_CAPABILITIES: dict[ModelMode, str] = {
 }
 # {mode} in fresh_session.md and resume.md, the template of each mode's instructions.
 MODE_PROMPTS: dict[ModelMode, str] = {"shape": "shape.md", "rig": "rig.md", "color": "color.md", "detail": "detail.md"}
-# {request} in fresh_session.md and resume.md, for a mode that needs no prompt and was given none.
-UNASKED: dict[ModelMode, str] = {
-    "rig": "Rig the model. Work out what moves, and how, from the model, its references, and the project's guidance.",
-    "color": (
-        "Color the model by role. Work out its roles, schemes, and colors from the model, its references, and the "
-        "project's guidance."
+# {request} in fresh_session.md and resume.md, for a mode that needs no prompt and was given none. The app puts the
+# same text in its composer when the person switches to the mode, so a request reads the same from either.
+UNASKED: dict[ModelMode, DefaultPrompt] = {
+    "rig": DefaultPrompt(
+        with_references=(
+            "Rig the model. Work out what moves and how from the references, and follow how any reference models are "
+            "rigged."
+        ),
+        without_references="Rig the model. Work out what moves and how from the model and the project's guidance.",
     ),
-    "detail": (
-        "Paint the model's surface detail. Work out what it would show from the model, its references, and the "
-        "project's guidance."
+    "color": DefaultPrompt(
+        with_references=(
+            "Color the model according to the references. Match the colors in the reference images, and follow the "
+            "style of any reference models."
+        ),
+        without_references="Color the model using your best judgement for what it is and the project's style.",
+    ),
+    "detail": DefaultPrompt(
+        with_references=(
+            "Add detail to the model according to the references. Match the surface detail in the reference images, "
+            "and follow the style and amount of detail of any reference models."
+        ),
+        without_references=(
+            "Add detail to the model. Make it look appealing and high quality, using your best judgement for what it "
+            "is and the project's style."
+        ),
     ),
 }
 # {guidance} in fresh_session.md, for a models directory that holds the project's guidance, at {path}.

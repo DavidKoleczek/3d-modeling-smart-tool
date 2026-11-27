@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import {
   chooseIntelligenceModel,
@@ -91,6 +91,40 @@ export type Intelligence = {
   label: (model: string) => string;
 };
 
+// The AI models to pick from and the picks the directory keeps, shared, so a pick in one picker shows in the others.
+type Listed = { options: AppIntelligence | null; error: string | null };
+
+const listeners = new Set<() => void>();
+let listed: Listed = { options: null, error: null };
+let listing: Promise<void> | null = null;
+// One pick recorded at a time, so the last one made is the one the directory keeps.
+let recording: Promise<unknown> = Promise.resolve();
+
+function publish(next: Partial<Listed>) {
+  listed = { ...listed, ...next };
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function list() {
+  listing = listIntelligenceModels().then(
+    (options) => publish({ options, error: null }),
+    (cause: unknown) => {
+      // Listed again by the next picker to show, should the server come back.
+      listing = null;
+      publish({ error: `Could not list the AI models: ${describe(cause)}` });
+    },
+  );
+}
+
 /**
  * The AI models and reasoning efforts to pick from, and the pick for a request in `mode`, remembered for that mode in
  * the app's directory. For a request on `shown`, the pick starts on what its last run used when that run was in `mode`,
@@ -101,33 +135,21 @@ export function useIntelligence(
   shown: ModelSummary | null,
   mode: ModelMode,
 ): Intelligence {
-  const [options, setOptions] = useState<AppIntelligence | null>(null);
+  const { options, error: unlisted } = useSyncExternalStore(
+    subscribe,
+    () => listed,
+  );
   const [picked, setPicked] = useState<{
     model: string | null;
     mode: ModelMode;
     choice: IntelligenceChoice;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // One pick recorded at a time, so the last one made is the one the directory keeps.
-  const recording = useRef<Promise<unknown>>(Promise.resolve());
 
   useEffect(() => {
-    let stopped = false;
-    listIntelligenceModels().then(
-      (fresh) => {
-        if (!stopped) {
-          setOptions(fresh);
-        }
-      },
-      (cause: unknown) => {
-        if (!stopped) {
-          setError(`Could not list the AI models: ${describe(cause)}`);
-        }
-      },
-    );
-    return () => {
-      stopped = true;
-    };
+    if (listing === null) {
+      list();
+    }
   }, []);
 
   const choose = (model: string, reasoningEffort: ReasoningEffort) => {
@@ -146,9 +168,9 @@ export function useIntelligence(
       },
     });
     setError(null);
-    recording.current = recording.current.then(() =>
+    recording = recording.then(() =>
       chooseIntelligenceModel(mode, model, effort).then(
-        setOptions,
+        (options) => publish({ options }),
         (cause: unknown) => setError(describe(cause)),
       ),
     );
@@ -169,7 +191,7 @@ export function useIntelligence(
   return {
     options,
     choice,
-    error,
+    error: error ?? unlisted,
     choose,
     efforts:
       options?.models.find((candidate) => candidate.id === choice?.model)

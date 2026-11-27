@@ -1,6 +1,7 @@
 """Drives color-3d-model with the agent faked by a script, so neither credentials nor a model are needed."""
 
 import json
+from pathlib import Path
 
 from fakes import FakeIntelligence, builds, builds_nothing, run_to_end
 import pytest
@@ -28,12 +29,32 @@ async def test_a_coloring_works_on_the_rigged_model_to_its_budgets_with_the_colo
 
     prompt = intelligence.runs[0].request.prompt
     assert f"through {constants.MODE_CAPABILITIES['color']}." in prompt
-    assert constants.UNASKED["color"] in prompt
+    assert constants.UNASKED["color"].without_references in prompt
     assert template("color.md").strip() in prompt
     assert f"{constants.EXISTING} {constants.KEEP.format(kept='its rig')}" in prompt
     assert "\n".join((*constants.COLOR_DRAW_CALL_ADVICE, *constants.COLOR_SCREEN_ADVICE)) in prompt
     assert events[0].data["mode"] == "color"
     assert result.next == 'modeling-3d color-3d-model "<what to change>" --name bear --resume-session true'
+
+
+async def test_a_coloring_asked_for_nothing_follows_references_given_to_it_or_to_an_earlier_run(
+    working_directory: Path,
+) -> None:
+    concept = working_directory / "concept.png"
+    concept.write_bytes(b"concept")
+    await run_to_end(name="bear")
+    await run_to_end(name="fox", references=[concept])
+    given = FakeIntelligence(builds)
+    earlier = FakeIntelligence(builds)
+    asked = FakeIntelligence(builds)
+
+    await (await lib.color_3d_model("bear", references=[concept], intelligence=given)).result()
+    await (await lib.color_3d_model("fox", intelligence=earlier)).result()
+    await (await lib.color_3d_model("fox", "Make it orange", intelligence=asked)).result()
+
+    for intelligence in (given, earlier):
+        assert constants.UNASKED["color"].with_references in intelligence.runs[0].request.prompt
+    assert constants.UNASKED["color"].with_references not in asked.runs[0].request.prompt
 
 
 async def test_a_reshape_or_a_rig_of_a_colored_model_is_told_to_keep_what_the_other_modes_added() -> None:

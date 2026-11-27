@@ -3,9 +3,11 @@ import {
   createModel,
   detailModel,
   rigModel,
+  stageReferenceFiles,
   steerModel,
   type ModelMode,
   type ModelSummary,
+  type StagedReference,
 } from "@/lib/api";
 import type { Step } from "@/lib/activity";
 import { providerLabel, type Intelligence } from "@/lib/intelligence";
@@ -18,6 +20,17 @@ export const MODE_LABELS: Record<ModelMode, string> = {
   detail: "Detail",
 };
 
+/**
+ * The modes a model goes on to after a run in each, which the composer offers once one is done; the last is picked to
+ * start with, since most models go from shaping straight to color.
+ */
+export const NEXT_MODES: Record<ModelMode, ModelMode[]> = {
+  shape: ["rig", "color"],
+  rig: ["color"],
+  color: ["detail"],
+  detail: [],
+};
+
 /** How the person set up the next request on the model in view, which the composer sends with. */
 export type NextRequest = {
   intelligence: Intelligence;
@@ -28,6 +41,12 @@ export type NextRequest = {
   resume: boolean;
   onResume: (resume: boolean) => void;
 };
+
+/** What a request is sent with: the AI model, the mode, and whether to continue the model's session where it can. */
+export type RequestSetup = Pick<
+  NextRequest,
+  "intelligence" | "mode" | "resume"
+>;
 
 /** Words and files put into a model's composer from elsewhere in the app, such as marked views, to send from there. */
 export type Handoff = {
@@ -44,7 +63,7 @@ export type WorkFrom = { uploads?: string[]; reference_models?: string[] };
 /** Whether the next request on `model` continues its last session, and why or why not, for Continue session. */
 export function sessionOf(
   model: ModelSummary,
-  next: NextRequest,
+  next: RequestSetup,
 ): { continuable: boolean; continuing: boolean; hint: string } {
   const { intelligence } = next;
   // A session goes on only with the agent provider it ran on, and only where that agent provider still has it.
@@ -81,7 +100,7 @@ export function sessionOf(
  */
 export async function ask(
   model: ModelSummary,
-  next: NextRequest,
+  next: RequestSetup,
   prompt: string,
   from: WorkFrom = {},
 ): Promise<void> {
@@ -108,6 +127,21 @@ export async function ask(
     return;
   }
   await createModel({ prompt, ...request });
+}
+
+/** Whether Continue session starts on for a request in `mode`: only in the mode of the session it would continue. */
+export function resumesIn(model: ModelSummary, mode: ModelMode): boolean {
+  return mode === (model.last_session?.mode ?? mode);
+}
+
+/** Stage `paths` in `model`'s folder, such as the references its last fresh session started with, to send again. */
+export function stageModelFiles(
+  model: ModelSummary,
+  paths: string[],
+): Promise<StagedReference[]> {
+  return stageReferenceFiles(
+    paths.map((path) => `${model.directory}/${path.replace(/\/$/, "")}`),
+  );
 }
 
 /**

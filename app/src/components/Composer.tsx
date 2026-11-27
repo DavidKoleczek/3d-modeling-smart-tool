@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import { ModelMenu } from "@/components/ModelPicker";
+import { NextStage } from "@/components/NextStage";
 import { PromptPicker } from "@/components/PromptPicker";
 import { ReferenceLibrary } from "@/components/ReferenceLibrary";
 import { ReferenceChips } from "@/components/References";
@@ -22,20 +23,20 @@ import {
 } from "@/components/ui/popover";
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
-import {
-  openAppFolder,
-  stageReferenceFiles,
-  type ModelMode,
-  type ModelSummary,
-} from "@/lib/api";
+import { openAppFolder, type ModelMode, type ModelSummary } from "@/lib/api";
 import { describe } from "@/lib/errors";
-import { refreshLibrary } from "@/lib/library";
+import type { Intelligence } from "@/lib/intelligence";
+import { refreshLibrary, useLibrary } from "@/lib/library";
 import { shortDirectory } from "@/lib/models";
+import { defaultPrompt } from "@/lib/prompts";
 import { takesReferences, useReferences } from "@/lib/references";
 import {
   ask,
   MODE_LABELS,
+  NEXT_MODES,
+  resumesIn,
   sessionOf,
+  stageModelFiles,
   type Handoff,
   type NextRequest,
 } from "@/lib/requests";
@@ -62,10 +63,12 @@ function carriesFiles(event: DragEvent) {
 /**
  * Where the person talks to a model's agent. While a run works, what they write steers it; otherwise it starts a new
  * run on the model in the mode picked, Shape, Rig, Color, or Detail, continuing its last session unless they switch
- * that off. A rig, coloring, or detailing can be sent with nothing written, for the agent to work it out. The AI model they pick runs that next run,
- * so a pick made while one works waits for it. A switch of mode or of Continue session to a fresh session puts in the
- * references the last fresh session started with, since the new one has not seen them, and a switch back to
- * continuing takes them out again.
+ * that off. A rig, coloring, or detailing can be sent with nothing written, for the agent to work it out. The AI model
+ * they pick runs that next run, so a pick made while one works waits for it. A switch of mode or of Continue session to
+ * a fresh session puts in the references the last fresh session started with, since the new one has not seen them, and
+ * a switch back to continuing takes them out again. A switch to a mode other than Shape puts in its default prompt too,
+ * in place of an empty field or another default, which follows the references until the person edits it. Once a run is
+ * done, the next stage is offered above the field, to start at once or to switch to.
  */
 export function Composer({
   model,
@@ -91,11 +94,14 @@ export function Composer({
   tokens: number | null;
 }) {
   const [draft, setDraft] = useState("");
+  // Whether the field holds the mode's default prompt as a switch of mode put it in, rather than `draft`.
+  const [canned, setCanned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const references = useReferences(models);
   const { addFiles } = references;
+  const { library } = useLibrary();
   const field = useRef<HTMLTextAreaElement>(null);
   // The handoff last put in, which StrictMode's second run of the effect would otherwise put in twice.
   const taken = useRef(0);
@@ -111,9 +117,11 @@ export function Composer({
       return;
     }
     taken.current = handoff.id;
+    // A default put in holds no draft, so marked views take its place.
     setDraft((current) =>
       [current.trim(), handoff.text].filter(Boolean).join("\n\n"),
     );
+    setCanned(false);
     addFiles(handoff.files);
     field.current?.focus();
     onTaken(handoff.id);
@@ -123,22 +131,39 @@ export function Composer({
   const session = sessionOf(model, next);
   // Every mode but shaping has a built model to work out what to do with.
   const unasked = next.mode !== "shape" && !running;
-  const sendable = Boolean(draft.trim()) || unasked;
+  const preset = unasked
+    ? defaultPrompt(
+        library,
+        next.mode,
+        references.items.length > 0 || model.references.length > 0,
+      )
+    : null;
+  const written = canned && preset !== null ? preset : draft;
+  const sendable = Boolean(written.trim()) || unasked;
+  // Offered only until the person moves on to another mode themselves.
+  const offered =
+    model.status === "done" && model.built && model.last_run?.mode === next.mode
+      ? NEXT_MODES[next.mode]
+      : [];
+
+  const write = (text: string) => {
+    setDraft(text);
+    setCanned(false);
+  };
 
   const submit = async (event?: FormEvent) => {
     event?.preventDefault();
-    const text = draft.trim();
     if (!sendable || busy) {
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await ask(model, next, text, await references.ready());
+      await ask(model, next, written.trim(), await references.ready());
       void refreshLibrary();
       references.clear();
       refilled.current.clear();
-      setDraft("");
+      write("");
     } catch (cause) {
       setError(describe(cause));
     } finally {
@@ -160,10 +185,7 @@ export function Composer({
     if (held.length > 0 || startedWith.length === 0) {
       return;
     }
-    const paths = startedWith.map(
-      (path) => `${model.directory}/${path.replace(/\/$/, "")}`,
-    );
-    stageReferenceFiles(paths).then(
+    stageModelFiles(model, startedWith).then(
       (staged) => {
         for (const key of references.addStaged(staged)) {
           refilled.current.add(key);
@@ -175,9 +197,47 @@ export function Composer({
 
   const pickMode = (picked: ModelMode) => {
     next.onMode(picked);
-    // A switch of mode starts Continue session over: on only in the mode of the session it would continue.
-    const resume = picked === (model.last_session?.mode ?? picked);
+    // A switch of mode starts Continue session over.
+    const resume = resumesIn(model, picked);
     refill(sessionOf(model, { ...next, mode: picked, resume }).continuing);
+    // What the person wrote, or marked views put in, stays.
+    if (canned || !draft.trim()) {
+      setDraft("");
+      setCanned(true);
+    }
+  };
+
+  const nextPrompt = (mode: ModelMode) =>
+    defaultPrompt(library, mode, model.references.length > 0);
+
+  const startNext = async (mode: ModelMode, intelligence: Intelligence) => {
+    if (busy) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const setup = { intelligence, mode, resume: resumesIn(model, mode) };
+      // A fresh session gets the references the last one started with, as a switch of mode puts in.
+      const staged =
+        sessionOf(model, setup).continuing || startedWith.length === 0
+          ? []
+          : await stageModelFiles(model, startedWith);
+      await ask(model, setup, nextPrompt(mode) ?? "", {
+        uploads: staged.map((file) => file.upload),
+      });
+      next.onMode(mode);
+      void refreshLibrary();
+    } catch (cause) {
+      setError(describe(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const editNext = (mode: ModelMode) => {
+    pickMode(mode);
+    field.current?.focus();
   };
 
   const pickResume = (resume: boolean) => {
@@ -214,14 +274,24 @@ export function Composer({
           })}
       className="relative shrink-0 border-t border-line bg-panel px-3 pt-2 pb-2.5"
     >
+      {offered.length > 0 && (
+        <NextStage
+          model={model}
+          offered={offered}
+          busy={busy}
+          promptOf={nextPrompt}
+          onStart={(mode, intelligence) => void startNext(mode, intelligence)}
+          onEdit={editNext}
+        />
+      )}
       <div className="rounded-md border border-line-control bg-field py-1.5 pr-1.5 pl-2.5 transition-colors focus-within:border-ink focus-within:bg-panel">
         <div className="mb-1.5 empty:hidden">
           <ReferenceChips references={references} />
         </div>
         <textarea
           ref={field}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          value={written}
+          onChange={(event) => write(event.target.value)}
           onKeyDown={(event) => submitsOnEnter(() => void submit())(event)}
           rows={2}
           placeholder={
@@ -273,9 +343,9 @@ export function Composer({
               <PromptPicker
                 mode={next.mode}
                 field={field}
-                written={draft}
+                written={written}
                 models={models}
-                onPick={setDraft}
+                onPick={write}
                 trigger={
                   <Button
                     size="sm"

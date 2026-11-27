@@ -375,7 +375,16 @@ async def start_run(
         budgets = prompting.budgets_block(mode, triangles, draw_calls, on_screen)
     checking = Checking(target, record.runs[-1])
     request = AgentRequest(
-        prompt=prompting.prompt(record.runs[-1], target, root, budgets, resumed, created, kept),
+        prompt=prompting.prompt(
+            record.runs[-1],
+            target,
+            root,
+            budgets,
+            resumed,
+            created,
+            kept,
+            any(run.references for run in record.runs),
+        ),
         model=model,
         images=[target / path for path in copied if attached(path)],
         # Where the tool was launched, usually the project the model is for, so the agent finds its context and

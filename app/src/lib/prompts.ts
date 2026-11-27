@@ -41,6 +41,22 @@ export function recentPrompts(models: ModelSummary[]): CannedPrompt[] {
 }
 
 /**
+ * What a request in `mode` asks when given no prompt, as the library words it: the variant that follows references when
+ * the request or the model has some. Null for shaping, which always needs one.
+ */
+export function defaultPrompt(
+  library: AppLibrary,
+  mode: ModelMode,
+  referenced: boolean,
+): string | null {
+  const prompt = library.default_prompts[mode];
+  if (!prompt) {
+    return null;
+  }
+  return referenced ? prompt.with_references : prompt.without_references;
+}
+
+/**
  * The prompt a new model starts from: what the last model created in the app here was asked, else the newest a model
  * here was shaped from.
  */

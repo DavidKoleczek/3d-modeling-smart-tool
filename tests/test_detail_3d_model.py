@@ -28,7 +28,7 @@ async def test_a_detailing_works_on_the_colored_model_to_its_budgets_with_the_de
 
     prompt = intelligence.runs[0].request.prompt
     assert f"through {constants.MODE_CAPABILITIES['detail']}." in prompt
-    assert constants.UNASKED["detail"] in prompt
+    assert constants.UNASKED["detail"].without_references in prompt
     assert template("detail.md").strip() in prompt
     assert f"{constants.EXISTING} {constants.KEEP.format(kept='its colors')}" in prompt
     assert "\n".join((*constants.DETAIL_DRAW_CALL_ADVICE, *constants.DETAIL_SCREEN_ADVICE)) in prompt

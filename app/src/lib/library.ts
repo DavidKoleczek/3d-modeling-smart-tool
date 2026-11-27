@@ -24,6 +24,7 @@ const EMPTY: AppLibrary = {
   prompts: [],
   used: [],
   last_prompt: null,
+  default_prompts: {},
 };
 
 /** Something in the library to pick: a model here, or a file or folder on this machine by its path. */

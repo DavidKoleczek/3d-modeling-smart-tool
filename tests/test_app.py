@@ -25,7 +25,7 @@ from modeling_3d import lib
 from modeling_3d.capabilities.app import mcp_server
 from modeling_3d.capabilities.app import server as server_module
 from modeling_3d.capabilities.app.folders import choose_files
-from modeling_3d.capabilities.create_3d_model import create, intelligence_models
+from modeling_3d.capabilities.create_3d_model import constants, create, intelligence_models
 from modeling_3d.capabilities.create_3d_model.check import check
 from modeling_3d.capabilities.create_3d_model.record import write_record
 from modeling_3d.schemas import (
@@ -704,9 +704,9 @@ async def test_the_person_s_pins_are_kept_for_the_app_s_directory_alone_and_refu
     async with Client(f"{open_app(directory=tmp_path / 'here').open().url}/mcp") as client:
         again = AppLibrary.model_validate((await client.call_tool("read_app_library", {})).structured_content)
 
-    assert before == AppLibrary(used=[], last_prompt=None)
+    assert before == AppLibrary(used=[], last_prompt=None, default_prompts=constants.UNASKED)
     assert AppPins.model_validate(saved.structured_content) == AppPins.model_validate(pins)
-    assert other == AppLibrary(used=[], last_prompt=None)
+    assert other == AppLibrary(used=[], last_prompt=None, default_prompts=constants.UNASKED)
     assert AppPins.model_validate(again.model_dump(include={"references", "folders", "prompts"})) == (
         AppPins.model_validate(pins)
     )

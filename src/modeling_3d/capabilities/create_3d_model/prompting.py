@@ -50,12 +50,14 @@ def prompt(
     resumed: ModelRunRecord | None,
     created: bool,
     kept: list[ModelMode],
+    referenced: bool,
 ) -> str:
     """The run's prompt: its request and all the agent needs for it, or for a session going on, what is new to it.
 
-    `kept` are the modes whose work, from earlier requests, a fresh session on the model is told to keep working.
+    `kept` are the modes whose work, from earlier requests, a fresh session on the model is told to keep working, and
+    `referenced` is whether any of its runs, this one included, was given references.
     """
-    request = run.prompt or UNASKED.get(run.mode, "")
+    request = _request(run, referenced)
     instructions = template(MODE_PROMPTS[run.mode]).strip()
     if resumed is not None:
         mode = "" if resumed.mode == run.mode else f"\n{CHANGED_MODE}\n\n{instructions}\n"
@@ -83,6 +85,14 @@ def prompt(
         references=listed(run.references, REFERENCES),
         existing=existing,
     )
+
+
+def _request(run: ModelRunRecord, referenced: bool) -> str:
+    """What the run asks: its prompt, else its mode's default, the one that follows references when it has some."""
+    unasked = UNASKED.get(run.mode)
+    if run.prompt or unasked is None:
+        return run.prompt
+    return unasked.with_references if referenced else unasked.without_references
 
 
 def _moved(resumed: ModelRunRecord, target: Path, root: Path) -> str:

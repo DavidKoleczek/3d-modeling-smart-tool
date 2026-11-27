@@ -222,6 +222,13 @@ ModelRunStatus = Literal["running", "done", "failed", "cancelled", "timed-out"]
 ModelEventKind = Literal["started", "agent", "steered", "checked", "finished", "failed"]
 
 
+class DefaultPrompt(BaseModel):
+    """What a rig, coloring, or detailing asks when given no prompt, by whether the model has references to follow."""
+
+    with_references: str = Field(description="For a model whose runs were given references, this one's included")
+    without_references: str
+
+
 class ModelRunRecord(BaseModel):
     """One request to create or change a model, as runs.json keeps it while it runs and after."""
 
@@ -602,6 +609,10 @@ class AppLibrary(AppPins):
         "once, of what is still there"
     )
     last_prompt: str | None = Field(description="What the last model created in the app's directory was asked there")
+    default_prompts: dict[ModelMode, DefaultPrompt] = Field(
+        description="By mode, what a request that needs no prompt asks when given none, which a switch to the mode "
+        "puts in the composer"
+    )
 
 
 class StagedReference(ReferenceEntry):

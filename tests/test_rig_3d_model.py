@@ -31,7 +31,7 @@ async def test_a_rig_works_on_the_built_model_to_its_budgets_with_the_rig_s_inst
 
     prompt = intelligence.runs[0].request.prompt
     assert f"through {constants.MODE_CAPABILITIES['rig']}." in prompt
-    assert constants.UNASKED["rig"] in prompt
+    assert constants.UNASKED["rig"].without_references in prompt
     assert template("rig.md").strip() in prompt
     assert template("shape.md").strip() not in prompt
     assert constants.EXISTING in prompt
