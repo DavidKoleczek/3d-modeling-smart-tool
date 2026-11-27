@@ -5,7 +5,7 @@ from typing import Any
 from mcp.server.apps import APP_MIME_TYPE
 from mcp.types import Resource, ResourceTemplate, Tool
 
-from modeling_3d.schemas import AGENT_PROVIDERS, MODES, REASONING_EFFORTS
+from modeling_3d.schemas import AGENT_PROVIDERS, MODES, REASONING_EFFORTS, SKILL_MODES
 
 VIEW_URI = "ui://modeling-3d/app"
 MODEL_FILE_PREFIX = "modeling-3d://models/"
@@ -482,6 +482,92 @@ KEEP_UPLOAD = Tool(
     },
     _meta=APP_ONLY,
 )
+# What the tools for the Windows app say of themselves, which only it can answer.
+FOR_WINDOWS_APP = "Fails unless the Windows app started this server. Called by the view."
+READ_WINDOWS_APP = Tool(
+    name="read_windows_app",
+    description="What the Windows app that started this server is like: its version, a newer one to update to, "
+    "whether it starts when the person signs in, and who its Agent Skill is installed for; null when the server was "
+    "started any other way. Called by the view.",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+CHANGE_WINDOWS_APP = Tool(
+    name="change_windows_app",
+    description="Change the settings given of the Windows app, leaving the others, and return what "
+    f"`read_windows_app` does. {FOR_WINDOWS_APP}",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "start_at_sign_in": {"type": "boolean", "description": "Whether it starts when the person signs in"}
+        },
+    },
+    _meta=APP_ONLY,
+)
+CHECK_FOR_UPDATE = Tool(
+    name="check_for_update",
+    description="Have the Windows app look for a newer version now, and return what `read_windows_app` does, with "
+    f"it in `update`. {FOR_WINDOWS_APP}",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+INSTALL_UPDATE = Tool(
+    name="install_update",
+    description="Have the Windows app download the newer version and install it, which ends this server once it has "
+    "answered, and starts the new one on the same port when done. Return what `read_windows_app` does. "
+    f"{FOR_WINDOWS_APP}",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+INSTALL_AGENT_PROVIDER = Tool(
+    name="install_agent_provider",
+    description="Have the Windows app install the tool again with an agent provider it lacks, in a window of its own "
+    "that asks about anything running from the tool first, which ends this server once it has answered, and starts "
+    f"it again on the same port when done. Return what `read_windows_app` does. {FOR_WINDOWS_APP}",
+    input_schema={
+        "type": "object",
+        "properties": {"agent_provider": {"type": "string", "enum": list(AGENT_PROVIDERS)}},
+        "required": ["agent_provider"],
+    },
+    _meta=APP_ONLY,
+)
+LIST_SKILL_AGENTS = Tool(
+    name="list_skill_agents",
+    description="The agents the Windows app's Agent Skill can be installed for, as the skills CLI lists them, with "
+    "those on this computer that have it. The first call gets the skills CLI ready, which can take minutes. "
+    f"{FOR_WINDOWS_APP}",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
+INSTALL_SKILL = Tool(
+    name="install_skill",
+    description="Have the Windows app install its Agent Skill in the shared folder and for these agents, and take it "
+    f"from the others, and return what `read_windows_app` does. {FOR_WINDOWS_APP}",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "agents": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Ids from `list_skill_agents`; those that read the shared folder have it anyway",
+            },
+            "mode": {
+                "type": "string",
+                "enum": list(SKILL_MODES),
+                "description": "How an agent with a folder of its own gets it: a link to the shared copy, or a copy",
+            },
+        },
+        "required": ["agents", "mode"],
+    },
+    _meta=APP_ONLY,
+)
+REMOVE_SKILL = Tool(
+    name="remove_skill",
+    description="Have the Windows app remove its Agent Skill from every agent, and return what `read_windows_app` "
+    f"does. {FOR_WINDOWS_APP}",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
 VIEW_TOOLS = [
     LIST_MODELS,
     VIEW_MODEL,
@@ -518,6 +604,14 @@ VIEW_TOOLS = [
     SAVE_PINS,
     LIST_FOLDER,
     KEEP_UPLOAD,
+    READ_WINDOWS_APP,
+    CHANGE_WINDOWS_APP,
+    CHECK_FOR_UPDATE,
+    INSTALL_UPDATE,
+    INSTALL_AGENT_PROVIDER,
+    LIST_SKILL_AGENTS,
+    INSTALL_SKILL,
+    REMOVE_SKILL,
 ]
 VIEW = Resource(uri=VIEW_URI, name="3D Modeling app", mime_type=APP_MIME_TYPE)
 MODEL_FILE = ResourceTemplate(

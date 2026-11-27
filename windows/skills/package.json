@@ -1,0 +1,9 @@
+{
+  "name": "modeling-3d-skills",
+  "private": true,
+  "description": "The skills CLI's library, which the Windows app runs to list agents and install the Agent Skill",
+  "license": "MIT",
+  "dependencies": {
+    "skills": "1.9.0"
+  }
+}

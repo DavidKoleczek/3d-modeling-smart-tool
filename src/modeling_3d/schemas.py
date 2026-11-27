@@ -83,6 +83,7 @@ FailureReason = Literal[
     "no-such-check",
     "not-built",
     "bad-glb",
+    "no-windows-app",
 ]
 
 
@@ -679,6 +680,51 @@ class StagedReference(ReferenceEntry):
     size: int = Field(description="In bytes; for a folder, its files' in all")
     files: int = Field(description="1 for a file; a folder's files")
     preview: str | None = Field(description="A data URL of an image, when it is one the view shows and not too large")
+
+
+# endregion
+
+# region: Windows app
+
+# How an agent with a skills folder of its own gets the Agent Skill: a link to the shared copy, or a copy of its own.
+SkillMode = Literal["symlink", "copy"]
+SKILL_MODES: tuple[SkillMode, ...] = get_args(SkillMode)
+
+
+class InstalledSkill(BaseModel):
+    """The Windows app's Agent Skill, where it is installed."""
+
+    agents: list[str] = Field(description="The agents it is for, as the skills CLI names them")
+    mode: SkillMode
+
+
+class WindowsApp(BaseModel):
+    """What the Windows app that started the app's server is like now."""
+
+    version: str
+    update: str | None = Field(description="The newer version there is to update to; None when there is none")
+    updating: bool
+    start_at_sign_in: bool = Field(description="Whether it starts when the person signs in to Windows")
+    skill: InstalledSkill | None = Field(default=None, description="None when the Agent Skill isn't installed")
+
+
+class SkillAgent(BaseModel):
+    """An agent the skills CLI knows, which the Windows app's Agent Skill can be installed for."""
+
+    id: str
+    name: str
+    folder: str = Field(description="Where it reads its skills from")
+    shares: bool = Field(description="Whether it reads the shared folder, which always has the skill")
+    detected: bool = Field(description="Whether it is on this computer")
+
+
+class SkillAgents(BaseModel):
+    """The agents, as the skills CLI lists them."""
+
+    home: str = Field(description="The person's folder, which the agents' folders are in")
+    shared: str = Field(description="The shared folder")
+    agents: list[SkillAgent]
+    installed: list[str] = Field(description="The ids of the agents on this computer that have the skill")
 
 
 # endregion

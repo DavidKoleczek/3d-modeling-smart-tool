@@ -1,0 +1,9 @@
+{
+  "name": "modeling-3d-pnpm",
+  "private": true,
+  "description": "The pnpm the release workflow installs, which is the one app/package.json pins",
+  "license": "MIT",
+  "dependencies": {
+    "pnpm": "12.22.0"
+  }
+}

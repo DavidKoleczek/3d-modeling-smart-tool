@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [pyproject.toml]
+  workflow_dispatch:
+
+permissions: {}
+
+# Two runs for one version would both build it, and the second would find its release made.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# The checks and the build run side by side, and the release waits for all of them.
+jobs:
+  version:
+    name: Read the version
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      released: ${{ steps.read.outputs.released }}
+    steps:
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: read
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null; then
+            echo "v$version is released already."
+            released=true
+          else
+            released=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "released=$released" >> "$GITHUB_OUTPUT"
+
+  # The tests and the other checks are left to the precommit hooks. These two catch a lock or an app build that is
+  # behind its source, which the exe would carry as it is.
+  checks:
+    name: Check the lock and the app build
+    needs: version
+    if: needs.version.outputs.released == 'false'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Git for Windows would check text files out with CRLF, and the checks and the wheel take them as committed.
+      - &no-crlf
+        run: git config --global core.autocrlf false
+
+      - *checkout
+
+      # The newest uv this version of the action has a checksum for, so uv moves only when the action does.
+      - &setup-uv
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: latest-known
+          require-checksums: true
+          enable-cache: false
+
+      # The app's checks pass without pnpm, so it has to be found for them to check that the committed build is current.
+      # Without its install scripts, which newer npm releases skip anyway, the `pnpm` npm links to is a stand-in that
+      # only a shell can start, and the checks start pnpm from Python. Its package for this platform has the exe.
+      - name: Install pnpm
+        run: |
+          npm ci --prefix .github/pnpm --ignore-scripts --no-audit --no-fund
+          exe="$GITHUB_WORKSPACE/.github/pnpm/node_modules/@pnpm/exe.win32-$(node --print process.arch)"
+          "$exe/pnpm.exe" --version
+          echo "$exe" >> "$GITHUB_PATH"
+
+      - name: Precommit checks
+        run: uvx --exclude-newer "5 days" prek run uv-lock app-build --all-files --show-diff-on-failure
+
+  build:
+    name: Build the Windows app
+    needs: version
+    if: needs.version.outputs.released == 'false'
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - *no-crlf
+      - *checkout
+      - *setup-uv
+
+      - name: Install Rust
+        working-directory: windows
+        run: rustup toolchain install --no-self-update
+
+      - name: Build
+        run: uv run build-windows.py build
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: setup
+          path: windows/target/release/Modeling3DSetup.exe
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Release v${{ needs.version.outputs.version }}
+    needs: [version, checks, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # To make the release.
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: setup
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: >
+          gh release create "v$VERSION" Modeling3DSetup.exe
+          --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes

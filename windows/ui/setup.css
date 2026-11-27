@@ -1,0 +1,803 @@
+/*
+ * Setup's look, with the tokens and light blue accent of app/src/theme.css. Light is the default, and dark follows
+ * Windows.
+ */
+
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/geist-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("fonts/geist-mono-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+}
+
+:root {
+  --canvas: #e7ecf1;
+  --panel: #ffffff;
+  --field: #f1f4f7;
+  --hover: #edf1f5;
+  --line: #dfe5eb;
+  --line-control: #7f8994;
+  --ink: #12161c;
+  --ink-muted: #56606b;
+  --ink-faint: #98a1ab;
+  --accent: #6ab3ee;
+  --accent-ink: #1565b0;
+  --accent-soft: #dcecfb;
+  --on-accent: #12161c;
+  --danger: #c8281c;
+  --danger-soft: #fde8e6;
+  --focus-ring: 0 0 0 2px #ffffff, 0 0 0 4px #12161c;
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, Consolas, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #0c0f13;
+    --panel: #171b21;
+    --field: #0f1317;
+    --hover: #252b33;
+    --line: #283039;
+    --line-control: #6c7682;
+    --ink: #eef2f6;
+    --ink-muted: #a1abb6;
+    --ink-faint: #5f6873;
+    --accent: #6ab3ee;
+    --accent-ink: #7cc0ff;
+    --accent-soft: #10314f;
+    --on-accent: #12161c;
+    --danger: #ff6a5c;
+    --danger-soft: #3f1411;
+    --focus-ring: 0 0 0 2px #171b21, 0 0 0 4px #eef2f6;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+  cursor: default;
+  user-select: none;
+}
+
+.bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  font-size: 14px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.square {
+  display: inline-block;
+  width: 0.3em;
+  height: 0.3em;
+  margin-left: 0.12em;
+  background: var(--accent);
+}
+
+.version {
+  margin-left: auto;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 24px 16px;
+}
+
+footer {
+  flex: none;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  /* As tall with no button in it as with one. */
+  min-height: 61px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 32px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.lead {
+  margin: 8px 0 0;
+  color: var(--ink-muted);
+}
+
+.group {
+  margin-top: 24px;
+}
+
+.folders {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+.folders li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.folders .more {
+  font-family: var(--font-sans);
+  user-select: none;
+}
+
+.label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+}
+
+.hint {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.01em;
+}
+
+.field {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+  outline: none;
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: text;
+  user-select: text;
+  transition:
+    background-color 80ms ease-out,
+    border-color 80ms ease-out;
+}
+
+.field:hover {
+  border-color: var(--ink-muted);
+}
+
+.field:focus-visible {
+  border-color: var(--ink);
+  background: var(--panel);
+  box-shadow: var(--focus-ring);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 80ms ease-out,
+    border-color 80ms ease-out;
+}
+
+footer .button {
+  height: 36px;
+  padding: 0 16px;
+  font-size: 13px;
+}
+
+.button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+
+.button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.button.primary:hover {
+  filter: brightness(0.93);
+}
+
+.button.secondary {
+  background: var(--panel);
+  color: var(--ink);
+  border-color: var(--line-control);
+}
+
+.button.secondary:hover {
+  background: var(--hover);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.switches {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group .switches {
+  flex-direction: row;
+  gap: 32px;
+}
+
+.options {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.switch {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--ink-muted);
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.track {
+  flex: none;
+  display: flex;
+  width: 28px;
+  height: 16px;
+  margin-top: 2px;
+  padding: 2px;
+  border: 1px solid var(--line-control);
+  border-radius: 4px;
+  background: var(--field);
+  transition:
+    background-color 80ms ease-out,
+    border-color 80ms ease-out;
+}
+
+.thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--ink-muted);
+  transition:
+    translate 80ms ease-out,
+    background-color 80ms ease-out;
+}
+
+.switch input:checked + .track {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.switch input:checked + .track .thumb {
+  translate: 12px;
+  background: var(--on-accent);
+}
+
+.switch input:focus-visible + .track {
+  box-shadow: var(--focus-ring);
+}
+
+.switch input:checked ~ .text {
+  color: var(--ink);
+}
+
+/* The one agent provider left on, which stays on. */
+.switch:has(input:disabled) {
+  cursor: default;
+}
+
+.switch input:disabled + .track {
+  opacity: 0.6;
+}
+
+.text {
+  font-weight: 500;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 24px 0 0;
+  color: var(--ink-muted);
+}
+
+/* The agents to install the skill for: a list with a filter on top that scrolls by itself, as the skills CLI's does. */
+.agents {
+  display: flex;
+  flex-direction: column;
+  margin-top: 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.filter {
+  flex: none;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  outline: none;
+  background: var(--field);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: text;
+  user-select: text;
+}
+
+.filter::placeholder {
+  color: var(--ink-faint);
+}
+
+.filter:focus-visible {
+  background: var(--panel);
+}
+
+.agent-list {
+  height: 196px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.agent {
+  /* Holds its hidden checkbox, which would otherwise reach past the list and make the whole page scroll. */
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  color: var(--ink-muted);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.agent:not(.locked):hover {
+  background: var(--hover);
+}
+
+.agent.locked {
+  cursor: default;
+}
+
+.agent input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.agent:has(input:checked) {
+  color: var(--ink);
+}
+
+.box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--line-control);
+  border-radius: 3px;
+  background: var(--field);
+}
+
+.box svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 2;
+  stroke-linecap: square;
+  visibility: hidden;
+}
+
+.agent input:checked + .box {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.agent input:checked + .box svg {
+  visibility: visible;
+}
+
+.locked .box {
+  opacity: 0.6;
+}
+
+.agent input:focus-visible + .box {
+  box-shadow: var(--focus-ring);
+}
+
+.who {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.who .name {
+  flex: none;
+}
+
+.who .path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent .also {
+  grid-column: 2 / 4;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+}
+
+.tag {
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+.tag:empty {
+  display: none;
+}
+
+.locked .tag {
+  background: var(--field);
+  color: var(--ink-muted);
+}
+
+.divider {
+  margin: 4px 8px;
+  border-top: 1px solid var(--line);
+}
+
+.none {
+  margin: 0;
+  padding: 8px;
+  color: var(--ink-muted);
+}
+
+.method {
+  margin-top: 20px;
+}
+
+.method.disabled .segmented {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--field);
+}
+
+.segmented button {
+  flex: 1;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.segmented button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.segmented button:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: var(--focus-ring);
+}
+
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: 10px;
+  align-items: center;
+  font-weight: 500;
+}
+
+.state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+}
+
+.state svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
+
+.state .failed {
+  color: var(--danger);
+}
+
+.state .noted {
+  color: var(--ink-muted);
+}
+
+.step:not(.is-working) .working,
+.step:not(.is-done) .done,
+.step:not(.is-noted) .noted,
+.step:not(.is-failed) .failed {
+  display: none;
+}
+
+/* The brand square building itself in four layers, as the app shows wherever something is working. */
+.working {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.working::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform-origin: bottom;
+  animation: build 1.6s steps(1, end) infinite;
+}
+
+@keyframes build {
+  0% {
+    transform: scaleY(0);
+  }
+  15% {
+    transform: scaleY(0.25);
+  }
+  30% {
+    transform: scaleY(0.5);
+  }
+  45% {
+    transform: scaleY(0.75);
+  }
+  60%,
+  92% {
+    transform: scaleY(1);
+  }
+  100% {
+    transform: scaleY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working::after {
+    animation: none;
+  }
+}
+
+/* The agent providers once installed, each with how it is signed in. */
+.providers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.provider {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.provider .state {
+  height: 20px;
+}
+
+.provider:not(.is-done) .done,
+.provider:not(.is-noted) .noted {
+  display: none;
+}
+
+.provider.is-noted .noted {
+  color: var(--ink-muted);
+}
+
+.about {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.about .name {
+  font-weight: 600;
+}
+
+.about .standing {
+  color: var(--ink-muted);
+  font-weight: 500;
+}
+
+.provider.is-done .standing {
+  color: var(--ink);
+}
+
+/* What keeps one from running, which can be long, cut to a few lines with the rest on hover. */
+.about .problem {
+  display: -webkit-box;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.01em;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.sign-in {
+  gap: 6px;
+}
+
+.sign-in svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: square;
+}
+
+.note {
+  grid-column: 2;
+  margin: 2px 0 0;
+  color: var(--ink-muted);
+  font-weight: 400;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.notice {
+  margin: 16px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.notice.danger {
+  background: var(--danger-soft);
+}

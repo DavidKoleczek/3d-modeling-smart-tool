@@ -54,8 +54,20 @@
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "esbenp.prettier-vscode"
     },
+    "[rust]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "rust-lang.rust-analyzer"
+    },
     "prettier.requireConfig": true,
     "eslint.workingDirectories": ["app"],
+    "rust-analyzer.linkedProjects": ["windows/Cargo.toml"],
+    "rust-analyzer.check.command": "clippy",
+    "files.watcherExclude": {
+        "**/windows/target/**": true
+    },
+    "search.exclude": {
+        "**/windows/target": true
+    },
     "tailwindCSS.lint.suggestCanonicalClasses": "ignore",
     "tailwindCSS.lint.cssConflict": "ignore"
 }

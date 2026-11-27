@@ -2,6 +2,7 @@ import type { CallToolResult } from "@modelcontextprotocol/client";
 
 import { AppError, type FailureReason } from "@/lib/errors";
 import { app } from "@/lib/host";
+import { gotNoAnswer } from "@/lib/restart";
 
 const LIST_TOOL = "list_3d_models";
 const VIEW_TOOL = "view_3d_model";
@@ -38,6 +39,14 @@ const READ_LIBRARY_TOOL = "read_app_library";
 const SAVE_PINS_TOOL = "save_app_pins";
 const LIST_FOLDER_TOOL = "list_reference_folder";
 const KEEP_UPLOAD_TOOL = "keep_upload";
+const READ_WINDOWS_APP_TOOL = "read_windows_app";
+const CHANGE_WINDOWS_APP_TOOL = "change_windows_app";
+const CHECK_FOR_UPDATE_TOOL = "check_for_update";
+const INSTALL_UPDATE_TOOL = "install_update";
+const INSTALL_AGENT_PROVIDER_TOOL = "install_agent_provider";
+const LIST_SKILL_AGENTS_TOOL = "list_skill_agents";
+const INSTALL_SKILL_TOOL = "install_skill";
+const REMOVE_SKILL_TOOL = "remove_skill";
 const MODEL_FILE_PREFIX = "modeling-3d://models/";
 const REFERENCE_FILE_PREFIX = "modeling-3d://references/";
 // Starting a run waits for its agent to start, which can take a while on a cold machine.
@@ -48,6 +57,8 @@ const CHECK_TIMEOUT_MS = 60_000;
 const DELETE_TIMEOUT_MS = 60_000;
 // The file dialog waits on the person, who may take a while to choose.
 const CHOOSE_TIMEOUT_MS = 30 * 60_000;
+// Longer than the Windows app gives the skills CLI to get ready, which can mean downloading Node.js first.
+const SKILL_TIMEOUT_MS = 6 * 60_000;
 // What a call fails with when the app no longer shows the workspace the view does.
 const WORKSPACE_LOST: ReadonlySet<FailureReason | null> = new Set([
   "workspace-changed",
@@ -320,6 +331,46 @@ export type AgentProviderStatus = {
   problem: string | null;
 };
 
+/** `SkillMode` in schemas.py: how an agent with a folder of its own gets the skill, a link or a copy of its own. */
+export type SkillMode = "symlink" | "copy";
+
+/** `WindowsApp` in schemas.py: the Windows app by the clock, when it is what started the server. */
+export type WindowsApp = {
+  version: string;
+  /** The newer version there is to update to. */
+  update: string | null;
+  updating: boolean;
+  start_at_sign_in: boolean;
+  /** Its Agent Skill, when it is installed. */
+  skill: {
+    /** The agents it is for, as the skills CLI names them. */
+    agents: string[];
+    mode: SkillMode;
+  } | null;
+};
+
+/** `SkillAgent` in schemas.py: an agent the skills CLI knows, which the Agent Skill can be installed for. */
+export type SkillAgent = {
+  id: string;
+  name: string;
+  /** Where it reads its skills from. */
+  folder: string;
+  /** Whether it reads the shared folder, which always has the skill. */
+  shares: boolean;
+  /** Whether it is on this computer. */
+  detected: boolean;
+};
+
+/** `SkillAgents` in schemas.py. */
+export type SkillAgents = {
+  /** The person's folder, which the agents' folders are in. */
+  home: string;
+  shared: string;
+  agents: SkillAgent[];
+  /** The ids of the agents on this computer that have the skill. */
+  installed: string[];
+};
+
 /** `RecentWorkspace` in schemas.py. */
 export type RecentWorkspace = { path: string; missing: boolean };
 
@@ -442,10 +493,19 @@ async function call(
   args: Record<string, unknown>,
   timeout?: number,
 ): Promise<CallToolResult> {
-  const result = await app.callServerTool(
-    { name, arguments: shown === null ? args : { ...args, workspace: shown } },
-    timeout ? { timeout } : undefined,
-  );
+  let result: CallToolResult;
+  try {
+    result = await app.callServerTool(
+      {
+        name,
+        arguments: shown === null ? args : { ...args, workspace: shown },
+      },
+      timeout ? { timeout } : undefined,
+    );
+  } catch (cause) {
+    gotNoAnswer();
+    throw cause;
+  }
   if (result.isError) {
     const failure = result.structuredContent as
       { reason?: FailureReason | null; model?: string | null } | undefined;
@@ -829,4 +889,65 @@ export async function readReferenceFile(path: string): Promise<string> {
     throw new AppError(`${uri} came back without its file.`);
   }
   return `data:${content.mimeType ?? "image/png"};base64,${content.blob}`;
+}
+
+/** The Windows app, or null when the server was started any other way. */
+export async function readWindowsApp(): Promise<WindowsApp | null> {
+  const structured = await structuredFrom(READ_WINDOWS_APP_TOOL, {});
+  return (structured.windows_app as WindowsApp | null) ?? null;
+}
+
+/** Change the Windows app's settings that are given, leaving the others. */
+export async function changeWindowsApp(changes: {
+  start_at_sign_in?: boolean;
+}): Promise<WindowsApp> {
+  return (await structuredFrom(CHANGE_WINDOWS_APP_TOOL, changes)) as WindowsApp;
+}
+
+/** Have the Windows app look for a newer version now. */
+export async function checkForUpdate(): Promise<WindowsApp> {
+  return (await structuredFrom(CHECK_FOR_UPDATE_TOOL, {})) as WindowsApp;
+}
+
+/** Ends the server once the newer version is downloaded, and starts the new one on the same port. */
+export async function installUpdate(): Promise<WindowsApp> {
+  return (await structuredFrom(INSTALL_UPDATE_TOOL, {})) as WindowsApp;
+}
+
+/** Ends the server, installs the tool again with the agent provider in a window of its own, and starts it again. */
+export async function installAgentProvider(
+  agentProvider: string,
+): Promise<WindowsApp> {
+  return (await structuredFrom(INSTALL_AGENT_PROVIDER_TOOL, {
+    agent_provider: agentProvider,
+  })) as WindowsApp;
+}
+
+/** The first time, the Windows app gets the skills CLI ready first, which can take minutes. */
+export async function listSkillAgents(): Promise<SkillAgents> {
+  return (await structuredFrom(
+    LIST_SKILL_AGENTS_TOOL,
+    {},
+    SKILL_TIMEOUT_MS,
+  )) as SkillAgents;
+}
+
+/** Install the skill in the shared folder and for these agents, and take it from the others. */
+export async function installSkill(
+  agents: string[],
+  mode: SkillMode,
+): Promise<WindowsApp> {
+  return (await structuredFrom(
+    INSTALL_SKILL_TOOL,
+    { agents, mode },
+    SKILL_TIMEOUT_MS,
+  )) as WindowsApp;
+}
+
+export async function removeSkill(): Promise<WindowsApp> {
+  return (await structuredFrom(
+    REMOVE_SKILL_TOOL,
+    {},
+    SKILL_TIMEOUT_MS,
+  )) as WindowsApp;
 }

@@ -11,6 +11,28 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "Windows app (sandbox)",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": ["build", "--bin=Modeling3DSetup"],
+                "cwd": "${workspaceFolder}/windows"
+            },
+            "args": ["--sandbox", "${workspaceFolder}/temp/windows-sandbox"],
+            "cwd": "${workspaceFolder}/windows"
+        },
+        {
+            "name": "Windows app tray (sandbox)",
+            "type": "lldb",
+            "request": "launch",
+            "cargo": {
+                "args": ["build", "--bin=Modeling3DSetup"],
+                "cwd": "${workspaceFolder}/windows"
+            },
+            "args": ["--sandbox", "${workspaceFolder}/temp/windows-sandbox", "--background"],
+            "cwd": "${workspaceFolder}/windows"
         }
     ]
 }

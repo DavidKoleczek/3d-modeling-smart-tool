@@ -51,6 +51,16 @@ This is a Smart Tool that must conform to Microsoft's [Amplifier Smart Tool Spec
 - Run `prek run --all-files` when you are done with code changes and fix everything it reports; it runs the lock, lint, format, and type checks.
 - NEVER add a bare `*,` keyword-only marker to a function signature. Write plain positional-or-keyword parameters and call them by keyword.
 
+## Rust Development Instructions
+
+- The Windows app in `windows/` is Rust. Run cargo from that folder. Its toolchain is pinned in `rust-toolchain.toml`.
+- The version, the repository, the wheel, the skill, and the icon come from `build.rs`. NEVER copy them into the crate.
+- Keep `unsafe` in the module that wraps the Win32 calls, and give every block a `// SAFETY:` comment.
+- NEVER use `#[allow(...)]` to quiet a lint. It is better to leave the issue and have the user work with you to fix it.
+- When adding new dependencies, you **must** use `cargo add <crate>`, and only take a version at least 5 days old.
+- Try changes in the sandbox CONTRIBUTING.md describes, never against the real install.
+- Run `uv run build-windows.py test` when you are done with code changes, besides `prek run --all-files`.
+
 ## Key Files
 
 @CONTRIBUTING.md
@@ -74,3 +84,7 @@ The repositories are (add to the list as more are needed, the one exception to m
 - https://github.com/microsoft/amplifier-smart-tool-reality-check
 - https://github.com/astral-sh/uv
 - https://github.com/DavidKoleczek/reference-store
+- https://github.com/vercel-labs/skills - skills.sh CLI, which installs skills for agents at project or user level.
+- https://github.com/tauri-apps/tao - windows and the event loop of the Windows app
+- https://github.com/tauri-apps/tray-icon - the Windows app's tray icon and its menu
+- https://github.com/tauri-apps/wry - the WebView2 window setup is shown in

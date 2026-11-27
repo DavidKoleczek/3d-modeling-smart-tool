@@ -35,21 +35,19 @@ from mcp.types import (
     PaginatedRequestParams,
     ReadResourceRequestParams,
     ReadResourceResult,
-    Resource,
-    ResourceTemplate,
     TextContent,
     TextResourceContents,
-    Tool,
 )
 
+from modeling_3d.capabilities.app import windows_app
 from modeling_3d.capabilities.app.pins import (
     app_state_path,
     check_pins,
     clear_unpinned,
     keep,
     list_folder,
-    remember,
     read_app_state,
+    remember,
     used_here,
     write_app_state,
 )
@@ -57,24 +55,29 @@ from modeling_3d.capabilities.app.server import App, serve_app, view
 from modeling_3d.capabilities.app.settings import read_app_settings, save_app_settings
 from modeling_3d.capabilities.app.steps import read_activity_steps, save_activity_step
 from modeling_3d.capabilities.app.tools import (
-    APP_ONLY,
     CANCEL_MODEL,
+    CHANGE_WINDOWS_APP,
+    CHECK_FOR_UPDATE,
     CHECK_MODEL,
     CHOOSE_FILES,
     CHOOSE_FOLDER,
     CHOOSE_INTELLIGENCE,
     CHOOSE_WORKSPACE,
     COLOR_MODEL,
-    CREATE_WORKSPACE,
-    DETAIL_MODEL,
     CREATE_MODEL,
+    CREATE_WORKSPACE,
     DELETE_MODEL,
+    DETAIL_MODEL,
     FORGET_WORKSPACE,
+    INSTALL_AGENT_PROVIDER,
+    INSTALL_SKILL,
+    INSTALL_UPDATE,
     KEEP_UPLOAD,
     LIST_AGENT_PROVIDERS,
     LIST_FOLDER,
     LIST_INTELLIGENCE,
     LIST_MODELS,
+    LIST_SKILL_AGENTS,
     MODEL_FILE,
     MODEL_FILE_PREFIX,
     OPEN_APP,
@@ -86,9 +89,11 @@ from modeling_3d.capabilities.app.tools import (
     READ_SETTINGS,
     READ_STEPS,
     READ_TOOL_CALL,
+    READ_WINDOWS_APP,
     READ_WORKSPACES,
     REFERENCE_FILE,
     REFERENCE_FILE_PREFIX,
+    REMOVE_SKILL,
     RENAME_MODEL,
     RIG_MODEL,
     SAVE_PINS,
@@ -103,6 +108,7 @@ from modeling_3d.capabilities.app.tools import (
     VIEW_TOOLS,
     VIEW_URI,
 )
+from modeling_3d.capabilities.app.windows_app import WindowsAppAddress
 from modeling_3d.capabilities.app.workspaces import (
     default_folder,
     forget_workspace,
@@ -112,11 +118,9 @@ from modeling_3d.capabilities.app.workspaces import (
     record_workspace,
 )
 from modeling_3d.schemas import (
-    AGENT_PROVIDERS,
     DEFAULT_REASONING_EFFORT,
     MODELS_FOLDER,
     NOT_GIVEN,
-    REASONING_EFFORTS,
     AgentProviders,
     AppFolders,
     AppIntelligence,
@@ -128,9 +132,9 @@ from modeling_3d.schemas import (
     DefaultPrompt,
     IntelligenceChoice,
     IntelligenceModels,
-    Modeling3dError,
     ModelActivity,
     ModelCheck,
+    Modeling3dError,
     ModelListing,
     ModelMode,
     ModelSummary,
@@ -170,7 +174,10 @@ UPLOAD_LIFETIME_SECONDS = 24 * 60 * 60
 REFERENCE_TYPES = (".py", ".glb")
 # A file chosen in the file dialog comes back with a preview when it is an image the view shows, up to this size, as
 # the view previews one it sends.
-PREVIEW_TYPES = {**{suffix: kind for suffix, kind in MODEL_FILE_TYPES.items() if kind.startswith("image/")}, ".gif": "image/gif"}
+PREVIEW_TYPES = {
+    **{suffix: kind for suffix, kind in MODEL_FILE_TYPES.items() if kind.startswith("image/")},
+    ".gif": "image/gif",
+}
 PREVIEW_BYTES = 8 * 1024 * 1024
 CHOOSE_TITLE = "Choose references"
 CHOOSE_FOLDER_TITLE = "Choose a folder to pin"
@@ -182,6 +189,22 @@ WORKSPACE_INSTEAD = "Start the app on the folder instead, with `modeling-3d app 
 # What a folder staged from this machine leaves out: what a folder reference leaves out when it is copied in, hidden
 # folders and tool caches, along with hidden files.
 STAGE_SKIPPED = shutil.ignore_patterns(".*", "node_modules", "__pycache__")
+# endregion
+
+# region: The Windows app
+WINDOWS_APP_TOOLS = {
+    tool.name
+    for tool in (
+        READ_WINDOWS_APP,
+        CHANGE_WINDOWS_APP,
+        CHECK_FOR_UPDATE,
+        INSTALL_UPDATE,
+        INSTALL_AGENT_PROVIDER,
+        LIST_SKILL_AGENTS,
+        INSTALL_SKILL,
+        REMOVE_SKILL,
+    )
+}
 # endregion
 
 # region: What the app keeps and who it acts as
@@ -246,6 +269,7 @@ class AppServer:
         open_folder: Callable[[Path], None],
         choose_files: Callable[[Path, str, str], list[Path]],
         choose_folder: Callable[[Path, str, str], Path | None],
+        windows_app: WindowsAppAddress | None,
     ) -> None:
         # None until one is picked, when none was given and none opened before is still a folder.
         self.workspace = workspace if workspace is not None else last_workspace(workspaces_path)
@@ -254,6 +278,8 @@ class AppServer:
         self._open_folder = open_folder
         self._choose_files = choose_files
         self._choose_folder = choose_folder
+        # Where the Windows app that started this server listens, which only it knows; None when another started it.
+        self._windows_app = windows_app
         # Whether a file or folder dialog is showing, so a second click doesn't show another.
         self._choosing = False
         self._list_models = list_models
@@ -478,6 +504,8 @@ class AppServer:
         if params.name == LIST_AGENT_PROVIDERS.name:
             providers = await asyncio.to_thread(self._list_agent_providers)
             return _structured(providers.model_dump(mode="json"))
+        if params.name in WINDOWS_APP_TOOLS:
+            return await self._ask_windows_app(params.name, arguments)
         if params.name == READ_WORKSPACES.name:
             workspaces = await asyncio.to_thread(self._workspaces)
             return _structured(workspaces.model_dump(mode="json"))
@@ -591,6 +619,31 @@ class AppServer:
             return _structured({"path": str(kept)})
         known = ", ".join(tool.name for tool in [OPEN_APP, *VIEW_TOOLS])
         raise Modeling3dError(f"'{params.name}' is not a tool of this server. The tools are: {known}.")
+
+    async def _ask_windows_app(self, name: str, arguments: dict[str, Any]) -> CallToolResult:
+        """Ask the Windows app that started this server what the view asked it, which none other can answer."""
+        address = self._windows_app
+        if name == READ_WINDOWS_APP.name:
+            found = await asyncio.to_thread(windows_app.state, address)
+            return _structured({"windows_app": found.model_dump(mode="json") if found else None})
+        if name == LIST_SKILL_AGENTS.name:
+            agents = await asyncio.to_thread(windows_app.list_agents, address)
+            return _structured(agents.model_dump(mode="json"))
+        if name == CHANGE_WINDOWS_APP.name:
+            changed = await asyncio.to_thread(windows_app.change, address, arguments.get("start_at_sign_in"))
+        elif name == CHECK_FOR_UPDATE.name:
+            changed = await asyncio.to_thread(windows_app.check_for_update, address)
+        elif name == INSTALL_UPDATE.name:
+            changed = await asyncio.to_thread(windows_app.install_update, address)
+        elif name == INSTALL_AGENT_PROVIDER.name:
+            changed = await asyncio.to_thread(windows_app.install_agent_provider, address, arguments["agent_provider"])
+        elif name == INSTALL_SKILL.name:
+            changed = await asyncio.to_thread(
+                windows_app.install_skill, address, arguments["agents"], arguments["mode"]
+            )
+        else:
+            changed = await asyncio.to_thread(windows_app.remove_skill, address)
+        return _structured(changed.model_dump(mode="json"))
 
     async def _start(self, arguments: dict[str, Any], mode: ModelMode, workspace: Path) -> CallToolResult:
         """Start a run that shapes, rigs, or colors the model in `workspace`, with what the view sent."""

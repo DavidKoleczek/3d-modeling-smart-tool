@@ -8,14 +8,16 @@ import { Notice } from "@/components/ui/notice";
 import { describe } from "@/lib/errors";
 import { connect } from "@/lib/host";
 import { loadSettings } from "@/lib/settings";
+import { loadWindowsApp } from "@/lib/windowsApp";
 import { refreshWorkspaces } from "@/lib/workspaces";
 
 const root = createRoot(document.getElementById("root")!);
 
 try {
   await connect();
-  // Before the view first paints, so it opens in the person's theme and layout, on the workspace the app shows.
-  await Promise.all([loadSettings(), refreshWorkspaces()]);
+  // Before the view first paints, so it opens in the person's theme and layout, on the workspace the app shows, with
+  // what the Windows app keeps when it started the server.
+  await Promise.all([loadSettings(), refreshWorkspaces(), loadWindowsApp()]);
   root.render(
     <StrictMode>
       <TooltipProvider>

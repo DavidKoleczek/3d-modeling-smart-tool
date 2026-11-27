@@ -26,7 +26,8 @@ export type FailureReason =
   | "bad-pins"
   | "no-such-check"
   | "not-built"
-  | "bad-glb";
+  | "bad-glb"
+  | "no-windows-app";
 
 /** A failure from the server, with which one it was when the library named it. */
 export class AppError extends Error {

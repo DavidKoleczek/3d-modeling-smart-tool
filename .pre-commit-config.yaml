@@ -57,3 +57,18 @@ repos:
         language: system
         files: ^app/
         pass_filenames: false
+
+      - id: windows-format
+        name: windows rustfmt
+        entry: uv run build-windows.py format
+        language: system
+        types: [rust]
+        files: ^windows/
+        pass_filenames: false
+
+      - id: windows-lint
+        name: windows clippy
+        entry: uv run build-windows.py lint
+        language: system
+        files: ^windows/
+        pass_filenames: false

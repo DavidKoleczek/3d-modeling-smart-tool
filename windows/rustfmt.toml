@@ -1,0 +1,3 @@
+max_width = 120
+# Fill a line before breaking it, as ruff does for the Python.
+use_small_heuristics = "Max"

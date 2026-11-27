@@ -11,13 +11,18 @@ Drive it from an agent like Codex or Claude Code and steer and monitor the work 
 
 ## Quickstart
 
+### Windows App
+
+Download the latest executable from [Releases](https://github.com/DavidKoleczek/3d-modeling-smart-tool/releases/latest) which will install the tool, keep it updated, and give you a tray icon with useful functionality. More in [docs/03-windows-app](docs/03-windows-app.md).
+
+
+### Manual Install
+
 Prerequisites:
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), which the Windows app installs for you
 - At least one agent provider for building models:
   - `claude`: `ANTHROPIC_API_KEY`, or any of its other supported modes of [authentication](https://code.claude.com/docs/en/agent-sdk/quickstart).
   - `codex`: the [Codex CLI](https://github.com/openai/codex) signed in with ChatGPT or an API key, see [authentication](https://developers.openai.com/codex/auth).
-
-### With an agent
 
 1. Install the tool and the skill that teaches your agent to use it:
 
@@ -27,18 +32,13 @@ Prerequisites:
    npx skills add DavidKoleczek/3d-modeling-smart-tool
    ```
 
-1. Start your agent in your project's top-level directory and ask for one:
+2. Start your agent in your project's top-level directory and ask for one:
 
    > Open the 3D modeling app and make a brown bear like bear.png
 
 The agent opens the app, in your browser or inline in hosts that render [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) and builds the model in `.modeling-3d/bear`.
-Keep going from either side:
 
-> Make the snout longer, and give it a cub that works from the bear
-
-> What did I change in the app? Pick up from there.
-
-### Without an agent
+1. Or run the app
 
 ```bash
 modeling-3d app
@@ -136,7 +136,7 @@ To use it as a library, from another project:
 uv add "modeling-3d[all] @ git+https://github.com/DavidKoleczek/3d-modeling-smart-tool"
 ```
 
-To update:
+The Windows app offers its own updates from the tray, and is uninstalled from Windows' installed apps. Otherwise, to update:
 
 ```bash
 npx skills update   # add -g for global installs

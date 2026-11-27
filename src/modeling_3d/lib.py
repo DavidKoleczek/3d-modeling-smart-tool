@@ -9,6 +9,7 @@ from modeling_3d.capabilities.app import mcp_server as app_server_module
 from modeling_3d.capabilities.app import pins as app_pins
 from modeling_3d.capabilities.app import server as app_module
 from modeling_3d.capabilities.app import settings as app_settings
+from modeling_3d.capabilities.app import windows_app as app_windows_app
 from modeling_3d.capabilities.app import workspaces as app_workspaces
 from modeling_3d.capabilities.app.mcp_server import AppServer
 from modeling_3d.capabilities.blender import blender
@@ -68,7 +69,9 @@ def app_server(workspace: Path | None = None) -> AppServer:
     How the person set up the app, such as its theme and pane sizes, is theirs in every workspace, kept in
     `app-settings.json` in their config directory, with the workspaces opened in the app, newest first, in
     `app-workspaces.json` beside it. What they pinned in it is kept for its workspace alone, in its
-    `.modeling-3d/.app-state/`.
+    `.modeling-3d/.app-state/`. When the Windows app started this process, the view also shows and changes what it
+    keeps, its updates, and its Agent Skill, through it; where it listens is taken out of this process's environment
+    here, so nothing the app starts, such as a run's agent, can reach it.
 
     Args:
         workspace: The workspace whose models the app shows, as for `create_3d_model`. When omitted, the one opened
@@ -99,6 +102,7 @@ def app_server(workspace: Path | None = None) -> AppServer:
         open_folder=app_folders.open_folder,
         choose_files=app_folders.choose_files,
         choose_folder=app_folders.choose_folder,
+        windows_app=app_windows_app.take_address(),
     )
 
 

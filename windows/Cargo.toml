@@ -1,0 +1,43 @@
+[package]
+name = "modeling-3d-setup"
+# The version shown and compared is the tool's, which build.rs reads from pyproject.toml.
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "MIT"
+authors = ["David"]
+description = "Installs and runs 3D Modeling on Windows"
+
+[[bin]]
+name = "Modeling3DSetup"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+tao = { version = "0.37", default-features = false, features = ["rwh_06"] }
+tray-icon = { version = "0.26", default-features = false }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Networking_WinHttp", "Win32_Security", "Win32_Security_Cryptography", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-registry = "0.6"
+wry = { version = "0.57", default-features = false, features = ["os-webview"] }
+
+[build-dependencies]
+ico = "0.6"
+resvg = { version = "0.50", default-features = false }
+toml = { version = "1.2", default-features = false, features = [
+    "parse",
+    "std",
+] }
+winresource = "0.1"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

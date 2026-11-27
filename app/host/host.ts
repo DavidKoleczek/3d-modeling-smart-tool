@@ -12,6 +12,7 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 
+import { SERVER_RESTARTING } from "../src/lib/restart";
 import { QuietPostMessageTransport } from "../src/lib/transport";
 
 const HOST = { name: "3D Modeling browser host", version: "1.0.0" };
@@ -19,6 +20,11 @@ const VIEW_URI = "ui://modeling-3d/app";
 const SANDBOX_ATTRIBUTE = "allow-scripts allow-same-origin allow-forms";
 const PROXY_READY: McpUiSandboxProxyReadyNotification["method"] =
   "ui/notifications/sandbox-proxy-ready";
+const RESTART_CHECK_MS = 500;
+// An update is downloaded before the server ends, and installing an agent provider can wait on runs to end, so the
+// wait for the server to come back is a long one, and goes on more slowly after it.
+const RESTART_PATIENCE_MS = 10 * 60 * 1000;
+const LATE_CHECK_MS = 5000;
 
 const darkScheme = window.matchMedia("(prefers-color-scheme: dark)");
 const theme = (): McpUiTheme => (darkScheme.matches ? "dark" : "light");
@@ -27,11 +33,17 @@ const containerDimensions = () => ({
   height: window.innerHeight,
 });
 
-function sandboxUrl(): URL {
-  const port = document
+/** The port a page was served its sandbox on, which each run of the server picks anew. */
+function sandboxPort(page: Document): string | null {
+  const port = page
     .querySelector<HTMLMetaElement>('meta[name="modeling-3d-sandbox-port"]')
     ?.content.trim();
-  if (!port || !/^\d+$/.test(port)) {
+  return port && /^\d+$/.test(port) ? port : null;
+}
+
+function sandboxUrl(): URL {
+  const port = sandboxPort(document);
+  if (!port) {
     throw new Error(
       "This page was not served by `modeling-3d app`, so it has no sandbox to load the view in.",
     );
@@ -122,6 +134,78 @@ function createBridge(client: Client): AppBridge {
   return bridge;
 }
 
+function showStatus(text: string) {
+  const status = document.getElementById("status")!;
+  status.textContent = text;
+  status.hidden = false;
+}
+
+/** Which run of the server answers now, by its sandbox port, or null when none answers. */
+async function servingNow(): Promise<string | null> {
+  try {
+    const response = await fetch("/", { cache: "no-store" });
+    const page = new DOMParser().parseFromString(
+      await response.text(),
+      "text/html",
+    );
+    return response.ok ? sandboxPort(page) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Loads the page again on the server that follows this one, once the view says this one is about to end, as it is
+ * when the Windows app updates or installs an agent provider. The view's connection is to the server that ended.
+ */
+function reloadAfterRestart(iframe: HTMLIFrameElement) {
+  const served = sandboxPort(document);
+  let watching = false;
+  const watch = async () => {
+    const deadline = Date.now() + RESTART_PATIENCE_MS;
+    let ended = false;
+    let late = false;
+    for (;;) {
+      const now = await servingNow();
+      if (now !== null && (ended || now !== served)) {
+        location.reload();
+        return;
+      }
+      if (now === null && !ended) {
+        ended = true;
+        iframe.style.display = "none";
+        showStatus(
+          "3D Modeling isn't running right now. This page loads again once it is back.",
+        );
+      }
+      if (!late && Date.now() > deadline) {
+        late = true;
+        if (!ended) {
+          // It never ended, so whatever was to end it didn't happen, and the view goes on as it was.
+          watching = false;
+          return;
+        }
+        showStatus(
+          "3D Modeling didn't come back. If its setup window is gone, open it from its shortcut. This page loads again once it is back.",
+        );
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, late ? LATE_CHECK_MS : RESTART_CHECK_MS),
+      );
+    }
+  };
+  window.addEventListener("message", ({ source, data }) => {
+    if (
+      source === iframe.contentWindow &&
+      data?.type === SERVER_RESTARTING &&
+      !watching
+    ) {
+      watching = true;
+      void watch();
+    }
+  });
+}
+
 async function main(): Promise<void> {
   const client = new Client(HOST, {
     capabilities: {
@@ -133,6 +217,7 @@ async function main(): Promise<void> {
   );
   const view = await readView(client);
   const iframe = await loadSandbox(sandboxUrl(), view.permissions);
+  reloadAfterRestart(iframe);
 
   const bridge = createBridge(client);
   const initialized = new Promise<void>((resolve) => {
@@ -148,8 +233,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((cause: unknown) => {
-  const status = document.getElementById("status")!;
-  status.textContent = `Could not open the app. ${cause instanceof Error ? cause.message : String(cause)} Check that what served it, \`modeling-3d app\` or an agent session, is still running, then reload.`;
-  status.hidden = false;
+  showStatus(
+    `Could not open the app. ${cause instanceof Error ? cause.message : String(cause)} Check that what served it, \`modeling-3d app\` or an agent session, is still running, then reload.`,
+  );
   document.querySelector("iframe")?.remove();
 });
