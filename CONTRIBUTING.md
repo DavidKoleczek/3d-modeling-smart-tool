@@ -9,7 +9,7 @@ Install:
 - [Git](https://git-scm.com/)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/): Manages Python environments
 - [prek](https://github.com/j178/prek): Used for precommit hooks. Recommended to install through PyPI/uv with `uv tool install prek`. Use `uv tool upgrade prek` to update it.
-- [Node.js](https://nodejs.org/) 22+ and [pnpm](https://pnpm.io/installation), optional: only to change the app's frontend. The compiled app is committed, so running it needs neither.
+- [Node.js](https://nodejs.org/) 22+ and [pnpm](https://pnpm.io/installation), optional: only to change the app's frontend.
 - [Codex CLI](https://github.com/openai/codex) [signed in](https://developers.openai.com/codex/auth) with ChatGPT or an API key, for intelligent features through the `codex` agent provider.
 - [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/quickstart), for intelligent features through the `claude` agent provider.
 
@@ -136,7 +136,11 @@ uv run build-app.py
 
 #### References
 
-`reference/` holds gitignored clones of the repositories worth reading while developing this tool. `uv run setup-for-dev.py` clones any that are missing.
+`reference/` holds gitignored clones of the repositories worth reading while developing this tool. `uv run setup-for-dev.py` clones any that are missing and moves the rest to the latest commit of their branch, keeping local edits.
+
+#### Dependencies
+
+`.agents/skills/dependency-update/SKILL.md` updates the Python and app dependencies, pnpm, and the `reference/` clones within their cooldown and caps. Ask an agent to run the dependency-update skill.
 
 #### Conformance
 

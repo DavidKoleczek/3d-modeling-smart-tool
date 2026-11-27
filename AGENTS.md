@@ -73,3 +73,4 @@ The repositories are (add to the list as more are needed, the one exception to m
 - https://github.com/microsoft/amplifier-smart-tool-creator
 - https://github.com/microsoft/amplifier-smart-tool-reality-check
 - https://github.com/astral-sh/uv
+- https://github.com/DavidKoleczek/reference-store

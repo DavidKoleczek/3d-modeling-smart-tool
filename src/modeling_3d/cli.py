@@ -82,9 +82,9 @@ class SmartToolTyper(typer.Typer):
     """A Typer whose commands are CapabilityCommand by default, so a capability added later inherits the help split."""
 
     def command(
-        self, *args: Any, cls: type[TyperCommand] = CapabilityCommand, **kwargs: Any
+        self, *args: Any, cls: type[TyperCommand] | None = CapabilityCommand, **kwargs: Any
     ) -> Callable[[CommandFunctionType], CommandFunctionType]:
-        return super().command(*args, cls=cls, **kwargs)
+        return super().command(*args, cls=CapabilityCommand if cls is None else cls, **kwargs)
 
 
 app = SmartToolTyper(

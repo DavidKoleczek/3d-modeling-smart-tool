@@ -20,6 +20,7 @@ REFERENCES = [
     "https://github.com/microsoft/amplifier-smart-tool-creator",
     "https://github.com/microsoft/amplifier-smart-tool-reality-check",
     "https://github.com/astral-sh/uv",
+    "https://github.com/DavidKoleczek/reference-store",
 ]
 
 
@@ -28,22 +29,29 @@ def run(command: str) -> None:
     subprocess.run(shlex.split(command), check=True)
 
 
-def clone_missing_references() -> None:
-    """Clone every reference repository that is absent; they are gitignored, so a fresh clone has none."""
+def clone_or_update_references() -> None:
+    """Clone every reference repository that is absent, and move each present one to its branch's latest commit."""
     for repository in REFERENCES:
         destination = REFERENCE_ROOT / repository.rsplit("/", 1)[-1]
-        if destination.exists():
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--single-branch", repository, str(destination)], check=True
+            )
             continue
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "clone", "--depth", "1", "--single-branch", repository, str(destination)], check=True)
+        subprocess.run(["git", "-C", str(destination), "fetch", "--depth", "1"], check=True)
+        # A shallow fetch leaves nothing to fast-forward from, so the clone is moved instead. `--keep` keeps any
+        # local edits, and stops rather than overwrite one.
+        subprocess.run(["git", "-C", str(destination), "reset", "--keep", "FETCH_HEAD"], check=True)
 
 
 def install_app_dependencies() -> None:
     """Only when pnpm is present; the compiled app is committed, so Node is needed only to change it."""
-    if shutil.which("pnpm") is None:
+    pnpm = shutil.which("pnpm")
+    if pnpm is None:
         print("pnpm not found; skipping the app's dependencies. Install Node 22+ and pnpm to change the frontend.")
         return
-    run("pnpm --dir app install --frozen-lockfile")
+    subprocess.run([pnpm, "--dir", "app", "install", "--frozen-lockfile"], check=True)
 
 
 def main() -> None:
@@ -51,7 +59,7 @@ def main() -> None:
     run("prek --version")
     run("uv sync --frozen --all-extras --all-groups")
     run("prek install")
-    clone_missing_references()
+    clone_or_update_references()
     install_app_dependencies()
 
 
