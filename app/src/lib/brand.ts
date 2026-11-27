@@ -1,5 +1,5 @@
 /** The app's name, as its windows, titles, and wordmark show it; the tool and its server keep their own. */
-export const APP_NAME = "3D Modeling Smart Tool";
+export const APP_NAME = "3D Modeling";
 
 /** What the server filled into the view's meta tag `name`; nothing when it was served without one. */
 function served(name: string): string | null {

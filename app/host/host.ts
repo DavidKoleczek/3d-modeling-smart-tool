@@ -64,7 +64,7 @@ function loadSandbox(
   permissions?: McpUiResourcePermissions,
 ): Promise<HTMLIFrameElement> {
   const iframe = document.createElement("iframe");
-  iframe.title = "3D Modeling Smart Tool";
+  iframe.title = "3D Modeling";
   iframe.setAttribute("sandbox", SANDBOX_ATTRIBUTE);
   const allow = buildAllowAttribute(permissions);
   if (allow) {

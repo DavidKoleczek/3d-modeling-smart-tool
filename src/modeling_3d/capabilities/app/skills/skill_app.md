@@ -1,4 +1,4 @@
-`app` serves the app, named 3D Modeling Smart Tool, in a browser page on this machine, prints its URL, and keeps serving until interrupted. Only this machine can reach it.
+`app` serves the app, named 3D Modeling, in a browser page on this machine, prints its URL, and keeps serving until interrupted. Only this machine can reach it.
 
 The app opens on the workspace opened last, or asks for one: the workspaces opened in it, newest
 first, the platform's folder dialog, and a new folder to make for one. The top bar names the

@@ -939,7 +939,7 @@ class AppServer:
         opened = isinstance(answer, ElicitResult) and answer.action == "accept"
         if not embedded and not self._offered and _takes_url_elicitation(ctx):
             self._offered = True
-            message = "Open the 3D Modeling Smart Tool app to watch the work and steer it."
+            message = "Open the 3D Modeling app to watch the work and steer it."
             elicitation_id = str(uuid.uuid4())
             # Before 2026-07-28 the server asks mid-call; from it on, the server returns the question and the client
             # retries the call with the answer.
