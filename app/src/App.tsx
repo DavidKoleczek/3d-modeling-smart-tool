@@ -50,9 +50,13 @@ function App() {
     }
   }, [directory]);
   // By model id, which a rename keeps, the mode the person picked, and whether they switched Continue session on or
-  // off since, which the composer's requests follow.
+  // off since, which the composer's requests follow. A switch holds only until the next run starts, with the id of the
+  // run before it, so a fresh session asked for once is continued by the request after.
   const [modes, setModes] = useState<Record<string, ModelMode>>({});
-  const [resumes, setResumes] = useState<Record<string, boolean>>({});
+  const [resumes, setResumes] = useState<
+    Record<string, { resume: boolean; after: string | null }>
+  >({});
+  const switched = model && resumes[model.id];
   // Marked views on their way into a model's composer, which may not be showing until its pane opens.
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   // Only ever counts up, so a composer that took one handoff never mistakes the next for it.
@@ -75,11 +79,15 @@ function App() {
     },
     // On only in the mode of the session it would continue, so switching mode starts a fresh session by default.
     resume:
-      (model && resumes[model.id]) ??
-      mode === (model?.last_session?.mode ?? mode),
+      switched && switched.after === (model?.last_run?.id ?? null)
+        ? switched.resume
+        : mode === (model?.last_session?.mode ?? mode),
     onResume: (resume) => {
       if (model) {
-        setResumes((current) => ({ ...current, [model.id]: resume }));
+        setResumes((current) => ({
+          ...current,
+          [model.id]: { resume, after: model.last_run?.id ?? null },
+        }));
       }
     },
   };
