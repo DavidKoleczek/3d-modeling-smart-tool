@@ -18,7 +18,7 @@ In the model directory, you should work with these files:
 
 - model.py: one script that builds the whole model from an empty scene and exports model.glb beside itself. Blender comes from PyPI: give model.py inline script metadata with requires-python "==3.13.*" and the dependency "{bpy}", run it with `uv run --script model.py`, and lock it with `uv lock --script model.py`. Give it an optional `--blend <path>` that also saves the built scene, for opening in Blender. Keep it to building and exporting the model.
 - model.glb: glTF binary, in meters. Follow the project's model conventions for which way the model faces and where its origin is. Where the project says nothing, face glTF's front, +Z, which is -Y in Blender. Put the origin at the bottom center of a model that stands on the ground, and at the center of the face that meets what it connects to for a part that attaches to another model.
-- renders/: PNGs of the exported model.glb from several angles.
+- renders/: PNGs of the exported model.glb from several angles. By default, they should be about 1024 pixels (can be bigger if the requested resolution was higher) since they are what the user looks at. Any renders at its sizes on screen go beside them, with the size in their names; the check-3d-model skill renders those too.
 
 Run every Python script through `uv run --script` with inline dependencies: `python` on PATH may be missing or a stub. Change files with your file editing tools, not with scripts.
 
