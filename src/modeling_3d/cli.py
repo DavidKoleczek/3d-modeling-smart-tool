@@ -650,6 +650,12 @@ def list_intelligence_models() -> None:
 
 
 @app.command()
+def list_agent_providers() -> None:
+    """List the agent providers, whether each is installed and signed in, and how, printed as JSON. Deterministic."""
+    typer.echo(lib.list_agent_providers().model_dump_json(indent=2))
+
+
+@app.command()
 def add_blender_to_path(
     blender_path: Annotated[
         Path | None,

@@ -42,6 +42,8 @@ wrapper over it, so anything you can do from the shell you can also do from Pyth
   - Use `read-3d-model-activity` before acting on a model: it shows what was asked of it and by whom, what its
     agent did, and how its runs ended, including what the person did in the app.
   - Use `read-3d-model-tool-call` for one of its agent's tool calls in full, such as why a command failed.
+  - Use `list-agent-providers` when a model-backed capability fails because its agent provider has no
+    credentials, to see which are signed in and what each needs.
 
 Every capability works in a workspace, the top-level directory of the user's project: the
 working directory, or the one `--workspace` names. The models are kept in its `.modeling-3d`,
@@ -88,6 +90,8 @@ provider, the first installed of `claude` and `codex`:
 - `codex`: the [OpenAI Codex SDK](https://github.com/openai/codex/tree/main/sdk/python), with the
   user's Codex configuration. Needs the Codex CLI signed in with ChatGPT or an API key, see
   [authentication](https://developers.openai.com/codex/auth).
+
+`list-agent-providers` says which are installed and signed in.
 
 Building a model needs no Blender install: its script gets Blender from PyPI through uv, about
 340 MB on the first build. Building runs on Windows, Linux x64, and macOS on Apple silicon. To

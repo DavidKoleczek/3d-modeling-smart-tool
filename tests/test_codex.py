@@ -394,24 +394,29 @@ async def test_the_session_is_copied_where_the_request_keeps_it(
 
 
 @pytest.mark.parametrize(
-    "account",
+    ("account", "how"),
     [
-        GetAccountResponse.model_validate(
+        (
             {
                 "account": {"type": "chatgpt", "email": "user@example.com", "planType": "plus"},
                 "requiresOpenaiAuth": True,
-            }
+            },
+            "ChatGPT",
         ),
-        GetAccountResponse.model_validate({"account": None, "requiresOpenaiAuth": False}),
+        ({"account": {"type": "apiKey"}, "requiresOpenaiAuth": True}, "API key"),
+        ({"account": {"type": "amazonBedrock"}, "requiresOpenaiAuth": False}, "Amazon Bedrock"),
+        ({"account": None, "requiresOpenaiAuth": False}, "Model provider in config.toml"),
     ],
-    ids=["signed-in", "custom-provider"],
+    ids=["chatgpt", "api-key", "bedrock", "custom-provider"],
 )
-def test_preflight_passes_when_signed_in_or_when_the_provider_needs_no_openai_sign_in(
-    world: Callable[..., FakeWorld], account: GetAccountResponse
+def test_preflight_passes_when_signed_in_or_when_the_provider_needs_no_openai_sign_in_and_says_how(
+    world: Callable[..., FakeWorld], account: dict[str, Any], how: str
 ) -> None:
-    world(account=account)
+    world(account=GetAccountResponse.model_validate(account))
 
     CodexIntelligence().preflight()
+
+    assert adapter.signed_in_with() == how
 
 
 def test_preflight_names_both_ways_to_sign_in_when_codex_is_not_signed_in(world: Callable[..., FakeWorld]) -> None:

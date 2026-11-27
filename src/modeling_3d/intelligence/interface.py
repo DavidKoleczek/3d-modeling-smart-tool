@@ -126,6 +126,20 @@ def select_intelligence(
     return intelligence, default_models[agent_provider or AGENT_PROVIDERS[0]] if model is None else model
 
 
+def agent_signed_in_with(agent_provider: AgentProvider) -> str:
+    """How the installed agent provider's runtime is signed in, in its own words; raises `Modeling3dError` naming what
+    to configure when it is not, or why the runtime did not start."""
+    match agent_provider:
+        case "codex":
+            from modeling_3d.intelligence import codex
+
+            return codex.signed_in_with()
+        case "claude":
+            from modeling_3d.intelligence import claude
+
+            return claude.signed_in_with()
+
+
 def agent_steps(agent_provider: AgentProvider) -> Callable[[AgentEvent, Path], list[AgentStep]]:
     """The agent provider's reader of its events, as kept, into what they show of a run; given the run's workspace."""
     match agent_provider:

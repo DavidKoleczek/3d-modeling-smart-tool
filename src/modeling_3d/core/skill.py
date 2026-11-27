@@ -107,6 +107,12 @@ CAPABILITIES = (
         skill="capabilities/create_3d_model/skills/skill_list_intelligence_models.md",
     ),
     Capability(
+        "list-agent-providers",
+        "List the agent providers model-backed capabilities run through: installed, signed in, and how; prints JSON.",
+        model_backed=False,
+        skill="capabilities/agent_providers/skills/skill_list_agent_providers.md",
+    ),
+    Capability(
         "add-blender-to-path",
         "Make `blender` run an installed Blender from new terminals; building models does not need it.",
         model_backed=False,

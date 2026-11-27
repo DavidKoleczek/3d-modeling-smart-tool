@@ -484,6 +484,30 @@ class BlenderOnPath(BaseModel):
 
 # endregion
 
+# region: Agent providers
+
+
+class AgentProviderStatus(BaseModel):
+    """One agent provider on this machine: whether it is installed, and whether and how it is signed in."""
+
+    agent_provider: AgentProvider
+    installed: bool = Field(description="Whether the tool was installed with it, and so with its runtime")
+    signed_in: bool = Field(description="Whether its runtime has credentials to run with")
+    signed_in_with: str | None = Field(
+        description="How, in the runtime's own words, such as its subscription, an API key, or a cloud provider; None "
+        "when not signed in"
+    )
+    problem: str | None = Field(description="What keeps it from running and how to fix that; None when it can run")
+
+
+class AgentProviders(BaseModel):
+    """Every agent provider the model-backed capabilities can run through, in `AGENT_PROVIDERS` order."""
+
+    agent_providers: list[AgentProviderStatus]
+
+
+# endregion
+
 # region: App
 
 # The folder in a models directory where the app keeps what the person did in it there. Starting with a dot, it is

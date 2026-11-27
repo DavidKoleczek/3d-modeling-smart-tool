@@ -171,6 +171,14 @@ modeling-3d list-intelligence-models
 
 `lib.list_intelligence_models()`, printed as JSON.
 
+## modeling-3d list-agent-providers
+
+```bash
+modeling-3d list-agent-providers
+```
+
+`lib.list_agent_providers()`, printed as JSON. Exits 0 whether or not any is signed in.
+
 ## modeling-3d add-blender-to-path
 
 ```bash

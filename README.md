@@ -110,6 +110,9 @@ modeling-3d view-3d-model --name bear
 modeling-3d rename-3d-model --name bear --new-name grizzly
 modeling-3d delete-3d-model --name grizzly
 
+# Which agent providers are installed and signed in, and how
+modeling-3d list-agent-providers
+
 # Optionally, make `blender` run your installed Blender, for opening models in it
 modeling-3d add-blender-to-path
 

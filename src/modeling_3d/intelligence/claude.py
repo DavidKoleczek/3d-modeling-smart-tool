@@ -8,9 +8,11 @@ import dataclasses
 import hashlib
 from importlib.metadata import version
 import json
+import os
 from pathlib import Path
 import secrets
 import shutil
+import sys
 import time
 from typing import Any
 import uuid
@@ -38,9 +40,16 @@ from modeling_3d.intelligence.schemas import IMAGE_MEDIA_TYPES, AgentEvent, Agen
 from modeling_3d.schemas import Modeling3dError
 
 AUTHENTICATION_DOCUMENTATION = "https://code.claude.com/docs/en/agent-sdk/quickstart"
+# What Claude Code reports as the API key's source once signed in with an Anthropic Console account.
+CONSOLE_KEY_SOURCE = "/login managed key"
 # The only tools an agent gets, so AskUserQuestion is not among them: nobody answers a question while a run works.
 READ_ONLY_TOOLS = ["Read", "Glob", "Grep", "Bash"]
 WRITE_TOOLS = ["Edit", "Write"]
+# Claude Code runs Bash through Git Bash on Windows, and runs commands through this one in its place without it.
+POWERSHELL_TOOL = "PowerShell"
+# Where Claude Code looks for Git Bash, in its order, before it looks beside the git on PATH.
+GIT_BASH_INSTALLS = (Path("C:/Program Files/Git/bin/bash.exe"), Path("C:/Program Files (x86)/Git/bin/bash.exe"))
+GIT_BASH_NAMES = ("bash.exe", "sh.exe", "bash", "sh")
 # How long a stopping run waits for Claude Code to abort its tools before ending the process anyway.
 INTERRUPT_SECONDS = 5
 # Claude Code sends an image the agent reads back as one base64 JSON line, and a render runs to megabytes, well past
@@ -310,28 +319,50 @@ class ClaudeIntelligence:
         self.steering: Steering = "queued"
 
     def preflight(self) -> None:
-        try:
-            account = asyncio.run(_account())
-        except Exception as error:  # whatever stops the runtime from starting, the remedy is the same
-            raise Modeling3dError(
-                f"The Claude Code runtime did not start: {type(error).__name__}: {error} "
-                "Check that ~/.claude/settings.json is valid, and reinstall modeling-3d with the [claude] extra, "
-                "which brings the runtime.",
-                "agent-unavailable",
-            ) from None
-        if not signed_in(account):
-            raise Modeling3dError(
-                "The Claude Agent SDK has no credentials. Set ANTHROPIC_API_KEY to a Claude Console API key, or set "
-                "CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_ANTHROPIC_AWS, CLAUDE_CODE_USE_VERTEX, or "
-                f"CLAUDE_CODE_USE_FOUNDRY to 1 with that cloud's credentials, as {AUTHENTICATION_DOCUMENTATION} "
-                "describes.",
-                "agent-unavailable",
-            )
+        signed_in_with()
 
     async def start(self, request: AgentRequest) -> ClaudeRun:
         run = ClaudeRun(request, ClaudeSDKClient(options=options(request)))
         await run.running()
         return run
+
+
+def signed_in_with() -> str:
+    """How Claude Code is signed in, such as its subscription; raises naming what to configure when it has no
+    credentials, or why it did not start."""
+    try:
+        account = asyncio.run(_account())
+    except Exception as error:  # whatever stops the runtime from starting, the remedy is the same
+        raise Modeling3dError(
+            f"The Claude Code runtime did not start: {type(error).__name__}: {error} "
+            "Check that ~/.claude/settings.json is valid, and reinstall modeling-3d with the [claude] extra, "
+            "which brings the runtime.",
+            "agent-unavailable",
+        ) from None
+    how = account_sign_in(account)
+    if how is None:
+        raise Modeling3dError(
+            "The Claude Agent SDK has no credentials. Set ANTHROPIC_API_KEY to a Claude Console API key, or set "
+            "CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_ANTHROPIC_AWS, CLAUDE_CODE_USE_VERTEX, or "
+            f"CLAUDE_CODE_USE_FOUNDRY to 1 with that cloud's credentials, as {AUTHENTICATION_DOCUMENTATION} "
+            "describes.",
+            "agent-unavailable",
+        )
+    return how
+
+
+def git_bash() -> Path | None:
+    """The Git Bash Claude Code runs Bash with on Windows, found as it finds it, or None when it would find none."""
+    named = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    if named and Path(named).name.lower() in GIT_BASH_NAMES and Path(named).exists():
+        return Path(named)
+    for install in GIT_BASH_INSTALLS:
+        if install.exists():
+            return install
+    git = shutil.which("git")
+    if git is not None and (beside := Path(git).parents[1] / "bin" / "bash.exe").exists():
+        return beside
+    return None
 
 
 def options(request: AgentRequest) -> ClaudeAgentOptions:
@@ -354,6 +385,12 @@ def options(request: AgentRequest) -> ClaudeAgentOptions:
         tools = []
     if request.skill_directories:
         tools = [*tools, "Skill"]
+    # Otherwise the API holds each argument back until it is whole, so a long file shows nothing until written.
+    environment = {"CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING": "1"}
+    if "Bash" in tools and sys.platform == "win32" and git_bash() is None:
+        # Through the SDK, Claude Code offers PowerShell only once it is both named and switched on.
+        tools = [POWERSHELL_TOOL if tool == "Bash" else tool for tool in tools]
+        environment["CLAUDE_CODE_USE_POWERSHELL_TOOL"] = "1"
     # The shell is not sandboxed to the workspace; the caller's prompt bounds the agent and the caller
     # validates before anything the agent wrote is kept.
     options = ClaudeAgentOptions(
@@ -367,8 +404,7 @@ def options(request: AgentRequest) -> ClaudeAgentOptions:
         resume=request.resume,
         extra_args={"replay-user-messages": None},
         include_partial_messages=True,
-        # Otherwise the API holds each argument back until it is whole, so a long file shows nothing until written.
-        env={"CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING": "1"},
+        env=environment,
         max_buffer_size=MAX_MESSAGE_BYTES,
         session_store=None if request.session_directory is None else FolderSessionStore(request.session_directory),
         session_store_flush="eager",
@@ -440,15 +476,25 @@ def as_data(message: Message) -> dict[str, Any]:
     return {"value": str(message)}
 
 
-def signed_in(account: dict[str, Any]) -> bool:
-    """Whether the account Claude Code resolved at startup can make requests."""
+def account_sign_in(account: dict[str, Any]) -> str | None:
+    """How the account Claude Code resolved at startup makes requests, or None when it cannot.
+
+    Only how: the account's email and organization are left out.
+    """
     # A cloud provider authenticates with that cloud's credentials and reports no Anthropic key or token.
-    if account.get("apiProvider", "firstParty") != "firstParty":
-        return True
+    provider = account.get("apiProvider", "firstParty")
+    if provider != "firstParty":
+        return f"Cloud provider {provider}"
     # A Claude subscription signed in through Claude Code reports its plan, with neither a key nor a token source.
     if account.get("subscriptionType"):
-        return True
-    return bool(account.get("apiKeySource")) or account.get("tokenSource", "none") != "none"
+        return str(account["subscriptionType"])
+    source = account.get("apiKeySource")
+    if source == CONSOLE_KEY_SOURCE:
+        return "Anthropic Console account"
+    if source:
+        return f"API key from {source}"
+    token = account.get("tokenSource", "none")
+    return None if token == "none" else f"Token from {token}"
 
 
 def scratch_directory() -> Path:

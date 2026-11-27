@@ -43,6 +43,7 @@ VIEW_TOOLS = (
     "read_3d_model_tool_call",
     "list_intelligence_models",
     "choose_intelligence_model",
+    "list_agent_providers",
     "read_app_settings",
     "save_app_settings",
     "read_activity_steps",

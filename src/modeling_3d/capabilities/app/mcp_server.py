@@ -71,6 +71,7 @@ from modeling_3d.capabilities.app.tools import (
     DELETE_MODEL,
     FORGET_WORKSPACE,
     KEEP_UPLOAD,
+    LIST_AGENT_PROVIDERS,
     LIST_FOLDER,
     LIST_INTELLIGENCE,
     LIST_MODELS,
@@ -116,6 +117,7 @@ from modeling_3d.schemas import (
     MODELS_FOLDER,
     NOT_GIVEN,
     REASONING_EFFORTS,
+    AgentProviders,
     AppFolders,
     AppIntelligence,
     AppLibrary,
@@ -237,6 +239,7 @@ class AppServer:
         read_activity: Callable[[str, Path, str | None], ModelActivity],
         read_tool_call: Callable[[str, str, str, Path], ToolCall],
         list_intelligence: Callable[[], IntelligenceModels],
+        list_agent_providers: Callable[[], AgentProviders],
         default_prompts: Mapping[ModelMode, DefaultPrompt],
         settings_path: Path,
         workspaces_path: Path,
@@ -272,6 +275,7 @@ class AppServer:
         self._read_activity = read_activity
         self._read_tool_call = read_tool_call
         self._list_intelligence = list_intelligence
+        self._list_agent_providers = list_agent_providers
         self._default_prompts = dict(default_prompts)
         self._lock = threading.Lock()
         # Each upload no request took yet, with the file or folder on this machine it was staged from, to remember as
@@ -471,6 +475,9 @@ class AppServer:
         if params.name == SAVE_SETTINGS.name:
             settings = await asyncio.to_thread(save_app_settings, arguments["settings"], self.settings_path)
             return _structured(settings.model_dump(mode="json"))
+        if params.name == LIST_AGENT_PROVIDERS.name:
+            providers = await asyncio.to_thread(self._list_agent_providers)
+            return _structured(providers.model_dump(mode="json"))
         if params.name == READ_WORKSPACES.name:
             workspaces = await asyncio.to_thread(self._workspaces)
             return _structured(workspaces.model_dump(mode="json"))

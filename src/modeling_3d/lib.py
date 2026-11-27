@@ -3,6 +3,7 @@
 from contextlib import AbstractContextManager
 from pathlib import Path
 
+from modeling_3d.capabilities.agent_providers import agent_providers
 from modeling_3d.capabilities.app import folders as app_folders
 from modeling_3d.capabilities.app import mcp_server as app_server_module
 from modeling_3d.capabilities.app import pins as app_pins
@@ -22,6 +23,7 @@ from modeling_3d.schemas import (
     DEFAULT_REASONING_EFFORT,
     NOT_GIVEN,
     AgentProvider,
+    AgentProviders,
     BlenderOnPath,
     IntelligenceModels,
     Manifest,
@@ -61,8 +63,8 @@ def app_server(workspace: Path | None = None) -> AppServer:
     Serve `AppServer.server` over any MCP transport. `AppServer.open` serves the browser host page, which renders
     the view for agents that cannot embed it and reaches the same server at its own `/mcp`. The view shows the models
     in `AppServer.workspace`, and creates, changes, rigs, colors, details, checks, steers, stops, renames, and deletes
-    them through this library's capabilities, as from `app`. Nothing done in it is sent to an agent session; a session
-    sees it with `read_3d_model_activity`.
+    them through this library's capabilities, as from `app`. Its settings list the agent providers and how each is
+    signed in. Nothing done in it is sent to an agent session; a session sees it with `read_3d_model_activity`.
     How the person set up the app, such as its theme and pane sizes, is theirs in every workspace, kept in
     `app-settings.json` in their config directory, with the workspaces opened in the app, newest first, in
     `app-workspaces.json` beside it. What they pinned in it is kept for its workspace alone, in its
@@ -90,6 +92,7 @@ def app_server(workspace: Path | None = None) -> AppServer:
         read_activity=activity.read_3d_model_activity,
         read_tool_call=activity.read_3d_model_tool_call,
         list_intelligence=intelligence_models.list_intelligence_models,
+        list_agent_providers=agent_providers.list_agent_providers,
         default_prompts=constants.UNASKED,
         settings_path=app_settings.settings_path(),
         workspaces_path=app_workspaces.workspaces_path(),
@@ -538,6 +541,16 @@ def list_intelligence_models() -> IntelligenceModels:
     any reasoning effort its agent provider has.
     """
     return intelligence_models.list_intelligence_models()
+
+
+def list_agent_providers() -> AgentProviders:
+    """Each agent provider the model-backed capabilities run through, whether it is installed, and whether and how it
+    is signed in, in `AGENT_PROVIDERS` order.
+
+    Each installed one's runtime is started and asked, as a run's preflight asks it, so the answer is the one a run
+    gets. That takes a second or two.
+    """
+    return agent_providers.list_agent_providers()
 
 
 def add_blender_to_path(blender_path: Path | None = None) -> BlenderOnPath:

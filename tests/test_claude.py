@@ -419,20 +419,33 @@ async def test_the_session_store_keeps_each_transcript_in_its_own_file(tmp_path:
 
 
 @pytest.mark.parametrize(
-    "account",
+    ("account", "how"),
     [
-        {"tokenSource": "none", "apiKeySource": "ANTHROPIC_API_KEY", "apiProvider": "firstParty"},
-        {"apiProvider": "bedrock"},
-        {"email": "user@example.com", "subscriptionType": "Claude Max", "apiProvider": "firstParty"},
+        (
+            {"tokenSource": "none", "apiKeySource": "ANTHROPIC_API_KEY", "apiProvider": "firstParty"},
+            "API key from ANTHROPIC_API_KEY",
+        ),
+        (
+            {"tokenSource": "none", "apiKeySource": "/login managed key", "apiProvider": "firstParty"},
+            "Anthropic Console account",
+        ),
+        ({"apiProvider": "bedrock"}, "Cloud provider bedrock"),
+        (
+            {"email": "user@example.com", "subscriptionType": "Claude Max", "apiProvider": "firstParty"},
+            "Claude Max",
+        ),
+        ({"tokenSource": "CLAUDE_CODE_OAUTH_TOKEN", "apiProvider": "firstParty"}, "Token from CLAUDE_CODE_OAUTH_TOKEN"),
     ],
-    ids=["api-key", "cloud-provider", "subscription"],
+    ids=["api-key", "console", "cloud-provider", "subscription", "token"],
 )
-def test_preflight_passes_with_an_api_key_or_a_cloud_provider(
-    world: Callable[..., FakeWorld], account: dict[str, Any]
+def test_preflight_passes_with_any_credentials_and_says_how_without_the_account_s_email(
+    world: Callable[..., FakeWorld], account: dict[str, Any], how: str
 ) -> None:
     world(account=account)
 
     ClaudeIntelligence().preflight()
+
+    assert adapter.signed_in_with() == how
 
 
 def test_preflight_names_every_documented_way_to_authenticate_when_there_are_no_credentials(
@@ -448,6 +461,58 @@ def test_preflight_names_every_documented_way_to_authenticate_when_there_are_no_
     assert "ANTHROPIC_API_KEY" in message
     assert "CLAUDE_CODE_USE_BEDROCK" in message
     assert adapter.AUTHENTICATION_DOCUMENTATION in message
+
+
+@pytest.mark.parametrize(
+    ("git_bash", "shell"),
+    [(Path("C:/Program Files/Git/bin/bash.exe"), "Bash"), (None, adapter.POWERSHELL_TOOL)],
+    ids=["git-bash", "no-git-bash"],
+)
+async def test_on_windows_the_agent_runs_commands_in_git_bash_or_else_in_powershell(
+    world: Callable[..., FakeWorld],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_bash: Path | None,
+    shell: str,
+) -> None:
+    fake = world()
+    monkeypatch.setattr(interface.sys, "platform", "win32")
+    monkeypatch.setattr(adapter, "git_bash", lambda: git_bash)
+
+    await (await ClaudeIntelligence().start(request(tmp_path, writable=True))).result()
+
+    options = fake.clients[0].options
+    assert options.tools == ["Read", "Glob", "Grep", shell, *WRITE_TOOLS]
+    assert options.env.get("CLAUDE_CODE_USE_POWERSHELL_TOOL") == (None if shell == "Bash" else "1")
+    assert options.env["CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING"] == "1"
+
+
+def test_git_bash_is_found_where_claude_code_looks_for_it_in_its_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    named, installed, beside = (
+        tmp_path / "named" / "bash.exe",
+        tmp_path / "Git/bin/bash.exe",
+        tmp_path / "Git2/bin/bash.exe",
+    )
+    for path in (named, installed, beside):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+    git = tmp_path / "Git2" / "cmd" / "git.exe"
+    monkeypatch.setattr(adapter, "GIT_BASH_INSTALLS", (tmp_path / "missing" / "bash.exe", installed))
+    monkeypatch.setattr(adapter.shutil, "which", lambda name: str(git) if name == "git" else None)
+    found = []
+
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(named))
+    found.append(adapter.git_bash())
+    monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(tmp_path / "named" / "git.exe"))
+    found.append(adapter.git_bash())
+    installed.unlink()
+    found.append(adapter.git_bash())
+    beside.unlink()
+    found.append(adapter.git_bash())
+
+    assert found == [named, installed, beside, None]
 
 
 def test_preflight_names_the_runtime_when_it_cannot_start(

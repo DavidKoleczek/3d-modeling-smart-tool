@@ -256,6 +256,13 @@ CHOOSE_INTELLIGENCE = Tool(
     },
     _meta=APP_ONLY,
 )
+LIST_AGENT_PROVIDERS = Tool(
+    name="list_agent_providers",
+    description="Each agent provider, whether it is installed, and whether and how it is signed in. Called by the "
+    "view.",
+    input_schema={"type": "object", "properties": {}},
+    _meta=APP_ONLY,
+)
 READ_SETTINGS = Tool(
     name="read_app_settings",
     description="How the person set up the app: theme, viewport tools, and pane sizes, the same in every workspace. "
@@ -492,6 +499,7 @@ VIEW_TOOLS = [
     READ_TOOL_CALL,
     LIST_INTELLIGENCE,
     CHOOSE_INTELLIGENCE,
+    LIST_AGENT_PROVIDERS,
     READ_SETTINGS,
     SAVE_SETTINGS,
     READ_STEPS,

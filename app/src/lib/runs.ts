@@ -7,6 +7,7 @@ const IMAGE = /\.(png|jpe?g|gif|webp)$/i;
 /** A tool's verb for done and for under way, and its icon, by the name the agent gives the tool. */
 const TOOLS: Record<string, { done: string; doing: string; icon: IconName }> = {
   Bash: { done: "Ran", doing: "Running", icon: "terminal" },
+  PowerShell: { done: "Ran", doing: "Running", icon: "terminal" },
   Read: { done: "Read", doing: "Reading", icon: "file" },
   Edit: { done: "Edited", doing: "Editing", icon: "file-edit" },
   MultiEdit: { done: "Edited", doing: "Editing", icon: "file-edit" },

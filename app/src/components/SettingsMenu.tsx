@@ -13,14 +13,17 @@ import {
 import { Segmented } from "@/components/ui/segmented";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
+  listAgentProviders,
   openAppFolder,
   readAppFolders,
+  type AgentProviderStatus,
   type AppFolders,
   type AppSettings,
 } from "@/lib/api";
 import { APP_NAME, DOCUMENTATION, VERSION } from "@/lib/brand";
 import { describe } from "@/lib/errors";
 import { app } from "@/lib/host";
+import { providerLabel } from "@/lib/intelligence";
 import { resetLayout, updateSettings, useSettings } from "@/lib/settings";
 
 const ROW =
@@ -120,7 +123,78 @@ function Folders() {
   );
 }
 
-/** What is about the app itself: its theme, where it keeps things, its keys, its layout, and its docs. */
+/** How an agent provider stands, for the person. */
+function standing(provider: AgentProviderStatus): string {
+  if (provider.signed_in) {
+    return `Signed in with ${provider.signed_in_with}`;
+  }
+  return provider.installed ? "Not signed in" : "Not installed";
+}
+
+/**
+ * The agents the app's runs can use and how each is signed in, with the docs on signing in for one that is not, read
+ * each time Settings opens.
+ */
+function Agents() {
+  const [providers, setProviders] = useState<AgentProviderStatus[] | null>(
+    null,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const documentation = DOCUMENTATION;
+
+  useEffect(() => {
+    let current = true;
+    listAgentProviders().then(
+      (listed) => current && setProviders(listed),
+      (cause: unknown) =>
+        current && setError(`Could not check the agents. ${describe(cause)}`),
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+
+  return (
+    <Section label="Agents">
+      {providers === null && !error && (
+        <p className="text-caption text-ink-muted">Checking...</p>
+      )}
+      <div className="flex flex-col gap-1.5">
+        {providers?.map((provider) => (
+          <div
+            key={provider.agent_provider}
+            className="flex min-h-8 items-center gap-2"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block">
+                {providerLabel(provider.agent_provider)}
+              </span>
+              <span
+                className="block truncate text-caption text-ink-muted"
+                title={provider.problem ?? undefined}
+              >
+                {standing(provider)}
+              </span>
+            </span>
+            {provider.installed && !provider.signed_in && documentation && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void app.openLink({ url: documentation })}
+              >
+                How to sign in
+                <Icon name="link-out" className="text-ink-muted" />
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+      {error && <Notice className="mt-1">{error}</Notice>}
+    </Section>
+  );
+}
+
+/** What is about the app itself: its theme, its agents, where it keeps things, its keys, its layout, and its docs. */
 export function SettingsMenu({ onShortcuts }: { onShortcuts?: () => void }) {
   const { settings, error } = useSettings();
   const documentation = DOCUMENTATION;
@@ -151,6 +225,7 @@ export function SettingsMenu({ onShortcuts }: { onShortcuts?: () => void }) {
             ]}
           />
         </Section>
+        <Agents />
         <Folders />
         {error && <Notice className="mx-1 mb-1">{error}</Notice>}
         <hr className="-mx-1 my-1 border-line" />

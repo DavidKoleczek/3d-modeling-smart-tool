@@ -19,6 +19,7 @@ const ACTIVITY_TOOL = "read_3d_model_activity";
 const TOOL_CALL_TOOL = "read_3d_model_tool_call";
 const LIST_INTELLIGENCE_TOOL = "list_intelligence_models";
 const CHOOSE_INTELLIGENCE_TOOL = "choose_intelligence_model";
+const LIST_AGENT_PROVIDERS_TOOL = "list_agent_providers";
 const READ_SETTINGS_TOOL = "read_app_settings";
 const SAVE_SETTINGS_TOOL = "save_app_settings";
 const READ_STEPS_TOOL = "read_activity_steps";
@@ -306,6 +307,17 @@ export type AppFolders = {
   /** Null, as is `models`, before a workspace is picked. */
   workspace: string | null;
   models: string | null;
+};
+
+/** `AgentProviderStatus` in schemas.py. */
+export type AgentProviderStatus = {
+  agent_provider: string;
+  installed: boolean;
+  signed_in: boolean;
+  /** How, in the runtime's own words; null when not signed in. */
+  signed_in_with: string | null;
+  /** What keeps it from running and how to fix that, worded for an agent; null when it can run. */
+  problem: string | null;
 };
 
 /** `RecentWorkspace` in schemas.py. */
@@ -650,6 +662,17 @@ export async function chooseIntelligenceModel(
     model,
     reasoning_effort: reasoningEffort,
   })) as AppIntelligence;
+}
+
+/** Each agent provider, whether it is installed, and whether and how it is signed in. */
+export async function listAgentProviders(): Promise<AgentProviderStatus[]> {
+  const structured = await structuredFrom(LIST_AGENT_PROVIDERS_TOOL, {});
+  if (!Array.isArray(structured.agent_providers)) {
+    throw new AppError(
+      `\`${LIST_AGENT_PROVIDERS_TOOL}\` returned no agent providers. Check that the server is this version of 3D Modeling.`,
+    );
+  }
+  return structured.agent_providers as AgentProviderStatus[];
 }
 
 /** How the person set up the app, the same in every workspace. */
